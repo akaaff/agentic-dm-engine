@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+*.db
+*.sqlite3
+
+# frontend
+web/node_modules/
+web/dist/
+
+# training artifacts / model weights - large, regenerable, don't belong in git
+data/training/raw/*.jsonl
+data/training/curated/*.jsonl
+models/
+*.safetensors
+
+# generated scene images - regenerable at runtime
+data/generated_images/

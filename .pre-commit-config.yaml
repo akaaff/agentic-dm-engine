@@ -1,0 +1,37 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        # Local (uv run), not astral-sh/ruff-pre-commit's pinned isolated env -
+        # a sibling repo (agentic-rag-assistant) hit a real CI failure from
+        # exactly this: the pinned hook version drifted from the project's own
+        # resolved ruff version and the two disagreed on a formatting choice.
+        # Running via uv run means there's one version of the tool in play.
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+        pass_filenames: true
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+        pass_filenames: true
+      - id: mypy
+        name: mypy
+        # Local (uv run), not mirrors-mypy's isolated env - same reasoning as
+        # ruff above: an isolated env's additional_dependencies list would
+        # need to be kept in sync by hand as real deps are added.
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: true
+        # require_serial: pre-commit batches file arguments across parallel
+        # subprocess calls for large file sets, and concurrent mypy processes
+        # sharing the same .mypy_cache/ directory hit real "INTERNAL ERROR"
+        # crashes from cache-file races (confirmed live on Day 1 - a single
+        # `uv run mypy <all files>` invocation always succeeded, only
+        # pre-commit's own batched/parallel invocation failed). This is
+        # mypy's own documented recommendation for local pre-commit hooks.
+        require_serial: true
