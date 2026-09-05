@@ -1,0 +1,11 @@
+character_id: companion_grom
+name: Grom Ironfist
+persona: >
+  A gruff, no-nonsense dwarven mercenary who values loyalty above all else
+  and has little patience for clever plans - he'd rather just hit something.
+race_index: dwarf
+class_index: fighter
+background_index: acolyte
+base_ability_scores: { STR: 15, DEX: 13, CON: 14, INT: 8, WIS: 10, CHA: 12 }
+chosen_skills: [skill-athletics, skill-intimidation]
+chosen_equipment: [chain-mail, shield, longsword]

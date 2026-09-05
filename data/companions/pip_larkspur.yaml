@@ -1,0 +1,16 @@
+# Bard has TWO proficiency-choice pools in the SRD (3 skills + 3 musical
+# instruments), and create_character's validation sums/pools them together
+# (see CLAUDE.md) - chosen_skills below is 6 items: 3 real skills, 3
+# instruments, or character creation rejects it as "wrong count."
+character_id: companion_pip
+name: Pip Larkspur
+persona: >
+  A charming, quick-witted gnome bard who has a song for every occasion and
+  a story for every song - most of them true, probably.
+race_index: gnome
+class_index: bard
+background_index: acolyte
+base_ability_scores: { STR: 8, DEX: 14, CON: 12, INT: 10, WIS: 13, CHA: 15 }
+chosen_skills:
+  [skill-performance, skill-persuasion, skill-insight, lute, flute, lyre]
+chosen_equipment: []

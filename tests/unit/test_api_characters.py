@@ -1,0 +1,103 @@
+from collections.abc import Generator
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from src.api.db.models import Base
+from src.api.db.session import get_db
+from src.api.main import app
+
+
+@pytest.fixture
+def client() -> Generator[TestClient]:
+    # StaticPool: a plain "sqlite:///:memory:" engine hands out a fresh,
+    # separate in-memory DB per connection by default - each request in a
+    # test would otherwise see an empty DB. StaticPool keeps one connection
+    # (and thus one DB) alive for the engine's whole lifetime.
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def _override_get_db() -> Generator[Session]:
+        db = TestSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _override_get_db
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+_VALID_FIGHTER_BODY = {
+    "character_id": "thorin",
+    "name": "Thorin",
+    "race_index": "human",
+    "class_index": "fighter",
+    "background_index": "acolyte",
+    "base_ability_scores": {"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+    "chosen_skills": ["skill-athletics", "skill-perception"],
+    "chosen_equipment": ["chain-mail", "shield"],
+}
+
+
+def test_list_races_includes_human(client: TestClient) -> None:
+    response = client.get("/characters/races")
+    assert response.status_code == 200
+    indices = {r["index"] for r in response.json()}
+    assert "human" in indices
+    assert "elf" in indices
+
+
+def test_list_classes_includes_fighter_with_hit_die(client: TestClient) -> None:
+    response = client.get("/characters/classes")
+    assert response.status_code == 200
+    fighter = next(c for c in response.json() if c["index"] == "fighter")
+    assert fighter["hit_die"] == 10
+
+
+def test_list_backgrounds_returns_only_acolyte(client: TestClient) -> None:
+    response = client.get("/characters/backgrounds")
+    assert response.status_code == 200
+    assert [b["index"] for b in response.json()] == ["acolyte"]
+
+
+def test_create_character_end_to_end_and_persists(client: TestClient) -> None:
+    create_response = client.post("/characters", json=_VALID_FIGHTER_BODY)
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["hp"] == 12
+    assert created["ac"] == 18
+    assert created["stats"]["STR"] == 16
+
+    fetch_response = client.get("/characters/thorin")
+    assert fetch_response.status_code == 200
+    fetched = fetch_response.json()
+    assert fetched["hp"] == 12
+    assert fetched["ac"] == 18
+    assert fetched["inventory"] == created["inventory"]
+
+
+def test_get_unknown_character_returns_404(client: TestClient) -> None:
+    response = client.get("/characters/does-not-exist")
+    assert response.status_code == 404
+
+
+def test_create_duplicate_character_id_returns_409(client: TestClient) -> None:
+    client.post("/characters", json=_VALID_FIGHTER_BODY)
+    response = client.post("/characters", json=_VALID_FIGHTER_BODY)
+    assert response.status_code == 409
+
+
+def test_create_character_with_wrong_skill_count_returns_400(client: TestClient) -> None:
+    body = {**_VALID_FIGHTER_BODY, "chosen_skills": ["skill-athletics"]}
+    response = client.post("/characters", json=body)
+    assert response.status_code == 400

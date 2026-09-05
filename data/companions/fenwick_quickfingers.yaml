@@ -1,0 +1,12 @@
+character_id: companion_fenwick
+name: Fenwick Quickfingers
+persona: >
+  A sly halfling scoundrel with a quick wit and quicker fingers - claims to
+  have reformed, but old habits (and old friends) keep finding him.
+race_index: halfling
+class_index: rogue
+background_index: acolyte
+base_ability_scores: { STR: 8, DEX: 15, CON: 13, INT: 12, WIS: 10, CHA: 14 }
+chosen_skills:
+  [skill-stealth, skill-sleight-of-hand, skill-deception, skill-perception]
+chosen_equipment: [shortsword]

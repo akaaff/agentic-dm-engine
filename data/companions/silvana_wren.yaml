@@ -1,0 +1,12 @@
+character_id: companion_silvana
+name: Silvana Wren
+persona: >
+  A quiet, watchful elf ranger who speaks more to the forest than to people
+  - trusts tracks and instincts over plans, and is slow to warm up to
+  strangers.
+race_index: elf
+class_index: ranger
+background_index: acolyte
+base_ability_scores: { STR: 12, DEX: 15, CON: 13, INT: 10, WIS: 14, CHA: 8 }
+chosen_skills: [skill-perception, skill-stealth, skill-survival]
+chosen_equipment: [leather-armor]

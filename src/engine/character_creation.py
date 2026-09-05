@@ -85,6 +85,8 @@ def create_character(
     chosen_skills: list[str],
     chosen_equipment: list[str] | None = None,
     is_pc: bool = True,
+    is_companion: bool = False,
+    persona: str | None = None,
     position: Position | None = None,
     srd: SrdIndex | None = None,
 ) -> Character:
@@ -131,6 +133,8 @@ def create_character(
         id=character_id,
         name=name,
         is_pc=is_pc,
+        is_companion=is_companion,
+        persona=persona,
         hp=hp,
         max_hp=hp,
         ac=ac,

@@ -1,0 +1,12 @@
+character_id: companion_mira
+name: Sister Mira
+persona: >
+  A devout human cleric with an unshakeable calm - she has seen enough
+  battlefields to know panic never saved a life, and quietly outlasts
+  everyone's doubts.
+race_index: human
+class_index: cleric
+background_index: acolyte
+base_ability_scores: { STR: 13, DEX: 10, CON: 14, INT: 8, WIS: 15, CHA: 12 }
+chosen_skills: [skill-medicine, skill-religion]
+chosen_equipment: [mace, chain-mail]
