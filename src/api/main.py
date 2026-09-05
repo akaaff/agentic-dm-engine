@@ -5,11 +5,12 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from src.api.routes import characters, companions
+from src.api.routes import campaigns, characters, companions
 
 app = FastAPI(title="agentic-dm-engine")
 app.include_router(characters.router)
 app.include_router(companions.router)
+app.include_router(campaigns.router)
 
 
 @app.get("/health")

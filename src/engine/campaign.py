@@ -53,3 +53,12 @@ def load_campaign(campaign_id: str, campaigns_dir: Path = DEFAULT_CAMPAIGNS_DIR)
     path = campaigns_dir / f"{campaign_id}.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return Campaign.model_validate(data)
+
+
+def load_all_campaigns(campaigns_dir: Path = DEFAULT_CAMPAIGNS_DIR) -> list[Campaign]:
+    """Non-recursive glob - naturally excludes campaigns_dir/encounters/,
+    which holds Encounter YAML, not Campaign YAML."""
+    return [
+        Campaign.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        for path in sorted(campaigns_dir.glob("*.yaml"))
+    ]
