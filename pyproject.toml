@@ -11,6 +11,7 @@ dependencies = [
     "uvicorn[standard]>=0.52.4",
     "sqlalchemy>=2.0.52",
     "alembic>=1.19.2",
+    "langgraph>=1.2.11",
 ]
 
 [dependency-groups]

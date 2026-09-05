@@ -1,0 +1,25 @@
+"""LangGraph state schema for the per-action turn pipeline:
+intent_parser -> rules_engine -> narrator -> scene_image.
+
+One graph invocation resolves exactly one action (one actor's turn) - the
+outer loop of "wait for the next actor's input, invoke the graph, repeat"
+lives in api/ws/session.py, not here.
+"""
+
+from __future__ import annotations
+
+from typing import TypedDict
+
+from src.engine.actions import ParsedAction
+from src.engine.state import GameState
+
+
+class GraphState(TypedDict):
+    game_state: GameState
+    raw_text: str
+    """The actor's free-text input. Real intent parsing (LLM, Day 12) reads
+    this; the Day 11 stub intent_parser ignores it in favor of
+    parsed_action being pre-supplied (see graph/nodes/intent_parser.py)."""
+    parsed_action: ParsedAction | None
+    narration: str | None
+    scene_image_url: str | None
