@@ -13,8 +13,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
-from src.engine.movement import TerrainType
-from src.engine.position import Position
+from src.engine.position import BattleMap, Position
 from src.engine.rules import ability_modifier
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character, GameState
@@ -23,13 +22,6 @@ from src.engine.turn_order import roll_initiative
 DEFAULT_ENCOUNTERS_DIR = (
     Path(__file__).resolve().parent.parent.parent / "data" / "campaigns" / "encounters"
 )
-
-
-class BattleMap(BaseModel):
-    width: int
-    height: int
-    terrain: list[list[TerrainType]]
-    spawn_points: dict[str, Position]
 
 
 class MonsterSpawn(BaseModel):
@@ -92,6 +84,7 @@ def monster_to_character(monster: SrdEntry, character_id: str, position: Positio
         race=monster.get("type", "monster"),
         class_="Monster",
         background="",
+        monster_index=monster["index"],
     )
 
 
@@ -139,4 +132,5 @@ def build_encounter_state(
         events=[],
         pending_action=None,
         status="in_progress",
+        battle_map=encounter.battle_map,
     )

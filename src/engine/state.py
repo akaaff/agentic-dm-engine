@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from src.engine.actions import ParsedAction
 from src.engine.events import Event
-from src.engine.position import Position
+from src.engine.position import BattleMap, Position
 
 ConditionName = Literal[
     "blinded",
@@ -61,6 +61,10 @@ class Character(BaseModel):
     is_companion: bool = False
     persona: str | None = None
     """Only set for simulated (companion/NPC) agents."""
+    monster_index: str | None = None
+    """Set only for monsters (see encounter.monster_to_character) - lets the
+    turn engine re-look-up the SRD stat block's actions (attack bonus,
+    damage dice) when this character attacks."""
 
 
 class GameState(BaseModel):
@@ -72,3 +76,6 @@ class GameState(BaseModel):
     events: list[Event] = []
     pending_action: ParsedAction | None = None
     status: Literal["in_progress", "victory", "defeat", "aborted"] = "in_progress"
+    battle_map: BattleMap | None = None
+    """None for non-combat scenes (narrative_beat/roleplay); set by
+    encounter.build_encounter_state for combat scenes."""

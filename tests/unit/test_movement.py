@@ -1,5 +1,5 @@
-from src.engine.movement import TerrainType, can_afford_move, move_cost_feet
-from src.engine.position import Position
+from src.engine.movement import can_afford_move, move_cost_feet
+from src.engine.position import Position, TerrainType
 
 # 5x5 grid, terrain[y][x]:
 #   y=0: floor floor    floor floor floor

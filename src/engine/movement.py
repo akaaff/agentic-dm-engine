@@ -1,18 +1,12 @@
 """Movement cost and wall-blocking against a terrain grid.
 
-Terrain grid representation kept minimal here (a plain
-list[list[TerrainType]], row-major, terrain[y][x]) rather than waiting for
-Day 6's full BattleMap model - Day 6 builds BattleMap as a thin wrapper
-around this same grid shape.
-"""
+Operates on a plain list[list[TerrainType]] (row-major, terrain[y][x]) rather
+than the full BattleMap model (position.py) - these functions only ever need
+the raw grid, not spawn points or dimensions."""
 
 from __future__ import annotations
 
-from typing import Literal
-
-from src.engine.position import FEET_PER_SQUARE, Position, chebyshev_distance
-
-TerrainType = Literal["floor", "wall", "difficult", "hazard"]
+from src.engine.position import FEET_PER_SQUARE, Position, TerrainType, chebyshev_distance
 
 
 def _in_bounds(pos: Position, terrain: list[list[TerrainType]]) -> bool:

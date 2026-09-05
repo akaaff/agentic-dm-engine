@@ -11,6 +11,9 @@ in tabletop/VTT play to be a reasonable default for this engine.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
+
+from pydantic import BaseModel
 
 FEET_PER_SQUARE = 5
 
@@ -28,3 +31,17 @@ def chebyshev_distance(a: Position, b: Position) -> int:
 
 def distance_feet(a: Position, b: Position) -> int:
     return chebyshev_distance(a, b) * FEET_PER_SQUARE
+
+
+TerrainType = Literal["floor", "wall", "difficult", "hazard"]
+
+
+class BattleMap(BaseModel):
+    """Lives here (not encounter.py, which is where it's authored/consumed)
+    so that state.py can hold one on GameState without an import cycle -
+    encounter.py already depends on state.py for Character/GameState."""
+
+    width: int
+    height: int
+    terrain: list[list[TerrainType]]
+    spawn_points: dict[str, Position]
