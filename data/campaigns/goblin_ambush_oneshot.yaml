@@ -1,0 +1,30 @@
+id: goblin_ambush_oneshot
+title: The Goblin Ambush
+size: one_shot
+description: >
+  A short one-shot for a party of 2-3: the group is ambushed by goblins on a
+  rocky mountain road and must fight them off.
+
+scenes:
+  - id: intro
+    type: narrative_beat
+    narrative_intro: >
+      The road narrows as it winds through a rocky pass. Loose stones click
+      underfoot, and the shadows between the boulders ahead seem a little too
+      still.
+    next_scene_id: ambush_combat
+
+  - id: ambush_combat
+    type: combat
+    narrative_intro: >
+      Goblins leap out from behind the rocks, blades drawn, shrieking in
+      their guttural tongue!
+    encounter_ref: goblin_ambush
+    next_scene_id: outro
+
+  - id: outro
+    type: narrative_beat
+    narrative_intro: >
+      With the last goblin fallen, the party catches its breath. The road
+      ahead is clear again - for now.
+    next_scene_id: null
