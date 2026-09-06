@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import CharacterSheet from '../components/CharacterSheet'
+import CombatGrid from '../components/CombatGrid'
 import NarrationFeed from '../components/NarrationFeed'
 import { useSessionSocket } from '../ws/sessionClient'
 
@@ -10,8 +11,16 @@ export default function LivePlay({
   sessionId: string
   myCharacterId: string
 }) {
-  const { gameState, narrationLog, sceneImageUrl, awaitingActor, error, connected, sendPlayerAction } =
-    useSessionSocket(sessionId)
+  const {
+    gameState,
+    narrationLog,
+    sceneImageUrl,
+    awaitingActor,
+    error,
+    connected,
+    sendPlayerAction,
+    sendPlayerMove,
+  } = useSessionSocket(sessionId)
   const [draft, setDraft] = useState('')
 
   const isMyTurn = awaitingActor === myCharacterId
@@ -40,6 +49,16 @@ export default function LivePlay({
             {gameState.status === 'defeat' && 'Defeat... the party has fallen.'}
             {gameState.status === 'aborted' && 'The encounter ended early.'}
           </p>
+        )}
+        {gameState?.battle_map && (
+          <CombatGrid
+            battleMap={gameState.battle_map}
+            characters={gameState.characters}
+            currentActorId={gameState.turn_order[gameState.current_turn]}
+            myCharacterId={myCharacterId}
+            canMove={isMyTurn}
+            onMoveTo={sendPlayerMove}
+          />
         )}
         {sceneImageUrl && (
           // scene_image_url is a local filesystem path (Day 16 - no media

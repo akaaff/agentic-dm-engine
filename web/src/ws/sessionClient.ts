@@ -25,6 +25,15 @@ export interface LiveCharacter {
   class_: string
 }
 
+export type TerrainType = 'floor' | 'wall' | 'difficult' | 'hazard'
+
+export interface LiveBattleMap {
+  width: number
+  height: number
+  terrain: TerrainType[][]
+  spawn_points: Record<string, { x: number; y: number }>
+}
+
 export interface LiveGameState {
   encounter_id: string
   characters: Record<string, LiveCharacter>
@@ -32,6 +41,7 @@ export interface LiveGameState {
   current_turn: number
   round: number
   status: 'in_progress' | 'victory' | 'defeat' | 'aborted'
+  battle_map: LiveBattleMap | null
 }
 
 type ServerMessage =
@@ -107,6 +117,12 @@ export function useSessionSocket(sessionId: string) {
     setError(null)
   }
 
+  function sendPlayerMove(to: { x: number; y: number }) {
+    wsRef.current?.send(JSON.stringify({ type: 'player_move', to }))
+    setAwaitingActor(null)
+    setError(null)
+  }
+
   return {
     gameState,
     narrationLog,
@@ -115,5 +131,6 @@ export function useSessionSocket(sessionId: string) {
     error,
     connected,
     sendPlayerAction,
+    sendPlayerMove,
   }
 }
