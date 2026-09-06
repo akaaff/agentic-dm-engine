@@ -67,20 +67,22 @@ def _explode(*args: Any, **kwargs: Any) -> Path:
 
 def test_generates_an_image_at_scene_start(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        scene_image_module, "generate_scene_image", lambda prompt: Path("scene.png")
+        scene_image_module, "generate_scene_image", lambda prompt: Path("/tmp/out/scene.png")
     )
     result = scene_image_node(_graph_state(1, events_before=0, round_before=1))
-    assert result == {"scene_image_url": "scene.png"}
+    # HTTP-servable URL (Day 21), not the raw filesystem path
+    # generate_scene_image actually saved to.
+    assert result == {"scene_image_url": "/media/scene-images/scene.png"}
 
 
 def test_generates_an_image_at_a_round_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        scene_image_module, "generate_scene_image", lambda prompt: Path("scene.png")
+        scene_image_module, "generate_scene_image", lambda prompt: Path("/tmp/out/scene.png")
     )
     # events_before > 0 (not the very first action), but round advanced
     # since this graph invocation was last set up.
     result = scene_image_node(_graph_state(2, events_before=3, round_before=1))
-    assert result == {"scene_image_url": "scene.png"}
+    assert result == {"scene_image_url": "/media/scene-images/scene.png"}
 
 
 def test_skips_generation_mid_round(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -100,7 +102,7 @@ def test_prompt_mentions_allegiance_and_hp(monkeypatch: pytest.MonkeyPatch) -> N
 
     def _fake_generate(prompt: str) -> Path:
         captured["prompt"] = prompt
-        return Path("scene.png")
+        return Path("/tmp/out/scene.png")
 
     monkeypatch.setattr(scene_image_module, "generate_scene_image", _fake_generate)
     scene_image_node(_graph_state(1, events_before=0, round_before=1))

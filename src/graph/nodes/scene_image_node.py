@@ -3,10 +3,9 @@ or at the very start of the encounter - not on every single action, which
 would be both slow (even SD-Turbo's ~1s/image adds up) and repetitive
 (nothing meaningfully changes frame-to-frame within a single round).
 
-Returns a local filesystem path as scene_image_url - there's no HTTP-
-servable media endpoint yet (that's Phase 4 frontend work); mounting a
-FastAPI StaticFiles route at imagegen.service.DEFAULT_OUTPUT_DIR later won't
-require touching this node.
+Returns an HTTP-servable URL (Day 21 mounts imagegen.service.DEFAULT_OUTPUT_DIR
+as a FastAPI StaticFiles route at MEDIA_URL_PREFIX) rather than the raw
+filesystem path generate_scene_image() actually saved to.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.graph.state_schema import GraphState
-from src.imagegen.service import generate_scene_image
+from src.imagegen.service import MEDIA_URL_PREFIX, generate_scene_image
 
 
 def _scene_prompt(state: GraphState) -> str:
@@ -41,4 +40,5 @@ def scene_image_node(state: GraphState) -> dict[str, Any]:
         return {"scene_image_url": None}
 
     image_path = generate_scene_image(_scene_prompt(state))
-    return {"scene_image_url": str(image_path) if image_path else None}
+    url = f"{MEDIA_URL_PREFIX}/{image_path.name}" if image_path else None
+    return {"scene_image_url": url}

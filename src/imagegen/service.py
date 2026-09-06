@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 SD_TURBO_MODEL = "stabilityai/sd-turbo"
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "generated_images"
 
+MEDIA_URL_PREFIX = "/media/scene-images"
+"""Where DEFAULT_OUTPUT_DIR is mounted as a FastAPI StaticFiles route (Day
+21, src/api/main.py) - co-located with DEFAULT_OUTPUT_DIR since they're two
+views of the same directory and scene_image_node needs both to turn a saved
+file into a URL the browser can actually load."""
+
 MIN_FREE_VRAM_BYTES = 2 * 1024**3
 """SD-Turbo's own documented footprint is ~2-3GB. Below this much free VRAM,
 skip generation rather than risk a mid-session CUDA OOM crash - the
