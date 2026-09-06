@@ -1,0 +1,145 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  background: #14121a;
+  color: #f0eef5;
+}
+
+.wizard {
+  width: 100%;
+  max-width: 640px;
+  padding: 2rem 1.5rem 4rem;
+}
+
+.wizard h1 {
+  font-size: 1.5rem;
+}
+
+.steps {
+  display: flex;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem;
+  font-size: 0.85rem;
+}
+
+.steps li {
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: #26222f;
+  color: #9d94ad;
+}
+
+.steps li.active {
+  background: #7c4dff;
+  color: white;
+}
+
+.steps li.done {
+  background: #3a3448;
+  color: #cfc6de;
+}
+
+section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.ability-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.75rem;
+  width: 6rem;
+}
+
+.ability-row select {
+  width: 4.5rem;
+}
+
+.final-score {
+  font-size: 0.8rem;
+  color: #9d94ad;
+  white-space: nowrap;
+}
+
+.checkbox-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+input,
+select {
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid #3a3448;
+  background: #1c1924;
+  color: inherit;
+  font-size: 0.95rem;
+}
+
+fieldset {
+  border: 1px solid #3a3448;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+button {
+  align-self: flex-start;
+  padding: 0.5rem 1.2rem;
+  border-radius: 6px;
+  border: none;
+  background: #7c4dff;
+  color: white;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #3a3448;
+  color: #766c87;
+  cursor: not-allowed;
+}
+
+button + button {
+  margin-left: 0.5rem;
+}
+
+.wizard-error {
+  color: #ff8a8a;
+  font-size: 0.9rem;
+}
+
+.sheet {
+  background: #1c1924;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.sheet table {
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+}
+
+.sheet td {
+  padding: 0.15rem 0.75rem 0.15rem 0;
+}
