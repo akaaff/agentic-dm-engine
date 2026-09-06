@@ -127,12 +127,29 @@ def test_resolve_action_rejects_action_from_the_wrong_actor() -> None:
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
-def test_resolve_action_rejects_unsupported_verb() -> None:
+def test_resolve_action_rejects_a_verb_outside_the_known_set() -> None:
+    # Every verb in ParsedAction's Literal is dispatched as of Day 14, so
+    # this fallback is only reachable by bypassing pydantic validation
+    # (model_construct) - still worth a test as a safety net for whenever a
+    # future verb is added to the schema before the engine handles it.
     state = _build_demo_state([18, 10, 8, 3])
     current_actor = state.turn_order[0]
-    action = ParsedAction(actor=current_actor, verb="cast_spell", raw_text="not implemented yet")
+    action = ParsedAction.model_construct(actor=current_actor, verb="teleport", raw_text="?")
     with pytest.raises(NotImplementedError):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_resolve_action_invalid_does_not_advance_the_turn() -> None:
+    # The DM not understanding an action isn't a system error and doesn't
+    # cost the actor their turn - they can just try again.
+    state = _build_demo_state([18, 10, 8, 3])
+    current_actor = state.turn_order[0]
+    action = ParsedAction(actor=current_actor, verb="invalid", raw_text="gibberish")
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert state.turn_order[state.current_turn] == current_actor
+    assert state.events[-1].type == "action_invalid"
+    assert state.events[-1].payload["raw_text"] == "gibberish"
 
 
 def test_resolve_action_rejects_a_downed_actor() -> None:

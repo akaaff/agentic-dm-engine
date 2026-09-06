@@ -24,6 +24,15 @@ from src.engine.state import AbilityScore, Character
 
 STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
 
+EXTRA_EQUIPMENT_INDICES = {"potion-of-healing"}
+"""Real SRD items that aren't in 5e-SRD-Equipment.json - magic items
+(potions, scrolls, wands...) live in a separate, unvendored Magic Items
+endpoint whose entries don't carry machine-readable mechanical data anyway
+(a potion's healing amount is prose inside a markdown table in its `desc`).
+Rather than vendor a 362-entry file for one item whose numbers still need
+hardcoding either way, "potion-of-healing" is allowed here explicitly -
+see turn_engine.HEALING_POTION_DICE for the (hardcoded, documented) amount."""
+
 LEVEL_1_SPELL_SLOTS: dict[str, dict[int, int]] = {
     "wizard": {1: 2},
     "cleric": {1: 2},
@@ -114,7 +123,7 @@ def create_character(
     _validate_skill_choices(cls, chosen_skills)
 
     for idx in chosen_equipment:
-        if idx not in srd.equipment:
+        if idx not in srd.equipment and idx not in EXTRA_EQUIPMENT_INDICES:
             raise CharacterCreationError(f"Unknown equipment index: {idx}")
 
     inventory: list[str] = []
@@ -166,6 +175,7 @@ def create_character(
         class_=cls["name"],
         background=background["name"],
         skill_proficiencies=skill_proficiencies,
+        class_index=class_index,
     )
 
 

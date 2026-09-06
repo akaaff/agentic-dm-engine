@@ -78,6 +78,21 @@ class Character(BaseModel):
     """Set by another character resolving "help" targeting this one;
     consumed (cleared) by this character's next attack or skill check,
     whichever comes first."""
+    class_index: str | None = None
+    """Set only for PCs/companions (mirrors monster_index) - lets the turn
+    engine re-look-up the SRD class's spellcasting ability for cast_spell."""
+    death_save_successes: int = 0
+    death_save_failures: int = 0
+    is_dead: bool = False
+    """Terminal - not one of the SRD conditions, so not tracked via
+    `conditions`. A PC reduced to 0 HP goes unconscious (a real condition,
+    via conditions.apply_condition) rather than straight to is_dead; a
+    monster reduced to 0 HP is marked is_dead immediately, same as before
+    Day 14 (monsters don't make death saves)."""
+    is_stable: bool = False
+    """3 successful death saves: stops rolling, but stays unconscious (at 0
+    HP) until healed - distinct from "still needs to roll" so the turn
+    engine knows not to prompt for another death save."""
 
 
 class GameState(BaseModel):
