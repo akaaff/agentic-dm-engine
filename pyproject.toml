@@ -12,6 +12,11 @@ dependencies = [
     "sqlalchemy>=2.0.52",
     "alembic>=1.19.2",
     "langgraph>=1.2.11",
+    "torch>=2.6.0",
+    "diffusers>=0.40.0",
+    "transformers>=5.16.1",
+    "accelerate>=1.14.0",
+    "safetensors>=0.8.0",
 ]
 
 [dependency-groups]
@@ -27,6 +32,9 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cu124"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -49,8 +57,9 @@ asyncio_mode = "auto"
 markers = [
     "integration: requires the FastAPI service + DB running (skipped by default)",
     "llm: requires a live Ollama instance (skipped by default)",
+    "imagegen: requires a CUDA GPU + the local SD-Turbo pipeline (skipped by default)",
 ]
-addopts = "-m 'not integration and not llm'"
+addopts = "-m 'not integration and not llm and not imagegen'"
 
 [tool.uv]
 package = false
