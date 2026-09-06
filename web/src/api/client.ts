@@ -81,6 +81,27 @@ export interface Character {
   stats: Record<AbilityScore, number>
   inventory: string[]
   skill_proficiencies: string[]
+  is_companion: boolean
+  persona: string | null
+}
+
+export type CampaignSize = 'one_shot' | 'short_arc' | 'full'
+
+export interface CampaignSummary {
+  id: string
+  title: string
+  size: CampaignSize
+  description: string
+}
+
+export interface StartSessionRequest {
+  campaign_id: string
+  character_id: string
+  companion_ids: string[]
+}
+
+export interface StartSessionResponse {
+  session_id: string
 }
 
 export const api = {
@@ -92,4 +113,8 @@ export const api = {
   createCharacter: (body: CreateCharacterRequest) =>
     request<Character>('/characters', { method: 'POST', body: JSON.stringify(body) }),
   getCharacter: (characterId: string) => request<Character>(`/characters/${characterId}`),
+  listCompanions: () => request<Character[]>('/companions'),
+  listCampaigns: () => request<CampaignSummary[]>('/campaigns'),
+  startSession: (body: StartSessionRequest) =>
+    request<StartSessionResponse>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
 }

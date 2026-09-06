@@ -33,7 +33,7 @@ function skillLabel(skillIndex: string): string {
     .join(' ')
 }
 
-export default function CharacterCreator() {
+export default function CharacterCreator({ onCreated }: { onCreated: (character: Character) => void }) {
   const [step, setStep] = useState(0)
 
   const [races, setRaces] = useState<RaceSummary[]>([])
@@ -196,6 +196,9 @@ export default function CharacterCreator() {
           }}
         >
           Create another character
+        </button>
+        <button type="button" onClick={() => onCreated(created)}>
+          Continue to Party Setup
         </button>
       </div>
     )

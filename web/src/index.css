@@ -143,3 +143,63 @@ button + button {
 .sheet td {
   padding: 0.15rem 0.75rem 0.15rem 0;
 }
+
+.companion-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.companion-card,
+.campaign-card {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #3a3448;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.companion-card.selected,
+.campaign-card.selected {
+  border-color: #7c4dff;
+  background: rgba(124, 77, 255, 0.1);
+}
+
+.companion-card input,
+.campaign-card input {
+  margin-top: 0.2rem;
+}
+
+.companion-meta {
+  font-size: 0.8rem;
+  color: #9d94ad;
+}
+
+.companion-persona {
+  font-size: 0.85rem;
+  margin: 0.35rem 0 0;
+}
+
+.campaign-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.campaign-size {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #3a3448;
+  color: #cfc6de;
+}
+
+.campaign-card p {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: #cfc6de;
+}
