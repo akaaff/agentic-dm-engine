@@ -21,5 +21,12 @@ class GraphState(TypedDict):
     this; the Day 11 stub intent_parser ignores it in favor of
     parsed_action being pre-supplied (see graph/nodes/intent_parser.py)."""
     parsed_action: ParsedAction | None
+    """If already set when the graph is invoked, intent_parser_node skips
+    the LLM entirely and passes it through unchanged - the escape hatch
+    scripted/offline tests use to exercise the graph deterministically."""
+    events_before: int
+    """len(game_state.events) captured by the caller right before this graph
+    invocation - narrator_node uses it to find only the events this
+    invocation actually produced."""
     narration: str | None
     scene_image_url: str | None

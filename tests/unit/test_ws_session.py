@@ -3,6 +3,12 @@ reproduces Day 7's scripted-combat fixture exactly (proving it's
 behavior-neutral over the raw engine), and (2) the multi-connection registry
 actually broadcasts to every connection in a session.
 
+Both use "debug_action" (a fully-formed ParsedAction, bypassing
+intent_parser's LLM call) and a stub narrator (graph_builder.build_graph's
+narrator_fn override) to stay fast and fully offline - Day 12 made
+intent_parser and narrator real LLM calls, and these tests are about proving
+the engine/graph/WebSocket wiring, not the LLM.
+
 (2) needs a genuinely concurrent pair of connections - Starlette's
 TestClient WebSocket transport deadlocked when driven from two connections
 at once (see CLAUDE.md), so that test runs against a real live uvicorn
@@ -31,6 +37,12 @@ from src.cli.play import (
 )
 from src.engine.actions import ParsedAction
 from src.engine.encounter import build_encounter_state
+from src.graph.graph_builder import build_graph
+from src.graph.state_schema import GraphState
+
+
+def _stub_narrator(state: GraphState) -> dict[str, Any]:
+    return {"narration": "[stub narration]"}
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +51,7 @@ def _isolated_sessions() -> None:
 
 
 def _send_action_and_get_state(ws: Any, action: ParsedAction) -> dict[str, Any]:
-    ws.send_json({"type": "player_action", "text": action.model_dump_json()})
+    ws.send_json({"type": "debug_action", "action": action.model_dump(mode="json")})
 
     narration_msg = ws.receive_json()
     assert narration_msg["type"] == "narration"
@@ -58,7 +70,13 @@ def test_websocket_reproduces_day7_scripted_fixture_exactly() -> None:
     encounter = build_demo_encounter()
     party = build_demo_party()
     initial_state = build_encounter_state(encounter, party, demo_initiative_rng())  # type: ignore[arg-type]
-    create_session("test-fixture-replay", initial_state, action_rng=demo_action_rng())  # type: ignore[arg-type]
+    action_rng = demo_action_rng()
+    create_session(
+        "test-fixture-replay",
+        initial_state,
+        action_rng=action_rng,  # type: ignore[arg-type]
+        graph=build_graph(rng=action_rng, narrator_fn=_stub_narrator),  # type: ignore[arg-type]
+    )
 
     client = TestClient(app)
     with client.websocket_connect("/ws/session/test-fixture-replay") as ws:
@@ -106,7 +124,13 @@ async def test_broadcast_reaches_every_connection_in_the_session(live_server: in
     encounter = build_demo_encounter()
     party = build_demo_party()
     initial_state = build_encounter_state(encounter, party, demo_initiative_rng())  # type: ignore[arg-type]
-    create_session("test-broadcast", initial_state, action_rng=demo_action_rng())  # type: ignore[arg-type]
+    action_rng = demo_action_rng()
+    create_session(
+        "test-broadcast",
+        initial_state,
+        action_rng=action_rng,  # type: ignore[arg-type]
+        graph=build_graph(rng=action_rng, narrator_fn=_stub_narrator),  # type: ignore[arg-type]
+    )
 
     url = f"ws://127.0.0.1:{live_server}/ws/session/test-broadcast"
     async with websockets.connect(url) as ws_a, websockets.connect(url) as ws_b:
@@ -118,7 +142,7 @@ async def test_broadcast_reaches_every_connection_in_the_session(live_server: in
 
         first_action = SCRIPTED_ACTIONS[0]
         await ws_a.send(
-            json.dumps({"type": "player_action", "text": first_action.model_dump_json()})
+            json.dumps({"type": "debug_action", "action": first_action.model_dump(mode="json")})
         )
 
         a_narration = json.loads(await ws_a.recv())

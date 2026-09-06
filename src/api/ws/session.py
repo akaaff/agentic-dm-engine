@@ -29,6 +29,7 @@ from src.cli.play import build_demo_encounter, build_demo_party
 from src.engine.actions import ParsedAction
 from src.engine.encounter import build_encounter_state
 from src.engine.state import GameState
+from src.engine.turn_engine import TurnEngineError
 from src.graph.graph_builder import build_graph
 from src.graph.state_schema import GraphState
 
@@ -56,13 +57,18 @@ def create_session(
     session_id: str,
     game_state: GameState,
     action_rng: random.Random | None = None,
+    graph: CompiledStateGraph[GraphState, Any, Any, Any] | None = None,
 ) -> Session:
     """Explicit constructor for tests (and, later, real session-start flows)
     to pre-seed a session with a specific initial state/rng before any
-    connection touches it. Overwrites any existing session with this id."""
+    connection touches it. Overwrites any existing session with this id.
+    `graph` lets tests substitute build_graph(narrator_fn=...) so an offline
+    test doesn't hit the real narrator's live Ollama call."""
     action_rng = action_rng or random.Random()
     session = Session(
-        game_state=game_state, action_rng=action_rng, graph=build_graph(rng=action_rng)
+        game_state=game_state,
+        action_rng=action_rng,
+        graph=graph or build_graph(rng=action_rng),
     )
     _sessions[session_id] = session
     return session
@@ -105,11 +111,15 @@ def _state_update_message(session: Session) -> dict[str, object]:
     return {"type": "state_update", "game_state": session.game_state.model_dump(mode="json")}
 
 
-async def _handle_client_message(session: Session, raw: dict[str, object]) -> None:
+async def _handle_client_message(
+    session: Session, websocket: WebSocket, raw: dict[str, object]
+) -> None:
     msg_type = raw.get("type")
+    raw_text = ""
+    action: ParsedAction | None = None
 
     if msg_type == "player_action":
-        action = ParsedAction.model_validate_json(raw["text"])  # type: ignore[arg-type]
+        raw_text = str(raw["text"])  # genuine free text - intent_parser_node calls the LLM on it
     elif msg_type == "player_move":
         current_actor = session.game_state.turn_order[session.game_state.current_turn]
         action = ParsedAction(
@@ -118,17 +128,39 @@ async def _handle_client_message(session: Session, raw: dict[str, object]) -> No
             params={"path": [raw["to"]]},
             raw_text="click-to-move",
         )
+    elif msg_type == "debug_action":
+        # Test/dev only: injects a fully-formed ParsedAction directly,
+        # bypassing intent_parser's LLM call entirely (see its pre-supplied-
+        # parsed_action escape hatch). Never sent by the real frontend.
+        action = ParsedAction.model_validate(raw["action"])
     else:
         return
 
     graph_input: GraphState = {
         "game_state": session.game_state,
-        "raw_text": "",
+        "raw_text": raw_text,
         "parsed_action": action,
+        "events_before": len(session.game_state.events),
         "narration": None,
         "scene_image_url": None,
     }
-    result = session.graph.invoke(graph_input)
+    try:
+        result = session.graph.invoke(graph_input)
+    except (TurnEngineError, NotImplementedError) as exc:
+        # Caught live, two real cases: (1) a free-text action can name a
+        # real-looking but invalid item/spell (e.g. the LLM extracting
+        # "dagger" as item_or_spell for a monster attack, whose SRD stat
+        # block has no such action) - TurnEngineError. (2) the intent-parser
+        # prompt describes verbs (dodge, cast_spell, skill_check, help,
+        # use_item, death_save) that turn_engine.resolve_action doesn't
+        # actually implement yet (Day 7 only built attack/move/dash/
+        # end_turn) - NotImplementedError. Both validate-then-raise before
+        # mutating state, so it's safe to just report the error back to
+        # whoever sent it and let them try again, rather than crashing the
+        # whole connection.
+        await websocket.send_json({"type": "error", "detail": str(exc)})
+        return
+
     session.game_state = result["game_state"]
 
     await _broadcast(session, {"type": "narration", "text": result["narration"]})
@@ -164,7 +196,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
 
         while True:
             raw = await websocket.receive_json()
-            await _handle_client_message(session, raw)
+            await _handle_client_message(session, websocket, raw)
     except WebSocketDisconnect:
         pass
     finally:

@@ -8,6 +8,7 @@ change at all.
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -22,8 +23,16 @@ from src.graph.state_schema import GraphState
 
 
 def build_graph(
-    rng: random.Random | None = None, srd: SrdIndex | None = None
+    rng: random.Random | None = None,
+    srd: SrdIndex | None = None,
+    narrator_fn: Callable[[GraphState], dict[str, Any]] = narrator_node,
 ) -> CompiledStateGraph[GraphState, Any, Any, Any]:
+    """narrator_fn is overridable for tests: unlike intent_parser (which
+    already skips its own LLM call whenever parsed_action is pre-supplied -
+    see graph/nodes/intent_parser.py), narrator's whole job is *producing*
+    narration, so it has no equivalent "skip if already set" escape hatch.
+    Offline tests that need to avoid a real Ollama call swap in a stub here.
+    """
     rng = rng or random.Random()
     srd = srd or load_srd()
 
@@ -33,7 +42,7 @@ def build_graph(
     # up with add_node's precise overload set the way a plain top-level
     # function reference does (mypy resolves those two shapes differently).
     graph.add_node("rules_engine", make_rules_engine_node(rng, srd))  # type: ignore[arg-type]
-    graph.add_node("narrator", narrator_node)
+    graph.add_node("narrator", narrator_fn)  # type: ignore[arg-type]
     graph.add_node("scene_image", scene_image_node)
 
     graph.add_edge(START, "intent_parser")
