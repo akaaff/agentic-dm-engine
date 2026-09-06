@@ -5,15 +5,18 @@ for the actual dice math, appends Events, checks victory/defeat, and
 advances the turn. This is the one place per-turn orchestration lives - Day
 11 wraps this exact function as the LangGraph rules_engine node.
 
-Deliberate Day 7 simplifications (documented, not silent):
-- Proficiency with equipped weapons is assumed for PCs (no proficiency
-  tracking yet) - attack_bonus always includes proficiency_bonus.
+Deliberate simplifications (documented, not silent):
+- Proficiency with equipped weapons is assumed for PCs (no weapon-specific
+  proficiency tracking) - attack_bonus always includes proficiency_bonus.
 - Movement takes an explicit path (list of intermediate squares) in
   params["path"], not just a destination - real pathfinding around
   obstacles is a future concern, not what this engine validates.
-- Only "attack", "move"/"dash", and "end_turn" verbs are handled; other
-  verbs (cast_spell, skill_check, etc.) raise NotImplementedError until a
-  later day needs them.
+- Skill checks (Day 13) use a single default DC (no per-scene DC data
+  exists yet - that's campaign/scene content, not engine scope).
+- "disengage" (Day 13) has no mechanical effect - this engine has no
+  opportunity-attack mechanic yet for it to interact with.
+- "cast_spell", "use_item", and "death_save" still raise NotImplementedError
+  (Day 14).
 """
 
 from __future__ import annotations
@@ -27,12 +30,23 @@ from src.engine.conditions import tick_conditions
 from src.engine.events import Event
 from src.engine.movement import can_afford_move, move_cost_feet
 from src.engine.position import Position
-from src.engine.rules import ability_modifier, apply_damage, resolve_attack
+from src.engine.rules import (
+    ability_check_modifier,
+    ability_modifier,
+    apply_damage,
+    resolve_attack,
+    resolve_skill_check,
+)
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
-from src.engine.state import Character, GameState
+from src.engine.state import AbilityScore, Character, GameState
 from src.engine.turn_order import next_turn
 
 _DICE_NOTATION_RE = re.compile(r"(\d+)d(\d+)([+-]\d+)?")
+
+DEFAULT_SKILL_CHECK_DC = 13
+""""Medium" difficulty per the DMG's DC guidelines - used whenever a scene
+doesn't specify its own DC, which is always true right now (no scene/
+skill_challenge content wires a DC through yet)."""
 
 
 class TurnEngineError(ValueError):
@@ -149,6 +163,14 @@ def _resolve_attack(
         else _pc_attack_params(actor, action.item_or_spell, srd)
     )
 
+    # Advantage from being helped (Day 13) is consumed by this roll whether
+    # or not it changes the outcome; disadvantage from the target dodging
+    # applies for as long as the target is dodging (until their own next
+    # turn) rather than being consumed - roll_d20 already cancels the two
+    # out together when both apply, per SRD rules.
+    advantage = actor.has_help_advantage
+    actor.has_help_advantage = False
+
     result = resolve_attack(
         defender_ac=target.ac,
         attack_bonus=params.attack_bonus,
@@ -157,6 +179,8 @@ def _resolve_attack(
         damage_bonus=params.damage_bonus,
         damage_type=params.damage_type,
         rng=rng,
+        advantage=advantage,
+        disadvantage=target.is_dodging,
     )
 
     state.events.append(
@@ -241,6 +265,90 @@ def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> N
     )
 
 
+def _normalize_skill_name(raw: str) -> str:
+    """ "Perception", "skill-perception", "Sleight of Hand" -> "perception",
+    "skill-perception", "sleight-of-hand" (srd.skills' bare-index form)."""
+    return raw.strip().lower().replace(" ", "-").removeprefix("skill-")
+
+
+def _skill_ability(skill_name: str, srd: SrdIndex) -> AbilityScore:
+    normalized = _normalize_skill_name(skill_name)
+    skill_data = srd.skills.get(normalized)
+    if skill_data is None:
+        raise TurnEngineError(f"Unknown skill: {skill_name!r}")
+    ability: AbilityScore = skill_data["ability_score"]["index"].upper()
+    return ability
+
+
+def _resolve_skill_check(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> None:
+    skill = action.params.get("skill")
+    if not skill:
+        raise TurnEngineError("skill_check action requires params['skill']")
+
+    ability = _skill_ability(skill, srd)
+    proficient = f"skill-{_normalize_skill_name(skill)}" in actor.skill_proficiencies
+    modifier = ability_check_modifier(actor, ability, proficient=proficient)
+
+    advantage = actor.has_help_advantage
+    actor.has_help_advantage = False
+
+    result, success = resolve_skill_check(
+        modifier=modifier,
+        dc=DEFAULT_SKILL_CHECK_DC,
+        rng=rng,
+        advantage=advantage,
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="skill_check",
+            payload={
+                "skill": skill,
+                "ability": ability,
+                "dc": DEFAULT_SKILL_CHECK_DC,
+                "roll_total": result.total,
+                "success": success,
+            },
+        )
+    )
+
+
+def _resolve_dodge(state: GameState, actor: Character) -> None:
+    actor.is_dodging = True
+    state.events.append(
+        Event(round=state.round, turn_index=state.current_turn, actor=actor.id, type="dodge")
+    )
+
+
+def _resolve_disengage(state: GameState, actor: Character) -> None:
+    state.events.append(
+        Event(round=state.round, turn_index=state.current_turn, actor=actor.id, type="disengage")
+    )
+
+
+def _resolve_help(state: GameState, actor: Character, action: ParsedAction) -> None:
+    if action.target is None:
+        raise TurnEngineError("help action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown help target: {action.target}")
+
+    target.has_help_advantage = True
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="help",
+            payload={"target": target.id},
+        )
+    )
+
+
 def _check_victory_defeat(state: GameState) -> None:
     party_alive = any(c.hp > 0 for c in state.characters.values() if c.is_pc)
     monsters_alive = any(c.hp > 0 for c in state.characters.values() if not c.is_pc)
@@ -286,10 +394,24 @@ def resolve_action(
     if actor.hp <= 0:
         raise TurnEngineError(f"{actor.id} is down and cannot act")
 
+    # Dodging protects "until the start of your next turn" - that window
+    # ends right now, since this actor's next turn is the one being
+    # resolved. Cleared before dispatch so a fresh "dodge" this turn (which
+    # re-sets it to True) isn't immediately undone.
+    actor.is_dodging = False
+
     if action.verb == "attack":
         _resolve_attack(state, actor, action, rng, srd)
     elif action.verb in ("move", "dash"):
         _resolve_move(state, actor, action)
+    elif action.verb == "skill_check":
+        _resolve_skill_check(state, actor, action, rng, srd)
+    elif action.verb == "dodge":
+        _resolve_dodge(state, actor)
+    elif action.verb == "disengage":
+        _resolve_disengage(state, actor)
+    elif action.verb == "help":
+        _resolve_help(state, actor, action)
     elif action.verb == "end_turn":
         pass
     else:

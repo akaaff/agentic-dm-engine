@@ -27,6 +27,13 @@ def test_bards_two_proficiency_pools_are_satisfied() -> None:
     companion = build_companion(spec)
     assert companion.class_ == "Bard"
     assert companion.hp > 0
+    # Instrument proficiencies (lute/flute/lyre) must NOT leak into
+    # skill_proficiencies; skill-insight is deduplicated (chosen by Pip AND
+    # granted automatically by the Acolyte background - a real duplicate
+    # this test caught before dict.fromkeys was added).
+    assert sorted(companion.skill_proficiencies) == sorted(
+        ["skill-performance", "skill-persuasion", "skill-insight", "skill-religion"]
+    )
 
 
 def test_every_companion_spec_builds_without_error() -> None:

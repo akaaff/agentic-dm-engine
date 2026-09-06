@@ -33,6 +33,10 @@ class SrdIndex:
     classes: dict[str, SrdEntry]
     subclasses: dict[str, SrdEntry]
     backgrounds: dict[str, SrdEntry]
+    skills: dict[str, SrdEntry]
+    """Keyed by the bare skill index (e.g. "perception"), NOT the
+    proficiency-style "skill-perception" used elsewhere (chosen_skills,
+    Character.skill_proficiencies) - see turn_engine._normalize_skill_name."""
 
 
 def _load_indexed(data_dir: Path, filename: str) -> dict[str, SrdEntry]:
@@ -53,4 +57,5 @@ def load_srd(data_dir: Path = DEFAULT_DATA_DIR) -> SrdIndex:
         classes=_load_indexed(data_dir, "5e-SRD-Classes.json"),
         subclasses=_load_indexed(data_dir, "5e-SRD-Subclasses.json"),
         backgrounds=_load_indexed(data_dir, "5e-SRD-Backgrounds.json"),
+        skills=_load_indexed(data_dir, "5e-SRD-Skills.json"),
     )

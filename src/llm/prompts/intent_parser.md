@@ -7,7 +7,7 @@ Valid verbs and what they mean:
 - "dodge": the player takes the Dodge action (focuses on avoiding attacks this turn, no target needed).
 - "disengage": the player takes the Disengage action (withdraws from combat without provoking opportunity attacks, no target needed).
 - "use_item": the player uses an item from their inventory (a potion, a scroll, etc). Set "item_or_spell" to the item name if given.
-- "skill_check": the player attempts something needing an ability/skill check (persuasion, perception, athletics, etc) that isn't combat. Set params.skill to the skill name.
+- "skill_check": the player attempts an action that would be resolved with an ability/skill check rather than an attack roll. This includes ordinary in-character phrasing, not just explicit "make a check" requests - e.g. "I try to intimidate the goblin" -> intimidation, "I sneak past" -> stealth, "I search the room" -> investigation or perception, "I try to persuade them" -> persuasion, "I climb the wall" -> athletics. Set params.skill to the skill name, and "target" if the check is directed at a specific character.
 - "help": the player takes the Help action to assist another character. Set "target" to who they're helping if named.
 - "end_turn": the player explicitly says they're done / pass / end their turn with no other action.
 - "invalid": use this for anything nonsensical, out of scope for the game, referencing a character that isn't listed below, or that doesn't fit any verb above.

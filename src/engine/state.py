@@ -65,6 +65,19 @@ class Character(BaseModel):
     """Set only for monsters (see encounter.monster_to_character) - lets the
     turn engine re-look-up the SRD stat block's actions (attack bonus,
     damage dice) when this character attacks."""
+    skill_proficiencies: list[str] = []
+    """"skill-x" indices (same format as chosen_skills), populated by
+    character_creation.py from chosen class skills + the background's fixed
+    proficiencies - previously derived at creation time but never stored."""
+    is_dodging: bool = False
+    """True from resolving a "dodge" action until the start of this
+    character's own next turn (cleared there, not by a fixed round count -
+    it depends on whose turn it is next, which conditions.tick_conditions'
+    once-per-round model doesn't represent)."""
+    has_help_advantage: bool = False
+    """Set by another character resolving "help" targeting this one;
+    consumed (cleared) by this character's next attack or skill check,
+    whichever comes first."""
 
 
 class GameState(BaseModel):

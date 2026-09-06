@@ -48,6 +48,10 @@ def test_create_human_fighter_end_to_end() -> None:
     assert sorted(character.inventory) == sorted(
         ["clothes-common", "pouch", "chain-mail", "shield"]
     )
+    # chosen class skills + Acolyte's fixed background proficiencies
+    assert sorted(character.skill_proficiencies) == sorted(
+        ["skill-athletics", "skill-perception", "skill-insight", "skill-religion"]
+    )
 
 
 def test_create_elf_wizard_end_to_end() -> None:
@@ -74,6 +78,9 @@ def test_create_elf_wizard_end_to_end() -> None:
     assert character.speed == 30
     assert character.spell_slots == {1: 2}
     assert sorted(character.inventory) == sorted(["spellbook", "clothes-common", "pouch"])
+    assert sorted(character.skill_proficiencies) == sorted(
+        ["skill-arcana", "skill-history", "skill-insight", "skill-religion"]
+    )
 
 
 def test_wrong_number_of_skill_choices_rejected() -> None:

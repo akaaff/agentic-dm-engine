@@ -29,27 +29,37 @@ def _parse(utterance: str) -> dict[str, Any]:
     }
     result = intent_parser_node(state)
     action = result["parsed_action"]
-    return {"verb": action.verb, "target": action.target, "raw_text": action.raw_text}
+    return {
+        "verb": action.verb,
+        "target": action.target,
+        "raw_text": action.raw_text,
+        "skill": action.params.get("skill"),
+    }
 
 
 GOLDEN_CASES = [
-    ("I attack goblin_1 with my sword", "attack", "goblin_1"),
-    ("I attack goblin_2", "attack", "goblin_2"),
-    ("I dodge incoming attacks", "dodge", None),
-    ("I disengage and back away from combat", "disengage", None),
-    ("I use a healing potion from my inventory", "use_item", None),
-    ("I would like to order a large pepperoni pizza", "invalid", None),
+    ("I attack goblin_1 with my sword", "attack", "goblin_1", None),
+    ("I attack goblin_2", "attack", "goblin_2", None),
+    ("I dodge incoming attacks", "dodge", None, None),
+    ("I disengage and back away from combat", "disengage", None, None),
+    ("I use a healing potion from my inventory", "use_item", None, None),
+    ("I would like to order a large pepperoni pizza", "invalid", None, None),
+    # Regression case (see CLAUDE.md): in-character phrasing without the
+    # word "check" was initially misclassified as invalid.
+    ("I try to intimidate the goblin into backing off", "skill_check", None, "intimidation"),
 ]
 
 
-@pytest.mark.parametrize("utterance,expected_verb,expected_target", GOLDEN_CASES)
+@pytest.mark.parametrize("utterance,expected_verb,expected_target,expected_skill", GOLDEN_CASES)
 def test_intent_parser_golden_cases(
-    utterance: str, expected_verb: str, expected_target: str | None
+    utterance: str, expected_verb: str, expected_target: str | None, expected_skill: str | None
 ) -> None:
     result = _parse(utterance)
     assert result["verb"] == expected_verb, f"utterance={utterance!r} -> {result}"
     if expected_target is not None:
         assert result["target"] == expected_target, f"utterance={utterance!r} -> {result}"
+    if expected_skill is not None:
+        assert result["skill"] == expected_skill, f"utterance={utterance!r} -> {result}"
     assert result["raw_text"] == utterance
 
 

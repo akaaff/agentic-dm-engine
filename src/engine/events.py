@@ -25,6 +25,9 @@ EventType = Literal[
     "spell_cast",
     "death",
     "action_invalid",
+    "dodge",
+    "disengage",
+    "help",
 ]
 
 

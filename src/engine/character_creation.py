@@ -129,6 +129,23 @@ def create_character(
     hp = max(1, cls["hit_die"] + con_mod)
     ac = _compute_ac(inventory, srd.equipment, dex_mod)
 
+    # chosen_skills can include non-skill proficiencies (e.g. Bard's musical
+    # instruments - see CLAUDE.md); only "skill-*" entries count here.
+    # Deduplicated (via dict.fromkeys, which preserves order) since a class
+    # skill choice and a background's fixed proficiency can genuinely
+    # overlap - e.g. Pip Larkspur (Bard, Acolyte) chooses skill-insight
+    # *and* Acolyte grants it automatically.
+    skill_proficiencies = list(
+        dict.fromkeys(
+            [s for s in chosen_skills if s.startswith("skill-")]
+            + [
+                p["index"]
+                for p in background.get("starting_proficiencies", [])
+                if p["index"].startswith("skill-")
+            ]
+        )
+    )
+
     return Character(
         id=character_id,
         name=name,
@@ -148,6 +165,7 @@ def create_character(
         race=race["name"],
         class_=cls["name"],
         background=background["name"],
+        skill_proficiencies=skill_proficiencies,
     )
 
 
