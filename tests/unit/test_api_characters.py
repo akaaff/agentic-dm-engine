@@ -55,6 +55,41 @@ def test_list_races_includes_human(client: TestClient) -> None:
     indices = {r["index"] for r in response.json()}
     assert "human" in indices
     assert "elf" in indices
+    human = next(r for r in response.json() if r["index"] == "human")
+    assert human["ability_bonuses"] == {"str": 1, "dex": 1, "con": 1, "int": 1, "wis": 1, "cha": 1}
+
+
+def test_get_class_detail_exposes_skill_choice_count_and_options(client: TestClient) -> None:
+    response = client.get("/characters/classes/fighter")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["skill_choose"] == 2
+    assert "skill-athletics" in body["skill_options"]
+    assert len(body["skill_options"]) == 8
+
+
+def test_get_class_detail_sums_multiple_proficiency_choice_pools(client: TestClient) -> None:
+    # Regression guard for the Bard two-pool gotcha (see CLAUDE.md) - the
+    # wizard needs this same count to ask for the right number of choices.
+    response = client.get("/characters/classes/bard")
+    assert response.status_code == 200
+    assert response.json()["skill_choose"] == 6
+
+
+def test_get_unknown_class_detail_returns_404(client: TestClient) -> None:
+    response = client.get("/characters/classes/not-a-class")
+    assert response.status_code == 404
+
+
+def test_list_equipment_returns_only_weapons_and_armor(client: TestClient) -> None:
+    response = client.get("/characters/equipment")
+    assert response.status_code == 200
+    body = response.json()
+    categories = {item["category"] for item in body}
+    assert categories == {"weapon", "armor"}
+    indices = {item["index"] for item in body}
+    assert "longsword" in indices
+    assert "chain-mail" in indices
 
 
 def test_list_classes_includes_fighter_with_hit_die(client: TestClient) -> None:
@@ -84,6 +119,17 @@ def test_create_character_end_to_end_and_persists(client: TestClient) -> None:
     assert fetched["hp"] == 12
     assert fetched["ac"] == 18
     assert fetched["inventory"] == created["inventory"]
+    # Regression guard: found live via the Day 17 character-creator wizard's
+    # own re-fetch-after-create check - CharacterRecord predates
+    # Character.class_index/skill_proficiencies (Day 14/13) and silently
+    # dropped both on every single create, regardless of class.
+    assert fetched["class_index"] == "fighter"
+    assert set(fetched["skill_proficiencies"]) == {
+        "skill-athletics",
+        "skill-perception",
+        "skill-insight",
+        "skill-religion",
+    }
 
 
 def test_get_unknown_character_returns_404(client: TestClient) -> None:

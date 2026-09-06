@@ -32,6 +32,12 @@ class CharacterRecord(Base):
     is_pc: Mapped[bool] = mapped_column(default=True)
     is_companion: Mapped[bool] = mapped_column(default=False)
     persona: Mapped[str | None] = mapped_column(default=None)
+    class_index: Mapped[str | None] = mapped_column(default=None)
+    """Added Day 17 - was missing since Day 8, before Character.class_index
+    (Day 14, needed for spellcasting-ability lookup) existed. Found live via
+    the character-creator wizard's own re-fetch-after-create check: a
+    created Fighter round-tripped fine (no spellcasting to lose), but the
+    field was silently dropped for every character regardless of class."""
     hp: Mapped[int]
     max_hp: Mapped[int]
     ac: Mapped[int]
@@ -39,6 +45,9 @@ class CharacterRecord(Base):
     proficiency_bonus: Mapped[int]
     stats: Mapped[dict[str, int]] = mapped_column(JSON)
     inventory: Mapped[list[str]] = mapped_column(JSON, default=list)
+    skill_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list)
+    """Also added Day 17, same gap as class_index above (predates Day 13,
+    when Character.skill_proficiencies was introduced) - found the same way."""
     spell_slots: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
     conditions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
