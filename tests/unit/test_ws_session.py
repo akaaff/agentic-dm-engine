@@ -172,3 +172,45 @@ async def test_broadcast_reaches_every_connection_in_the_session(live_server: in
     assert b_state["type"] == "state_update"
     assert a_state["game_state"] == b_state["game_state"]
     assert a_awaiting["type"] == "awaiting_input"
+
+
+def test_a_rejected_action_still_gets_re_prompted_for_input() -> None:
+    # Regression guard, found live (Day 19): a TurnEngineError correctly
+    # leaves the turn with the same actor (nothing mutated), but the error
+    # path used to just report the error and stop - never re-sending
+    # awaiting_input - so a client that optimistically clears its own
+    # "it's my turn" state on send (to block double-submission) had no way
+    # to learn it could just retry, even though the server was happy to
+    # accept one.
+    encounter = build_demo_encounter()
+    party = build_demo_party()
+    initial_state = build_encounter_state(encounter, party, demo_initiative_rng())  # type: ignore[arg-type]
+    action_rng = demo_action_rng()
+    create_session(
+        "test-rejected-action",
+        initial_state,
+        action_rng=action_rng,  # type: ignore[arg-type]
+        graph=build_graph(rng=action_rng, narrator_fn=_stub_narrator),  # type: ignore[arg-type]
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws/session/test-rejected-action") as ws:
+        ws.receive_json()  # initial state_update
+        awaiting = ws.receive_json()
+        current_actor = awaiting["actor"]
+
+        bad_action = ParsedAction(
+            actor=current_actor,
+            verb="attack",
+            target="goblin_1",
+            item_or_spell="not-a-real-weapon",
+            raw_text="I attack with my not-a-real-weapon",
+        )
+        ws.send_json({"type": "debug_action", "action": bad_action.model_dump(mode="json")})
+
+        error_msg = ws.receive_json()
+        assert error_msg["type"] == "error"
+
+        retry_prompt = ws.receive_json()
+        assert retry_prompt["type"] == "awaiting_input"
+        assert retry_prompt["actor"] == current_actor
