@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import CharacterSheet from '../components/CharacterSheet'
 import CombatGrid from '../components/CombatGrid'
 import NarrationFeed from '../components/NarrationFeed'
+import SceneImagePanel from '../components/SceneImagePanel'
 import { useSessionSocket } from '../ws/sessionClient'
 
 export default function LivePlay({
@@ -50,24 +51,19 @@ export default function LivePlay({
             {gameState.status === 'aborted' && 'The encounter ended early.'}
           </p>
         )}
-        {gameState?.battle_map && (
-          <CombatGrid
-            battleMap={gameState.battle_map}
-            characters={gameState.characters}
-            currentActorId={gameState.turn_order[gameState.current_turn]}
-            myCharacterId={myCharacterId}
-            canMove={isMyTurn}
-            onMoveTo={sendPlayerMove}
-          />
-        )}
-        {sceneImageUrl && (
-          // scene_image_url is a local filesystem path (Day 16 - no media
-          // endpoint exists yet, see DECISIONS.md), so it can't be rendered
-          // as a real <img> src from the browser. Day 21 ("scene image
-          // panel") is where a static-files route gets mounted and this
-          // becomes an actual picture; for now just surface that one exists.
-          <p className="scene-image-placeholder">A new scene image was generated.</p>
-        )}
+        <div className="scene-row">
+          {gameState?.battle_map && (
+            <CombatGrid
+              battleMap={gameState.battle_map}
+              characters={gameState.characters}
+              currentActorId={gameState.turn_order[gameState.current_turn]}
+              myCharacterId={myCharacterId}
+              canMove={isMyTurn}
+              onMoveTo={sendPlayerMove}
+            />
+          )}
+          <SceneImagePanel url={sceneImageUrl} />
+        </div>
         <NarrationFeed entries={narrationLog} />
         <form className="action-form" onSubmit={handleSubmit}>
           <input
