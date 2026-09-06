@@ -161,6 +161,22 @@ def _monster_attack_params(
     )
 
 
+def _validate_attack_target(actor: Character, target: Character) -> None:
+    """Rejects friendly fire: `is_pc` doubles as "which side" a character is
+    on (party vs monsters), so a same-side target is never a legitimate
+    attack. Found live on Day 15's first autoplay run - a companion's
+    free-text turn ("I attack Grom") named an ally, since intent_parser's
+    character list has no notion of allegiance for the LLM to reason about
+    (the same underlying gap Day 12 flagged for monster free text, now
+    confirmed to also hit companion-vs-companion). Validating here, at the
+    one place both _resolve_attack and _resolve_cast_spell funnel through,
+    closes it regardless of which LLM call picked the bad target - no
+    prompt engineering can guarantee zero-shot compliance from a small
+    model, so the deterministic engine enforces the actual game rule."""
+    if target.is_pc == actor.is_pc:
+        raise TurnEngineError(f"{actor.id} cannot attack {target.id} - same side")
+
+
 def _resolve_attack(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> None:
@@ -169,6 +185,7 @@ def _resolve_attack(
     target = state.characters.get(action.target)
     if target is None:
         raise TurnEngineError(f"Unknown attack target: {action.target}")
+    _validate_attack_target(actor, target)
 
     params = (
         _monster_attack_params(actor, action.item_or_spell, srd)
@@ -452,6 +469,7 @@ def _resolve_cast_spell(
     target = state.characters.get(action.target)
     if target is None:
         raise TurnEngineError(f"Unknown spell target: {action.target}")
+    _validate_attack_target(actor, target)
 
     params, spell_level = _spell_attack_params(actor, action.item_or_spell, srd)
 

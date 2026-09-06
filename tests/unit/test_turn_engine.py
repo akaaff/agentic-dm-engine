@@ -159,3 +159,25 @@ def test_resolve_action_rejects_a_downed_actor() -> None:
     action = ParsedAction(actor=current_actor_id, verb="end_turn", raw_text="downed")
     with pytest.raises(TurnEngineError):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_resolve_action_rejects_a_pc_attacking_another_pc() -> None:
+    # Regression guard: found live on Day 15's first autoplay run, a
+    # companion's free-text turn named an ally as its attack target.
+    state = _build_demo_state([18, 10, 8, 3])
+    assert state.turn_order[0] == "thorin"
+    action = ParsedAction(
+        actor="thorin", verb="attack", target="elrond", raw_text="I attack Elrond"
+    )
+    with pytest.raises(TurnEngineError, match="same side"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_resolve_action_rejects_a_monster_attacking_another_monster() -> None:
+    state = _build_demo_state([18, 10, 8, 3])
+    state.current_turn = state.turn_order.index("goblin_1")
+    action = ParsedAction(
+        actor="goblin_1", verb="attack", target="goblin_2", raw_text="the goblin attacks its ally"
+    )
+    with pytest.raises(TurnEngineError, match="same side"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]

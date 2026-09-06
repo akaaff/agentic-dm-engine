@@ -176,6 +176,22 @@ def test_cast_spell_rejects_unknown_spell_name() -> None:
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
+def test_cast_spell_rejects_a_same_side_target() -> None:
+    # Same regression class as test_turn_engine.py's attack version, added
+    # for the spell path too (Day 15).
+    state = _build_demo_state(_INITIATIVE)
+    _end_turn(state, "thorin")
+    action = ParsedAction(
+        actor="elrond",
+        verb="cast_spell",
+        target="thorin",
+        item_or_spell="fire bolt",
+        raw_text="I cast fire bolt at Thorin",
+    )
+    with pytest.raises(TurnEngineError, match="same side"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
 # ----------------------------------------------------------------- use_item
 
 
