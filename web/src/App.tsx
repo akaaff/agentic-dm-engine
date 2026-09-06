@@ -3,12 +3,13 @@ import { api, ApiError, type Character } from './api/client'
 import CharacterCreator from './screens/CharacterCreator'
 import PartySetup from './screens/PartySetup'
 import CampaignSelect from './screens/CampaignSelect'
+import LivePlay from './screens/LivePlay'
 
 type Flow =
   | { screen: 'character' }
   | { screen: 'party'; character: Character }
   | { screen: 'campaign'; character: Character; companionIds: string[] }
-  | { screen: 'ready'; sessionId: string }
+  | { screen: 'live'; sessionId: string; characterId: string }
 
 function App() {
   const [flow, setFlow] = useState<Flow>({ screen: 'character' })
@@ -48,7 +49,7 @@ function App() {
               character_id: character.id,
               companion_ids: companionIds,
             })
-            setFlow({ screen: 'ready', sessionId: session_id })
+            setFlow({ screen: 'live', sessionId: session_id, characterId: character.id })
           } catch (err) {
             setStartError(err instanceof ApiError ? err.message : 'Failed to reach the server')
           } finally {
@@ -59,15 +60,7 @@ function App() {
     )
   }
 
-  return (
-    <div className="wizard">
-      <h1>Session created!</h1>
-      <p>
-        Session id <code>{flow.sessionId}</code> is recorded and ready. Live play (Day 19) will
-        connect to it over the WebSocket from here.
-      </p>
-    </div>
-  )
+  return <LivePlay sessionId={flow.sessionId} myCharacterId={flow.characterId} />
 }
 
 export default App

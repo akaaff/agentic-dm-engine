@@ -203,3 +203,130 @@ button + button {
   font-size: 0.85rem;
   color: #cfc6de;
 }
+
+.live-play {
+  width: 100%;
+  max-width: 1000px;
+  padding: 1.5rem;
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 1.5rem;
+}
+
+.live-play-main h1 {
+  font-size: 1.3rem;
+  text-transform: capitalize;
+}
+
+.status-banner {
+  font-weight: bold;
+}
+
+.scene-image-placeholder {
+  font-size: 0.85rem;
+  font-style: italic;
+  color: #9d94ad;
+}
+
+.narration-feed {
+  height: 320px;
+  overflow-y: auto;
+  border: 1px solid #3a3448;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background: #1c1924;
+  margin-bottom: 1rem;
+}
+
+.narration-empty {
+  color: #766c87;
+  font-style: italic;
+}
+
+.narration-entry {
+  margin: 0 0 0.6rem;
+  line-height: 1.4;
+}
+
+.action-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.action-form input {
+  flex: 1;
+}
+
+.live-play-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.character-sheet {
+  border: 1px solid #3a3448;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+}
+
+.character-sheet.ally {
+  border-left: 3px solid #4dabff;
+}
+
+.character-sheet.enemy {
+  border-left: 3px solid #ff6b6b;
+}
+
+.character-sheet.current-turn {
+  background: rgba(124, 77, 255, 0.12);
+  border-color: #7c4dff;
+}
+
+.character-sheet.dead {
+  opacity: 0.5;
+}
+
+.character-sheet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.9rem;
+}
+
+.turn-badge {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: #7c4dff;
+  color: white;
+}
+
+.character-sheet-meta {
+  font-size: 0.75rem;
+  color: #9d94ad;
+  margin-bottom: 0.4rem;
+}
+
+.hp-bar-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #3a3448;
+  overflow: hidden;
+}
+
+.hp-bar-fill {
+  height: 100%;
+  background: #4caf50;
+}
+
+.hp-label {
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+  color: #cfc6de;
+}
+
+.conditions {
+  font-size: 0.75rem;
+  color: #ffcc66;
+  margin-top: 0.25rem;
+}
