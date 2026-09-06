@@ -141,6 +141,7 @@ async def _handle_client_message(
         "raw_text": raw_text,
         "parsed_action": action,
         "events_before": len(session.game_state.events),
+        "round_before": session.game_state.round,
         "narration": None,
         "scene_image_url": None,
     }

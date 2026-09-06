@@ -69,6 +69,7 @@ def _graph_state(
         "raw_text": raw_text,
         "parsed_action": parsed_action,
         "events_before": 0,
+        "round_before": 1,
         "narration": None,
         "scene_image_url": None,
     }

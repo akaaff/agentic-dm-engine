@@ -28,5 +28,11 @@ class GraphState(TypedDict):
     """len(game_state.events) captured by the caller right before this graph
     invocation - narrator_node uses it to find only the events this
     invocation actually produced."""
+    round_before: int
+    """game_state.round captured by the caller right before this graph
+    invocation (Day 16) - scene_image_node compares it against the
+    post-resolution round to detect a round boundary, since no event type
+    actually marks one (EventType has "turn_started"/"turn_ended" entries,
+    but nothing in turn_engine ever emits them)."""
     narration: str | None
     scene_image_url: str | None

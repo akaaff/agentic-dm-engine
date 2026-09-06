@@ -34,14 +34,19 @@ def build_graph(
     srd: SrdIndex | None = None,
     narrator_fn: Callable[[GraphState], dict[str, Any]] = narrator_node,
     player_agent_fn: Callable[[GraphState], dict[str, Any]] = player_agent_node,
+    scene_image_fn: Callable[[GraphState], dict[str, Any]] = scene_image_node,
 ) -> CompiledStateGraph[GraphState, Any, Any, Any]:
-    """narrator_fn/player_agent_fn are overridable for tests: unlike
-    intent_parser (which already skips its own LLM call whenever
-    parsed_action is pre-supplied - see graph/nodes/intent_parser.py),
-    narrator's whole job is *producing* narration and player_agent's whole
-    job is *producing* raw_text for a companion, so neither has an
-    equivalent "skip if already set" escape hatch reachable from outside.
-    Offline tests that need to avoid a real Ollama call swap in a stub here.
+    """narrator_fn/player_agent_fn/scene_image_fn are overridable for tests:
+    unlike intent_parser (which already skips its own LLM call whenever
+    parsed_action is pre-supplied - see graph/nodes/intent_parser.py), none
+    of the three has an equivalent "skip if already set" escape hatch
+    reachable from outside - narrator produces narration, player_agent
+    produces raw_text, scene_image produces an image file, and Day 16 made
+    the last of these real too (a local SD-Turbo call). Offline tests that
+    need to avoid a real Ollama/SD-Turbo call swap in a stub here - the
+    default offline suite always does for scene_image_fn (see
+    tests/unit/test_ws_session.py), since letting it run for real would
+    download and load SD-Turbo on every offline test run.
     """
     rng = rng or random.Random()
     srd = srd or load_srd()
@@ -61,7 +66,7 @@ def build_graph(
     # function reference does (mypy resolves those two shapes differently).
     graph.add_node("rules_engine", make_rules_engine_node(rng, srd))  # type: ignore[arg-type]
     graph.add_node("narrator", narrator_fn)  # type: ignore[arg-type]
-    graph.add_node("scene_image", scene_image_node)
+    graph.add_node("scene_image", scene_image_fn)  # type: ignore[arg-type]
 
     graph.add_edge(START, "player_agent")
     graph.add_edge("player_agent", "intent_parser")

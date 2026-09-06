@@ -46,6 +46,10 @@ def _stub_narrator(state: GraphState) -> dict[str, Any]:
     return {"narration": "[stub narration]"}
 
 
+def _stub_scene_image(state: GraphState) -> dict[str, Any]:
+    return {"scene_image_url": None}
+
+
 def _stub_player_agent(state: GraphState) -> dict[str, Any]:
     game_state = state["game_state"]
     actor_id = game_state.turn_order[game_state.current_turn]
@@ -83,6 +87,7 @@ def test_companions_empty_turn_flows_through_player_agent_to_resolution() -> Non
         srd=_SRD,
         narrator_fn=_stub_narrator,
         player_agent_fn=_stub_player_agent,
+        scene_image_fn=_stub_scene_image,
     )
 
     graph_input: GraphState = {
@@ -90,6 +95,7 @@ def test_companions_empty_turn_flows_through_player_agent_to_resolution() -> Non
         "raw_text": "",
         "parsed_action": None,
         "events_before": 0,
+        "round_before": 1,
         "narration": None,
         "scene_image_url": None,
     }

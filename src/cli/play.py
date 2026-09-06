@@ -280,11 +280,13 @@ def run_autoplay(verbose: bool = True) -> tuple[GameState, list[str]]:
             parsed_action = None
 
         events_before = len(state.events)
+        round_before = state.round
         graph_input: GraphState = {
             "game_state": state,
             "raw_text": "",
             "parsed_action": parsed_action,
             "events_before": events_before,
+            "round_before": round_before,
             "narration": None,
             "scene_image_url": None,
         }
@@ -310,6 +312,8 @@ def run_autoplay(verbose: bool = True) -> tuple[GameState, list[str]]:
             narration_log.append(narration)
         if verbose:
             print(f"[{actor.id}] {narration}")
+            if result["scene_image_url"]:
+                print(f"  [scene image] {result['scene_image_url']}")
 
         new_events = state.events[events_before:]
         if len(new_events) == 1 and new_events[0].type == "action_invalid":

@@ -45,6 +45,13 @@ def _stub_narrator(state: GraphState) -> dict[str, Any]:
     return {"narration": "[stub narration]"}
 
 
+def _stub_scene_image(state: GraphState) -> dict[str, Any]:
+    # Day 16 made scene_image real (a local SD-Turbo call) - these tests are
+    # about the WS/graph wiring, not image generation, so stub it out the
+    # same way _stub_narrator avoids a real Ollama call.
+    return {"scene_image_url": None}
+
+
 @pytest.fixture(autouse=True)
 def _isolated_sessions() -> None:
     reset_sessions()
@@ -75,7 +82,11 @@ def test_websocket_reproduces_day7_scripted_fixture_exactly() -> None:
         "test-fixture-replay",
         initial_state,
         action_rng=action_rng,  # type: ignore[arg-type]
-        graph=build_graph(rng=action_rng, narrator_fn=_stub_narrator),  # type: ignore[arg-type]
+        graph=build_graph(
+            rng=action_rng,  # type: ignore[arg-type]
+            narrator_fn=_stub_narrator,
+            scene_image_fn=_stub_scene_image,
+        ),
     )
 
     client = TestClient(app)
@@ -129,7 +140,11 @@ async def test_broadcast_reaches_every_connection_in_the_session(live_server: in
         "test-broadcast",
         initial_state,
         action_rng=action_rng,  # type: ignore[arg-type]
-        graph=build_graph(rng=action_rng, narrator_fn=_stub_narrator),  # type: ignore[arg-type]
+        graph=build_graph(
+            rng=action_rng,  # type: ignore[arg-type]
+            narrator_fn=_stub_narrator,
+            scene_image_fn=_stub_scene_image,
+        ),
     )
 
     url = f"ws://127.0.0.1:{live_server}/ws/session/test-broadcast"

@@ -53,6 +53,7 @@ def test_every_companion_declares_a_parseable_action_with_a_visible_enemy(
         "raw_text": "",
         "parsed_action": None,
         "events_before": 0,
+        "round_before": 1,
         "narration": None,
         "scene_image_url": None,
     }
@@ -64,6 +65,7 @@ def test_every_companion_declares_a_parseable_action_with_a_visible_enemy(
         "raw_text": raw_text,
         "parsed_action": None,
         "events_before": 0,
+        "round_before": 1,
         "narration": None,
         "scene_image_url": None,
     }

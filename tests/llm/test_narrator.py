@@ -28,6 +28,7 @@ def _narrate(events: list[Event]) -> str:
         "raw_text": "",
         "parsed_action": None,
         "events_before": 0,
+        "round_before": 1,
         "narration": None,
         "scene_image_url": None,
     }
@@ -93,6 +94,7 @@ def test_narrator_returns_empty_for_no_new_events() -> None:
         "raw_text": "",
         "parsed_action": None,
         "events_before": 0,
+        "round_before": 1,
         "narration": None,
         "scene_image_url": None,
     }

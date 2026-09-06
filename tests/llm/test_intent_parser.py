@@ -24,6 +24,7 @@ def _parse(utterance: str) -> dict[str, Any]:
         "raw_text": utterance,
         "parsed_action": None,
         "events_before": 0,
+        "round_before": 1,
         "narration": None,
         "scene_image_url": None,
     }
@@ -74,6 +75,7 @@ def test_intent_parser_preserves_actor_id() -> None:
         "raw_text": "I attack goblin_1",
         "parsed_action": None,
         "events_before": 0,
+        "round_before": 1,
         "narration": None,
         "scene_image_url": None,
     }

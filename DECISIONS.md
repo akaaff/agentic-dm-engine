@@ -38,7 +38,9 @@ Both sibling repos use Postgres (one for pgvector, one for general relational st
 
 Scene images are generated with SD-Turbo (SD1.5-distilled, ~2-3GB VRAM, 1-4 step inference), not full SDXL or SDXL-Turbo (~7GB).
 
-**Why:** the local Ollama teacher model (`qwen2.5:7b-instruct`, ~5-6GB VRAM loaded) and the image model need to coexist on a single RTX 3080 (10GB total). SD-Turbo's smaller footprint means both can stay loaded simultaneously without building GPU model-swap/unload orchestration. Actual combined VRAM usage is measured live on Day 14 (`nvidia-smi` while both are in flight) rather than assumed from these estimates - see the engineering log in `CLAUDE.md` once that day lands.
+**Why:** the local Ollama teacher model (`qwen2.5:7b-instruct`, ~5-6GB VRAM loaded) and the image model need to coexist on a single RTX 3080 (10GB total). SD-Turbo's smaller footprint means both can stay loaded simultaneously without building GPU model-swap/unload orchestration.
+
+**Measured live on Day 16** (`nvidia-smi` polled every 3s while a real generation ran with the teacher model already loaded): baseline with only the Ollama teacher loaded was ~5.85GB; with SD-Turbo's pipeline also loaded and a generation in flight, combined usage settled at **~9.55GB**, leaving ~0.7GB headroom on the 10GB card. Tighter than the ~7-9GB estimate (closer to the top of that range), but confirmed to fit without any unload/reload orchestration - the decision holds, just with less margin than originally assumed.
 
 **Considered and not taken:** SDXL-Turbo for higher image quality - would likely require unload/reload orchestration between LLM and image calls given the 10GB budget, adding real latency and complexity for a quality gain that isn't central to this project's thesis.
 
