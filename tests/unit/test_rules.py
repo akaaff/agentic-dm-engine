@@ -1,11 +1,16 @@
+import pytest
+
 from src.engine.position import Position
 from src.engine.rules import (
     ability_modifier,
     apply_damage,
+    normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
     resolve_skill_check,
+    skill_ability,
 )
+from src.engine.srd_loader import load_srd
 from src.engine.state import Character
 
 
@@ -143,3 +148,22 @@ def test_ability_modifier_matches_srd_table() -> None:
     assert ability_modifier(8) == -1
     assert ability_modifier(7) == -2
     assert ability_modifier(1) == -5
+
+
+def test_normalize_skill_name_handles_every_authored_spelling() -> None:
+    assert normalize_skill_name("Perception") == "perception"
+    assert normalize_skill_name("skill-perception") == "perception"
+    assert normalize_skill_name("Sleight of Hand") == "sleight-of-hand"
+
+
+def test_skill_ability_resolves_the_governing_ability_from_the_srd() -> None:
+    srd = load_srd()
+    assert skill_ability("athletics", srd) == "STR"
+    assert skill_ability("skill-perception", srd) == "WIS"
+    assert skill_ability("Persuasion", srd) == "CHA"
+
+
+def test_skill_ability_rejects_an_unknown_skill() -> None:
+    srd = load_srd()
+    with pytest.raises(ValueError, match="Unknown skill"):
+        skill_ability("juggling", srd)

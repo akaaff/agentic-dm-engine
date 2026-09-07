@@ -11,6 +11,7 @@ import random
 from dataclasses import dataclass
 
 from src.engine.dice import RollResult, roll, roll_d20
+from src.engine.srd_loader import SrdIndex
 from src.engine.state import AbilityScore, Character
 
 
@@ -97,3 +98,22 @@ def ability_check_modifier(
 ) -> int:
     mod = ability_modifier(character.stats[ability])
     return mod + character.proficiency_bonus if proficient else mod
+
+
+def normalize_skill_name(raw: str) -> str:
+    """ "Perception", "skill-perception", "Sleight of Hand" -> "perception",
+    "sleight-of-hand" (srd.skills' bare-index form)."""
+    return raw.strip().lower().replace(" ", "-").removeprefix("skill-")
+
+
+def skill_ability(skill_name: str, srd: SrdIndex) -> AbilityScore:
+    """Moved here from turn_engine (Day 22) so campaign_runner's out-of-combat
+    skill challenges can share the same skill->governing-ability lookup
+    instead of duplicating it - this module has no GameState/Event coupling,
+    which both call sites need."""
+    normalized = normalize_skill_name(skill_name)
+    skill_data = srd.skills.get(normalized)
+    if skill_data is None:
+        raise ValueError(f"Unknown skill: {skill_name!r}")
+    ability: AbilityScore = skill_data["ability_score"]["index"].upper()
+    return ability

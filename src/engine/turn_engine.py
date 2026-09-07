@@ -39,9 +39,11 @@ from src.engine.rules import (
     ability_check_modifier,
     ability_modifier,
     apply_damage,
+    normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
     resolve_skill_check,
+    skill_ability,
 )
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character, Condition, GameState
@@ -324,21 +326,6 @@ def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> N
     )
 
 
-def _normalize_skill_name(raw: str) -> str:
-    """ "Perception", "skill-perception", "Sleight of Hand" -> "perception",
-    "skill-perception", "sleight-of-hand" (srd.skills' bare-index form)."""
-    return raw.strip().lower().replace(" ", "-").removeprefix("skill-")
-
-
-def _skill_ability(skill_name: str, srd: SrdIndex) -> AbilityScore:
-    normalized = _normalize_skill_name(skill_name)
-    skill_data = srd.skills.get(normalized)
-    if skill_data is None:
-        raise TurnEngineError(f"Unknown skill: {skill_name!r}")
-    ability: AbilityScore = skill_data["ability_score"]["index"].upper()
-    return ability
-
-
 def _resolve_skill_check(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> None:
@@ -346,8 +333,11 @@ def _resolve_skill_check(
     if not skill:
         raise TurnEngineError("skill_check action requires params['skill']")
 
-    ability = _skill_ability(skill, srd)
-    proficient = f"skill-{_normalize_skill_name(skill)}" in actor.skill_proficiencies
+    try:
+        ability = skill_ability(skill, srd)
+    except ValueError as exc:
+        raise TurnEngineError(str(exc)) from exc
+    proficient = f"skill-{normalize_skill_name(skill)}" in actor.skill_proficiencies
     modifier = ability_check_modifier(actor, ability, proficient=proficient)
 
     advantage = actor.has_help_advantage
