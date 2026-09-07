@@ -10,7 +10,7 @@ chain is fixed once loaded.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel
@@ -21,13 +21,29 @@ CampaignSize = Literal["one_shot", "short_arc", "full"]
 SceneType = Literal["narrative_beat", "combat", "skill_challenge", "roleplay"]
 
 
+class SkillChallengeDef(BaseModel):
+    """A `skill_challenge` scene resolves as a single skill_check roll by
+    whichever party member has the best modifier for it (campaign_runner.py)
+    - deliberately not branching on success/failure (next_scene_id is fixed
+    either way, per the plan's "no branching in MVP"): only the narration
+    text differs, not where the campaign goes next."""
+
+    skill: str
+    """SRD skill index or name, e.g. "perception" or "Sleight of Hand" -
+    resolved via rules.skill_ability, same lookup the skill_check verb uses."""
+    dc: int
+    success_text: str
+    failure_text: str
+
+
 class Scene(BaseModel):
     id: str
     type: SceneType
     narrative_intro: str
     encounter_ref: str | None = None
     """Set for `combat` scenes - looked up via encounter.load_encounter()."""
-    skill_challenge_def: dict[str, Any] | None = None
+    skill_challenge_def: SkillChallengeDef | None = None
+    """Set for `skill_challenge` scenes."""
     next_scene_id: str | None = None
     """None marks the last scene in the campaign."""
 
@@ -47,6 +63,12 @@ class Campaign(BaseModel):
             if scene.id == scene_id:
                 return scene
         raise KeyError(f"No scene {scene_id!r} in campaign {self.id!r}")
+
+    def next_scene(self, scene: Scene) -> Scene | None:
+        """None means `scene` is the last one in the campaign."""
+        if scene.next_scene_id is None:
+            return None
+        return self.scene_by_id(scene.next_scene_id)
 
 
 def load_campaign(campaign_id: str, campaigns_dir: Path = DEFAULT_CAMPAIGNS_DIR) -> Campaign:
