@@ -98,7 +98,14 @@ def _build_real_session_game_state(progress: CampaignProgress) -> GameState | No
     into the campaign's first combat encounter. Returns None (caller falls
     back to the demo encounter) if anything expected is missing - defensive,
     not expected to trigger in practice since POST /sessions already
-    validates the campaign/character/companion ids before writing the row."""
+    validates the campaign/character/companion ids before writing the row.
+
+    Still only ever the *first* combat encounter, even for the short-arc/
+    full campaigns campaign_runner.py (Day 22) can now walk end-to-end in
+    autoplay - a live session doesn't yet advance past one encounter's
+    victory into the rest of the scene chain. Narrating that live (and
+    rebuilding a fresh GameState for each subsequent combat scene) is real,
+    separate work, not covered by Day 22's autoplay-only verify gate."""
     try:
         campaign = load_campaign(progress.campaign_id)
     except FileNotFoundError:

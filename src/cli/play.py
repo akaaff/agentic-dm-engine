@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import argparse
 import random
+from typing import Any
+
+from langgraph.graph.state import CompiledStateGraph
 
 from src.engine.actions import ParsedAction
 from src.engine.campaign import load_campaign
+from src.engine.campaign_runner import advance_to_next_encounter
 from src.engine.character_creation import create_character
 from src.engine.companions import build_companion, load_companion_spec
 from src.engine.encounter import Encounter, MonsterSpawn, build_encounter_state, load_encounter
@@ -210,34 +214,14 @@ def run_scripted(verbose: bool = True) -> GameState:
     return state
 
 
-def run_autoplay(verbose: bool = True) -> tuple[GameState, list[str]]:
-    """Day 15's verify gate: full autoplay of the one-shot campaign with two
-    AI companions and zero human input. Returns the final GameState and the
-    full narration log (for judge_transcript). Real LLM calls throughout -
-    not for the default offline test suite, see tests/llm/test_autoplay.py.
-    """
-    campaign = load_campaign("goblin_ambush_oneshot")
-    # Walk the scene chain to the first combat scene - the one-shot's intro
-    # is a narrative_beat with no encounter of its own. Multi-scene chaining
-    # (narrating the intro/outro beats too) is Day 22's job; this just needs
-    # a real encounter to autoplay.
-    scene = campaign.first_scene()
-    while scene.encounter_ref is None:
-        if scene.next_scene_id is None:
-            raise TurnEngineError(f"Campaign {campaign.id!r} has no combat scene to autoplay")
-        scene = campaign.scene_by_id(scene.next_scene_id)
-    encounter = load_encounter(scene.encounter_ref)
-
-    srd = load_srd()
-    party = [
-        build_companion(load_companion_spec("grom_ironfist"), srd=srd),
-        build_companion(load_companion_spec("silvana_wren"), srd=srd),
-    ]
-
-    rng = random.Random(42)
-    state = build_encounter_state(encounter, party, rng, srd=srd)
-    graph = build_graph(rng=rng, srd=srd)
-
+def _autoplay_combat_encounter(
+    state: GameState, graph: CompiledStateGraph[GraphState, Any, Any, Any], verbose: bool
+) -> tuple[GameState, list[str]]:
+    """Plays one encounter's GameState to a terminal status (victory/defeat/
+    aborted), companions via the full graph and monsters via the
+    deterministic heuristic - the turn loop originally built for Day 15,
+    unchanged in behavior, just factored out so Day 22's scene-chain loop
+    below can call it once per combat scene instead of just once per run."""
     if verbose:
         print(f"Turn order: {state.turn_order}")
 
@@ -328,10 +312,74 @@ def run_autoplay(verbose: bool = True) -> tuple[GameState, list[str]]:
         raise RuntimeError("Autoplay did not terminate within max_turns - possible engine bug")
 
     if verbose:
-        print(f"\n=== Autoplay ended: {state.status} (round {state.round}, {turns} turns) ===")
+        print(f"\n=== Combat ended: {state.status} (round {state.round}, {turns} turns) ===")
         for cid, character in state.characters.items():
             print(f"  {cid}: hp={character.hp}/{character.max_hp} pos={character.position}")
 
+    return state, narration_log
+
+
+def run_autoplay(
+    campaign_id: str = "goblin_ambush_oneshot", verbose: bool = True
+) -> tuple[GameState, list[str]]:
+    """Day 15's verify gate, extended by Day 22 to chain through a whole
+    campaign rather than a single encounter: full autoplay with two AI
+    companions and zero human input. Narrative-beat and skill-challenge
+    scenes are resolved between encounters via campaign_runner
+    (deterministic, no LLM); combat scenes go through the full graph as
+    before. Returns the final encounter's GameState and the complete
+    narration log (scene beats + combat lines, in order) for
+    judge_transcript. Real LLM calls throughout - not for the default
+    offline test suite, see tests/llm/test_autoplay.py.
+    """
+    campaign = load_campaign(campaign_id)
+    srd = load_srd()
+    party = [
+        build_companion(load_companion_spec("grom_ironfist"), srd=srd),
+        build_companion(load_companion_spec("silvana_wren"), srd=srd),
+    ]
+
+    rng = random.Random(42)
+    graph = build_graph(rng=rng, srd=srd)
+
+    narration_log: list[str] = []
+    state: GameState | None = None
+    scene = campaign.first_scene()
+
+    while True:
+        combat_scene, scene_narration = advance_to_next_encounter(campaign, scene, party, srd, rng)
+        narration_log.extend(scene_narration)
+        if verbose:
+            for line in scene_narration:
+                print(f"[scene] {line}")
+
+        if combat_scene is None:
+            break  # ran off the end of the chain - campaign complete
+
+        assert combat_scene.encounter_ref is not None  # guaranteed by Scene.type == "combat"
+        encounter = load_encounter(combat_scene.encounter_ref)
+        # Reuses the same party objects encounter-to-encounter (not fresh
+        # copies): HP/conditions/inventory genuinely carry over between
+        # fights within one campaign, matching how a real session would play
+        # - build_encounter_state only overwrites position and re-rolls
+        # initiative, it doesn't reset anything else.
+        state = build_encounter_state(encounter, party, rng, srd=srd)
+        state, combat_narration = _autoplay_combat_encounter(state, graph, verbose)
+        narration_log.extend(combat_narration)
+
+        if state.status != "victory":
+            break  # defeat/aborted ends the campaign early, no further scenes
+
+        next_scene = campaign.next_scene(combat_scene)
+        if next_scene is None:
+            break
+        scene = next_scene
+
+    if state is None:
+        raise TurnEngineError(f"Campaign {campaign.id!r} has no combat scene to autoplay")
+
+    if verbose:
+        print(f"\n=== Campaign ended: {state.status} ===")
         judged = judge_transcript(narration_log)
         print(f"\n=== Judge scores: {judged} ===")
 
@@ -342,12 +390,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scripted", action="store_true")
     parser.add_argument("--autoplay", action="store_true")
+    parser.add_argument(
+        "--campaign",
+        default="goblin_ambush_oneshot",
+        help="Campaign id to autoplay (data/campaigns/<id>.yaml). Default: goblin_ambush_oneshot.",
+    )
     args = parser.parse_args()
 
     if args.scripted:
         run_scripted()
     elif args.autoplay:
-        run_autoplay()
+        run_autoplay(campaign_id=args.campaign)
     else:
         parser.error("one of --scripted or --autoplay is required")
 
