@@ -104,3 +104,24 @@ def test_build_encounter_state_places_everyone_and_rolls_initiative() -> None:
     assert state.characters["goblin_1"].position == Position(x=6, y=1)
     assert state.characters["goblin_2"].position == Position(x=7, y=3)
     assert state.characters["goblin_3"].position == Position(x=6, y=4)
+
+
+def test_day22_encounters_load_and_build_state_with_known_monster_types() -> None:
+    """wolf_den (short arc), kobold_ambush and bandit_hideout (full campaign) -
+    just confirms each parses and every referenced monster_index exists in
+    the vendored SRD, same bar as goblin_ambush above."""
+    srd = load_srd()
+    party = _make_party()[:2]
+
+    for encounter_id, expected_monster_index, expected_count in [
+        ("wolf_den", "wolf", 3),
+        ("kobold_ambush", "kobold", 3),
+        ("bandit_hideout", "bandit", 2),
+    ]:
+        encounter = load_encounter(encounter_id)
+        assert len(encounter.monsters) == expected_count
+        assert all(m.monster_index == expected_monster_index for m in encounter.monsters)
+
+        rng = _FixedRandom([10] * (2 + expected_count))
+        state = build_encounter_state(encounter, party, rng, srd=srd)  # type: ignore[arg-type]
+        assert len(state.characters) == 2 + expected_count

@@ -1,0 +1,32 @@
+id: wolf_den
+name: Wolf Den Ambush
+
+battle_map:
+  width: 7
+  height: 5
+  # terrain[y][x], y=0 is the top row
+  terrain:
+    - [floor, floor, floor, floor, floor, floor, floor]
+    - [floor, difficult, floor, floor, floor, wall, floor]
+    - [floor, floor, floor, hazard, floor, floor, floor]
+    - [floor, difficult, floor, floor, floor, wall, floor]
+    - [floor, floor, floor, floor, floor, floor, floor]
+  spawn_points:
+    party_1: { x: 0, y: 2 }
+    party_2: { x: 1, y: 3 }
+    wolf_1: { x: 5, y: 1 }
+    wolf_2: { x: 6, y: 2 }
+    wolf_3: { x: 5, y: 3 }
+
+monsters:
+  - monster_index: wolf
+    character_id: wolf_1
+    spawn_point: wolf_1
+  - monster_index: wolf
+    character_id: wolf_2
+    spawn_point: wolf_2
+  - monster_index: wolf
+    character_id: wolf_3
+    spawn_point: wolf_3
+
+party_spawn_points: [party_1, party_2]

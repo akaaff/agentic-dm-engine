@@ -1,0 +1,28 @@
+id: bandit_hideout
+name: Bandit Hideout Showdown
+
+battle_map:
+  width: 7
+  height: 5
+  # terrain[y][x], y=0 is the top row
+  terrain:
+    - [floor, floor, floor, floor, floor, floor, floor]
+    - [floor, wall, floor, difficult, floor, wall, floor]
+    - [floor, floor, floor, floor, floor, floor, floor]
+    - [floor, wall, floor, difficult, floor, wall, floor]
+    - [floor, floor, floor, floor, floor, floor, floor]
+  spawn_points:
+    party_1: { x: 0, y: 2 }
+    party_2: { x: 1, y: 1 }
+    bandit_1: { x: 6, y: 1 }
+    bandit_2: { x: 6, y: 3 }
+
+monsters:
+  - monster_index: bandit
+    character_id: bandit_1
+    spawn_point: bandit_1
+  - monster_index: bandit
+    character_id: bandit_2
+    spawn_point: bandit_2
+
+party_spawn_points: [party_1, party_2]

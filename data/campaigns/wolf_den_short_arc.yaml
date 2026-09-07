@@ -1,0 +1,49 @@
+id: wolf_den_short_arc
+title: Howls in the Hollow
+size: short_arc
+description: >
+  A short arc for a party of 2-3: livestock have gone missing from a
+  hillside farmstead, and the trail leads to a wolf den in the hollow
+  beyond the tree line.
+
+scenes:
+  - id: intro
+    type: narrative_beat
+    narrative_intro: >
+      A worried farmer meets the party at the edge of his fields. Three
+      sheep have vanished in as many nights, and this morning he found
+      paw prints the size of dinner plates leading into the trees.
+    next_scene_id: track_the_wolves
+
+  - id: track_the_wolves
+    type: skill_challenge
+    narrative_intro: >
+      The tree line is thick with underbrush, and the trail is already
+      half a day old. Finding it again will take a keen eye.
+    skill_challenge_def:
+      skill: survival
+      dc: 12
+      success_text: >
+        The tracks are unmistakable once you know what to look for - a
+        heavy, loping gait, several animals moving together, angling
+        toward a rocky hollow half a mile on.
+      failure_text: >
+        The trail goes cold twice before you finally pick it back up
+        near a rocky hollow, losing precious daylight in the process.
+    next_scene_id: wolf_den_combat
+
+  - id: wolf_den_combat
+    type: combat
+    narrative_intro: >
+      The hollow opens into a den mouth littered with bones. Yellow eyes
+      catch the light as the pack rises to meet the intrusion.
+    encounter_ref: wolf_den
+    next_scene_id: outro
+
+  - id: outro
+    type: narrative_beat
+    narrative_intro: >
+      With the pack driven off, the party makes their way back to the
+      farmstead. The sheep are gone for good, but the farmer's flock -
+      and his family - are safe for now.
+    next_scene_id: null

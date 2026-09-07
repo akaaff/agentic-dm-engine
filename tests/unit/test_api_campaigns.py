@@ -3,15 +3,18 @@ from fastapi.testclient import TestClient
 from src.api.main import app
 
 
-def test_list_campaigns_returns_the_one_shot() -> None:
+def test_list_campaigns_returns_all_three_sizes() -> None:
     client = TestClient(app)
     response = client.get("/campaigns")
     assert response.status_code == 200
     campaigns = response.json()
-    assert len(campaigns) == 1
-    assert campaigns[0]["id"] == "goblin_ambush_oneshot"
-    assert campaigns[0]["size"] == "one_shot"
-    assert campaigns[0]["description"]
+    # Day 22 added the short-arc and full campaigns alongside the Day 6 one-shot.
+    assert {c["id"]: c["size"] for c in campaigns} == {
+        "goblin_ambush_oneshot": "one_shot",
+        "kobold_warren_full": "full",
+        "wolf_den_short_arc": "short_arc",
+    }
+    assert all(c["description"] for c in campaigns)
 
 
 def test_get_campaign_returns_full_scene_list() -> None:

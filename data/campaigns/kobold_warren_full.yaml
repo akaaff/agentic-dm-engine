@@ -1,0 +1,85 @@
+id: kobold_warren_full
+title: The Warren and the Wolf's Head
+size: full
+description: >
+  A full campaign for a party of 2-3: a spate of raids on the trade road
+  leads from a kobold warren to the bandit gang pulling its strings.
+
+scenes:
+  - id: hook
+    type: narrative_beat
+    narrative_intro: >
+      The town of Hollowford has lost three caravans on the trade road
+      this month. The last survivor swears small, scaled raiders struck
+      first - then vanished into the hills before the guard could give
+      chase.
+    next_scene_id: read_the_signs
+
+  - id: read_the_signs
+    type: skill_challenge
+    narrative_intro: >
+      The wreckage of the latest wagon still smoulders at the roadside.
+      Whatever did this left something behind, if you know where to look.
+    skill_challenge_def:
+      skill: investigation
+      dc: 13
+      success_text: >
+        Small, clawed footprints ring the wagon, all converging on a
+        culvert leading under the hillside - a kobold warren, and a
+        fresh one.
+      failure_text: >
+        The signs are trampled and half-burned; it takes far longer than
+        it should to make out the small, clawed tracks leading toward a
+        culvert under the hillside.
+    next_scene_id: warren_combat
+
+  - id: warren_combat
+    type: combat
+    narrative_intro: >
+      The culvert opens into a cramped warren lit by guttering torches.
+      Kobolds spill out of side-tunnels, yipping alarm as they close in.
+    encounter_ref: kobold_ambush
+    next_scene_id: rising_action
+
+  - id: rising_action
+    type: narrative_beat
+    narrative_intro: >
+      Among the kobolds' hoarded scraps, the party finds something that
+      doesn't belong - a bandit's signet ring, and a crude map marking a
+      hideout deeper in the hills. The kobolds weren't raiding on their
+      own; someone was paying them in stolen goods to watch the road.
+    next_scene_id: scout_the_hideout
+
+  - id: scout_the_hideout
+    type: skill_challenge
+    narrative_intro: >
+      The map leads to a fortified camp tucked into a ravine. Getting
+      close without being spotted will take patience and a steady hand.
+    skill_challenge_def:
+      skill: stealth
+      dc: 14
+      success_text: >
+        The party slips along the ravine wall unseen, close enough to
+        count the guards and mark the camp's one real weakness: a single
+        watchful sentry, easily drawn off.
+      failure_text: >
+        A loose stone gives the party away early - the camp is already
+        stirring by the time they reach striking distance.
+    next_scene_id: hideout_combat
+
+  - id: hideout_combat
+    type: combat
+    narrative_intro: >
+      The bandits who orchestrated the raids make their stand at the
+      mouth of their hideout, blades drawn and nothing left to lose.
+    encounter_ref: bandit_hideout
+    next_scene_id: resolution
+
+  - id: resolution
+    type: narrative_beat
+    narrative_intro: >
+      With the bandits scattered and their kobold hirelings routed, the
+      trade road falls quiet again. Hollowford's caravans roll on
+      schedule for the first time in a month, and the party's names are
+      spoken warmly in every tavern along the route.
+    next_scene_id: null
