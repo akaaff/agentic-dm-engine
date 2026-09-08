@@ -18,7 +18,7 @@ dependencies = [
     "accelerate>=1.14.0",
     "safetensors>=0.8.0",
     "peft>=0.20.0",
-    "trl>=0.11.4",
+    "trl>=0.20",
     "wandb>=0.29.0",
 ]
 
@@ -53,6 +53,15 @@ python_version = "3.13"
 strict = true
 warn_unused_ignores = true
 
+[[tool.mypy.overrides]]
+# datasets ships no py.typed marker; trl re-exports SFTConfig/SFTTrainer
+# dynamically (a lazy-module __getattr__, not a plain assignment mypy can
+# see statically) - torch/transformers/peft/diffusers already ship their
+# own type info and don't need this.
+module = ["datasets", "datasets.*", "trl", "trl.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
@@ -66,3 +75,13 @@ addopts = "-m 'not integration and not llm and not imagegen'"
 
 [tool.uv]
 package = false
+# Day 16's cu124 PyTorch index mirrors its own (often stale) copies of
+# common packages like `requests` - uv's default "first index wins" safe
+# resolution then refuses to consider PyPI's newer version once it finds a
+# match there, blocking any dependency (e.g. Day 26's trl/datasets) that
+# needs a newer one. Both indexes here are ones this project explicitly
+# configured and trusts (official PyPI + official PyTorch wheel index), so
+# picking the best match across all of them - uv's own suggested fix for
+# this exact situation - is safe, not the dependency-confusion risk this
+# flag guards against for an untrusted third-party index.
+index-strategy = "unsafe-best-match"
