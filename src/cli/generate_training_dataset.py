@@ -22,13 +22,13 @@ committed. Needs a live Ollama.
 from __future__ import annotations
 
 import argparse
-import json
 import random
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
 from src.training.curate_dataset import curate
+from src.training.dataset_io import read_jsonl, write_jsonl
 from src.training.generate_synthetic import SyntheticExample, generate_dataset
 from src.training.task_spec import DistillationTask
 from src.training.tasks.intent_parser_task import build_intent_parser_task
@@ -40,22 +40,6 @@ _TASKS: dict[str, Callable[[random.Random], DistillationTask]] = {
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "training"
 _RAW_DIR = _DATA_DIR / "raw"
 _CURATED_DIR = _DATA_DIR / "curated"
-
-
-def _write_jsonl(path: Path, examples: list[SyntheticExample]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for example in examples:
-            f.write(json.dumps({"input": example.input, "output": example.output}) + "\n")
-
-
-def _read_jsonl(path: Path) -> list[SyntheticExample]:
-    examples = []
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            row = json.loads(line)
-            examples.append(SyntheticExample(input=row["input"], output=row["output"]))
-    return examples
 
 
 def _generate_chunk(task_name: str, n: int, seed: int, workers: int) -> None:
@@ -73,7 +57,7 @@ def _generate_chunk(task_name: str, n: int, seed: int, workers: int) -> None:
     print(f"  verb breakdown: {dict(sorted(verb_counts.items()))}")
 
     chunk_path = _RAW_DIR / f"{task.name}_seed{seed}.jsonl"
-    _write_jsonl(chunk_path, raw)
+    write_jsonl(chunk_path, raw)
     print(f"\nWrote {chunk_path}")
 
 
@@ -85,7 +69,7 @@ def _merge_and_curate(task_name: str) -> None:
 
     all_examples: list[SyntheticExample] = []
     for path in chunk_paths:
-        chunk_examples = _read_jsonl(path)
+        chunk_examples = read_jsonl(path)
         all_examples.extend(chunk_examples)
         print(f"  loaded {len(chunk_examples)} from {path.name}")
     print(f"Total: {len(all_examples)} examples from {len(chunk_paths)} chunk file(s)")
@@ -97,9 +81,9 @@ def _merge_and_curate(task_name: str) -> None:
         f"(dropped {dropped} duplicate/invalid)"
     )
 
-    _write_jsonl(_CURATED_DIR / f"{task_name}_train.jsonl", split.train)
-    _write_jsonl(_CURATED_DIR / f"{task_name}_val.jsonl", split.val)
-    _write_jsonl(_CURATED_DIR / f"{task_name}_test.jsonl", split.test)
+    write_jsonl(_CURATED_DIR / f"{task_name}_train.jsonl", split.train)
+    write_jsonl(_CURATED_DIR / f"{task_name}_val.jsonl", split.val)
+    write_jsonl(_CURATED_DIR / f"{task_name}_test.jsonl", split.test)
 
     train_inputs = {ex.input for ex in split.train}
     val_inputs = {ex.input for ex in split.val}
