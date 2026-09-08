@@ -5,6 +5,7 @@ D&D-specific) to keep these tests honest about the module being generic."""
 
 from __future__ import annotations
 
+import itertools
 from typing import Any
 
 import pytest
@@ -95,3 +96,45 @@ def test_generate_dataset_skips_examples_that_never_validate(
     # 4 requested, half fail every attempt (max_attempts=1) and are skipped.
     assert len(examples) == 2
     assert all(isinstance(ex.output["value"], int) for ex in examples)
+
+
+def test_generate_dataset_with_concurrency_preserves_every_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake(messages: list[dict[str, str]], schema: type[BaseModel], model: str) -> BaseModel:
+        # Derived purely from this call's own content - safe to run from
+        # many threads at once, no shared mutable state touched here.
+        content = messages[0]["content"]
+        return schema.model_validate({"value": len(content)})
+
+    monkeypatch.setattr(generate_synthetic_module, "chat_structured", _fake)
+
+    counter = itertools.count()
+    task = _task(lambda: f"prompt-{next(counter)}")
+
+    examples = generate_dataset(task, n=20, max_workers=8)
+
+    assert len(examples) == 20
+    assert {ex.input for ex in examples} == {f"prompt-{i}" for i in range(20)}
+    for example in examples:
+        assert example.output["value"] == len(example.input)
+
+
+def test_generate_dataset_with_concurrency_still_skips_examples_that_never_validate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake(messages: list[dict[str, str]], schema: type[BaseModel], model: str) -> BaseModel:
+        index = int(messages[0]["content"].split("-")[1])
+        if index % 2 == 0:
+            raise ValidationError.from_exception_data("Toy", [])
+        return schema.model_validate({"value": index})
+
+    monkeypatch.setattr(generate_synthetic_module, "chat_structured", _fake)
+
+    counter = itertools.count()
+    task = _task(lambda: f"prompt-{next(counter)}")
+
+    examples = generate_dataset(task, n=10, max_attempts=1, max_workers=4)
+
+    assert len(examples) == 5
+    assert all(example.output["value"] % 2 == 1 for example in examples)
