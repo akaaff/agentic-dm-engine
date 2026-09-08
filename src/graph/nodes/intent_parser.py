@@ -26,7 +26,11 @@ def _character_summary_line(character: Character) -> str:
     )
 
 
-def _build_prompt(state: GraphState) -> str:
+def build_intent_parser_prompt(state: GraphState) -> str:
+    """Public (Day 25) so src.training.tasks.intent_parser_task can generate
+    synthetic training prompts in the *exact* format production sends -
+    essential for a Day 26 fine-tuned model to actually behave like the
+    teacher it's distilled from once swapped in (Day 27)."""
     game_state = state["game_state"]
     actor = game_state.characters[game_state.turn_order[game_state.current_turn]]
     others = [c for c in game_state.characters.values() if c.id != actor.id]
@@ -46,7 +50,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
     if state["parsed_action"] is not None:
         return {"parsed_action": state["parsed_action"]}
 
-    prompt = _build_prompt(state)
+    prompt = build_intent_parser_prompt(state)
     action = chat_structured(
         messages=[{"role": "user", "content": prompt}],
         schema=ParsedAction,
