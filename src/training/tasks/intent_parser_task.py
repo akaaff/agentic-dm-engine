@@ -92,8 +92,19 @@ def _random_character(character_id: str, is_pc: bool, rng: random.Random) -> Cha
 def _random_scenario(rng: random.Random) -> GameState:
     """A minimal but valid GameState - just enough for build_intent_parser_
     prompt to read (characters, turn_order, current_turn) - not a real
-    encounter (no battle_map/SRD stat blocks needed for prompt-building)."""
-    characters: dict[str, Character] = {"actor": _random_character("actor", is_pc=True, rng=rng)}
+    encounter (no battle_map/SRD stat blocks needed for prompt-building).
+
+    The acting character's id is a lowercased name (e.g. "thorin"), not the
+    literal word "actor" - found live (Day 25) that the generic placeholder
+    id confused the teacher into echoing back a different id ~49% of the
+    time (it would invent "actor_0"/"actor_1" or substitute another visible
+    character's id), which resolve_action's own actor-mismatch check would
+    reject as "It is X's turn, not Y's". Not a production bug - the real
+    game never names a character literally "actor" - but bad training
+    signal for a field the model otherwise gets right whenever the id looks
+    like an actual name."""
+    actor_id = rng.choice(_PC_NAMES).lower()
+    characters: dict[str, Character] = {actor_id: _random_character(actor_id, is_pc=True, rng=rng)}
     for i in range(rng.randint(0, 2)):
         cid = f"ally_{i + 1}"
         characters[cid] = _random_character(cid, is_pc=True, rng=rng)
@@ -103,7 +114,7 @@ def _random_scenario(rng: random.Random) -> GameState:
 
     turn_order = list(characters)
     rng.shuffle(turn_order)
-    current_turn = turn_order.index("actor")
+    current_turn = turn_order.index(actor_id)
 
     return GameState(
         encounter_id="synthetic",

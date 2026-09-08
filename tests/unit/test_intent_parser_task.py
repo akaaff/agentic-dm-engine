@@ -17,8 +17,12 @@ def test_generate_prompt_embeds_the_utterance_and_actor_context() -> None:
 
     prompt = task.generate_prompt()
 
-    assert "Current actor: actor" in prompt
+    assert "Current actor: " in prompt
+    # Not the literal word "actor" (Day 25 finding: confuses the teacher
+    # into echoing back a different id ~49% of the time) - a real name.
+    assert "Current actor: actor " not in prompt
     assert "Player's action:" in prompt
+    assert task.output_schema is ParsedAction
     assert task.output_schema is ParsedAction
 
 
