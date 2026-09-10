@@ -71,7 +71,14 @@ def main() -> None:
 
         api = HfApi()
         api.create_repo(args.hf_repo, private=True, exist_ok=True, repo_type="model")
-        api.upload_folder(folder_path=str(adapter_dir), repo_id=args.hf_repo, repo_type="model")
+        api.upload_folder(
+            folder_path=str(adapter_dir),
+            repo_id=args.hf_repo,
+            repo_type="model",
+            # intermediate training checkpoints (optimizer state etc.) are
+            # useless for inference and just bloat the repo.
+            ignore_patterns=["checkpoint-*/**", "checkpoint-*"],
+        )
         print(f"Pushed to https://huggingface.co/{args.hf_repo}")
 
 

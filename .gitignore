@@ -21,3 +21,6 @@ models/
 
 # generated scene images - regenerable at runtime
 data/generated_images/
+
+# wandb local run cache (Day 26 fine-tune logging) - the run itself lives on wandb.ai
+wandb/

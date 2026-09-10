@@ -180,6 +180,11 @@ def scores_to_markdown(scores: list[ModelScore], n_examples: int) -> str:
     lines = [
         f"# Intent-parser distillation eval ({n_examples} held-out test examples)",
         "",
+        "`base` and `fine-tuned` run through plain `transformers.generate()` (no",
+        "grammar constraint); `teacher` runs through Ollama's constrained decoding,",
+        "which is why it can't emit invalid JSON. `field acc (all)` scores every",
+        "example - an unparseable prediction counts every field wrong.",
+        "",
         "| " + " | ".join(header) + " |",
         "| " + " | ".join(["---"] * len(header)) + " |",
     ]
