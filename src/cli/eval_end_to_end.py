@@ -29,11 +29,23 @@ _BACKENDS = ["teacher", "finetuned"]
 
 
 def _autoplay_scores(campaign_id: str, runs: int) -> list[int]:
+    """Autoplay is LLM-sampled and can occasionally churn to the max_turns
+    safety valve (documented in CLAUDE.md) - a run that does is skipped, not
+    fatal, so one unlucky episode doesn't sink the whole comparison."""
     scores: list[int] = []
-    for _ in range(runs):
-        _state, narration = run_autoplay(
-            campaign_id=campaign_id, verbose=False, disable_scene_images=True
-        )
+    attempts = 0
+    while len(scores) < runs and attempts < runs * 3:
+        attempts += 1
+        try:
+            _state, narration = run_autoplay(
+                campaign_id=campaign_id,
+                verbose=False,
+                disable_scene_images=True,
+                max_turns_per_encounter=150,
+            )
+        except RuntimeError as exc:
+            print(f"  (autoplay attempt {attempts} did not terminate: {exc})")
+            continue
         scores.append(judge_transcript(narration).overall_score)
     return scores
 

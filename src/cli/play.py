@@ -215,25 +215,29 @@ def run_scripted(verbose: bool = True) -> GameState:
 
 
 def _autoplay_combat_encounter(
-    state: GameState, graph: CompiledStateGraph[GraphState, Any, Any, Any], verbose: bool
+    state: GameState,
+    graph: CompiledStateGraph[GraphState, Any, Any, Any],
+    verbose: bool,
+    max_turns: int = 400,
 ) -> tuple[GameState, list[str]]:
     """Plays one encounter's GameState to a terminal status (victory/defeat/
     aborted), companions via the full graph and monsters via the
     deterministic heuristic - the turn loop originally built for Day 15,
     unchanged in behavior, just factored out so Day 22's scene-chain loop
-    below can call it once per combat scene instead of just once per run."""
+    below can call it once per combat scene instead of just once per run.
+
+    `max_turns` is a safety valve against a genuinely stuck engine, not a
+    tight bound on a "normal" combat: a companion's turn that repeatedly
+    fails to parse into a concrete action (rare, not eliminated) burns
+    several turns per round via the consecutive_invalid circuit breaker, and
+    an unlucky slow combat can legitimately run long - seen live in
+    tests/llm/test_autoplay.py (see CLAUDE.md). Default is generous; Day
+    27's end-to-end eval passes a lower value so a churning run bails and
+    retries faster."""
     if verbose:
         print(f"Turn order: {state.turn_order}")
 
     narration_log: list[str] = []
-    # Safety valve against a genuinely stuck engine, not a tight bound on a
-    # "normal" combat: a companion's turn that repeatedly fails to parse
-    # into a concrete action (rare even with the Day 15 prompt fix, but not
-    # eliminated) burns several turns per round via the consecutive_invalid
-    # circuit breaker without landing an attack, which can legitimately
-    # stretch a slow, unlucky combat well past a tight ceiling - seen live
-    # in tests/llm/test_autoplay.py (see CLAUDE.md). Generous on purpose.
-    max_turns = 400
     turns = 0
     consecutive_invalid = 0
     while state.status == "in_progress" and turns < max_turns:
@@ -323,6 +327,7 @@ def run_autoplay(
     campaign_id: str = "goblin_ambush_oneshot",
     verbose: bool = True,
     disable_scene_images: bool = False,
+    max_turns_per_encounter: int = 400,
 ) -> tuple[GameState, list[str]]:
     """Day 15's verify gate, extended by Day 22 to chain through a whole
     campaign rather than a single encounter: full autoplay with two AI
@@ -374,7 +379,9 @@ def run_autoplay(
         # - build_encounter_state only overwrites position and re-rolls
         # initiative, it doesn't reset anything else.
         state = build_encounter_state(encounter, party, rng, srd=srd)
-        state, combat_narration = _autoplay_combat_encounter(state, graph, verbose)
+        state, combat_narration = _autoplay_combat_encounter(
+            state, graph, verbose, max_turns=max_turns_per_encounter
+        )
         narration_log.extend(combat_narration)
 
         if state.status != "victory":
