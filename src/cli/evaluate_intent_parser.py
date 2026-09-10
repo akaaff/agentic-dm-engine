@@ -14,13 +14,15 @@ import random
 from pathlib import Path
 
 from src.training.dataset_io import read_jsonl
-from src.training.evaluate_models import evaluate, scores_to_markdown
+from src.training.evaluate_models import evaluate, predictions_to_jsonl, scores_to_markdown
 from src.training.tasks.intent_parser_task import build_intent_parser_task
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _TEST_SPLIT = _PROJECT_ROOT / "data" / "training" / "curated" / "intent_parser_test.jsonl"
 _DEFAULT_ADAPTER_DIR = _PROJECT_ROOT / "models" / "intent_parser_lora"
-_RESULTS_PATH = _PROJECT_ROOT / "data" / "training" / "eval_results" / "intent_parser_eval.md"
+_EVAL_DIR = _PROJECT_ROOT / "data" / "training" / "eval_results"
+_RESULTS_PATH = _EVAL_DIR / "intent_parser_eval.md"
+_PREDICTIONS_PATH = _EVAL_DIR / "intent_parser_eval_predictions.jsonl"
 
 
 def main() -> None:
@@ -38,7 +40,7 @@ def main() -> None:
     sample = random.Random(args.seed).sample(test_examples, min(args.n, len(test_examples)))
     print(f"Evaluating on {len(sample)} of {len(test_examples)} held-out test examples...")
 
-    scores = evaluate(
+    run = evaluate(
         sample,
         base_model_id=task.base_model,
         adapter_dir=args.adapter_dir,
@@ -47,13 +49,15 @@ def main() -> None:
         teacher_workers=args.workers,
     )
 
-    markdown = scores_to_markdown(scores, len(sample))
+    markdown = scores_to_markdown(run.scores, len(sample))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(markdown, encoding="utf-8")
+    _PREDICTIONS_PATH.write_text(predictions_to_jsonl(run), encoding="utf-8")
 
     print()
     print(markdown)
     print(f"Saved to {args.out}")
+    print(f"Per-example predictions: {_PREDICTIONS_PATH}")
 
 
 if __name__ == "__main__":

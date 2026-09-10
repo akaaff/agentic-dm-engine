@@ -145,6 +145,16 @@ def score_predictions(
     return ModelScore(name, valid_json / n, valid_action / n, accuracy)
 
 
+@dataclass(frozen=True)
+class EvalRun:
+    scores: list[ModelScore]
+    prompts: list[str]
+    expected: list[dict[str, Any]]
+    predictions: dict[str, list[dict[str, Any] | None]]
+    """Per-model, per-example predicted dict (or None if unparseable) - in
+    the same order as `prompts`/`expected`, for a row-by-row diff."""
+
+
 def evaluate(
     examples: list[SyntheticExample],
     base_model_id: str,
@@ -153,25 +163,36 @@ def evaluate(
     batch_size: int = 16,
     teacher_workers: int = 16,
     max_new_tokens: int = 256,
-) -> list[ModelScore]:
+) -> EvalRun:
     prompts = [ex.input for ex in examples]
     expected = [ex.output for ex in examples]
 
-    return [
-        score_predictions(
-            "base (no fine-tune)",
-            expected,
-            _run_local_model(base_model_id, None, prompts, batch_size, max_new_tokens),
+    predictions = {
+        "base (no fine-tune)": _run_local_model(
+            base_model_id, None, prompts, batch_size, max_new_tokens
         ),
-        score_predictions(
-            "fine-tuned (LoRA)",
-            expected,
-            _run_local_model(base_model_id, adapter_dir, prompts, batch_size, max_new_tokens),
+        "fine-tuned (LoRA)": _run_local_model(
+            base_model_id, adapter_dir, prompts, batch_size, max_new_tokens
         ),
-        score_predictions(
-            "teacher (Ollama)", expected, _run_teacher(prompts, teacher_model, teacher_workers)
-        ),
-    ]
+        "teacher (Ollama)": _run_teacher(prompts, teacher_model, teacher_workers),
+    }
+    scores = [score_predictions(name, expected, preds) for name, preds in predictions.items()]
+    return EvalRun(scores=scores, prompts=prompts, expected=expected, predictions=predictions)
+
+
+def predictions_to_jsonl(run: EvalRun) -> str:
+    """One JSON object per line: the utterance, the expected label, and each
+    model's prediction - for eyeballing where the three diverge."""
+    lines = []
+    for i, (prompt, expected) in enumerate(zip(run.prompts, run.expected, strict=True)):
+        utterance = prompt.split("Player's action:", 1)[-1].strip().strip('"')
+        row = {
+            "utterance": utterance,
+            "expected": expected,
+            **{name: run.predictions[name][i] for name in run.predictions},
+        }
+        lines.append(json.dumps(row, ensure_ascii=False))
+    return "\n".join(lines) + "\n"
 
 
 def scores_to_markdown(scores: list[ModelScore], n_examples: int) -> str:
