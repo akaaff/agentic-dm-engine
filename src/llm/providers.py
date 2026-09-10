@@ -11,8 +11,11 @@ that only ever targets one local Ollama instance.
 
 from __future__ import annotations
 
+import json
+import re
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 import httpx
 from pydantic import BaseModel
@@ -20,12 +23,32 @@ from pydantic import BaseModel
 from src.config import OLLAMA_BASE_URL, OLLAMA_TEACHER_MODEL
 
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 @cache
 def load_prompt(name: str) -> str:
     """`name` without extension, e.g. "intent_parser" -> prompts/intent_parser.md."""
     return (_PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+
+
+def extract_json_object(text: str) -> dict[str, Any] | None:
+    """Best-effort JSON-object extraction from a raw model completion - a
+    model without server-side grammar constraints (the fine-tuned student,
+    Day 27) often wraps the object in prose or a ```json fence. Tries a
+    plain parse first, then the first {...} span."""
+    candidates = [text]
+    match = _JSON_OBJECT_RE.search(text)
+    if match:
+        candidates.append(match.group(0))
+    for raw in candidates:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 # The first call after Ollama has been idle can involve loading the model

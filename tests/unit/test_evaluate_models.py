@@ -5,11 +5,8 @@ predictions against expected labels."""
 
 from __future__ import annotations
 
-from src.training.evaluate_models import (
-    _extract_json,
-    score_predictions,
-    scores_to_markdown,
-)
+from src.llm.providers import extract_json_object as _extract_json
+from src.training.evaluate_models import score_predictions, scores_to_markdown
 
 
 def test_extract_json_parses_a_bare_object() -> None:

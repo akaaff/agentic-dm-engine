@@ -320,7 +320,9 @@ def _autoplay_combat_encounter(
 
 
 def run_autoplay(
-    campaign_id: str = "goblin_ambush_oneshot", verbose: bool = True
+    campaign_id: str = "goblin_ambush_oneshot",
+    verbose: bool = True,
+    disable_scene_images: bool = False,
 ) -> tuple[GameState, list[str]]:
     """Day 15's verify gate, extended by Day 22 to chain through a whole
     campaign rather than a single encounter: full autoplay with two AI
@@ -331,6 +333,11 @@ def run_autoplay(
     narration log (scene beats + combat lines, in order) for
     judge_transcript. Real LLM calls throughout - not for the default
     offline test suite, see tests/llm/test_autoplay.py.
+
+    `disable_scene_images` skips SD-Turbo (Day 27): the judge scores
+    narration, not images, and freeing that ~3GB of VRAM lets the
+    fine-tuned intent-parser student (transformers/peft) coexist with the
+    Ollama teacher for the narrator/companion turns on a 10GB card.
     """
     campaign = load_campaign(campaign_id)
     srd = load_srd()
@@ -340,7 +347,10 @@ def run_autoplay(
     ]
 
     rng = random.Random(42)
-    graph = build_graph(rng=rng, srd=srd)
+    graph_kwargs: dict[str, object] = {"rng": rng, "srd": srd}
+    if disable_scene_images:
+        graph_kwargs["scene_image_fn"] = lambda _state: {"scene_image_url": None}
+    graph = build_graph(**graph_kwargs)  # type: ignore[arg-type]
 
     narration_log: list[str] = []
     state: GameState | None = None

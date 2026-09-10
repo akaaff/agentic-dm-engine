@@ -5,12 +5,19 @@ If parsed_action is already set when the graph is invoked, this node skips
 the LLM entirely and passes it through unchanged - the escape hatch every
 offline/scripted test (Days 7-11) relies on to exercise the graph
 deterministically without a live model.
+
+Day 27: `config.INTENT_PARSER_BACKEND == "finetuned"` swaps the Ollama
+teacher call for the LoRA-distilled 0.5B student (llm/local_parser),
+loaded via transformers/peft. The prompt is identical either way; the
+student has no server-side grammar constraint, so a failed parse degrades
+to an `invalid` action (the graph already handles that terminal state).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from src import config
 from src.engine.actions import ParsedAction
 from src.engine.state import Character
 from src.graph.state_schema import GraphState
@@ -51,6 +58,17 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         return {"parsed_action": state["parsed_action"]}
 
     prompt = build_intent_parser_prompt(state)
+
+    if config.INTENT_PARSER_BACKEND == "finetuned":
+        from src.llm.local_parser import parse_intent_local
+
+        action = parse_intent_local(prompt, config.INTENT_PARSER_ADAPTER_DIR)
+        if action is None:
+            game_state = state["game_state"]
+            actor_id = game_state.turn_order[game_state.current_turn]
+            action = ParsedAction(actor=actor_id, verb="invalid", raw_text=state["raw_text"])
+        return {"parsed_action": action}
+
     action = chat_structured(
         messages=[{"role": "user", "content": prompt}],
         schema=ParsedAction,

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import gc
 import json
-import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,11 +27,9 @@ from pydantic import ValidationError
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.engine.actions import ParsedAction
-from src.llm.providers import chat_structured
+from src.llm.providers import chat_structured, extract_json_object
 from src.training.evaluate_structured_output import FieldAccuracy, score_fields
 from src.training.generate_synthetic import SyntheticExample
-
-_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -41,23 +38,6 @@ class ModelScore:
     valid_json_rate: float
     valid_action_rate: float
     field_accuracy: FieldAccuracy
-
-
-def _extract_json(text: str) -> dict[str, Any] | None:
-    """A student without grammar constraints often wraps the JSON in prose
-    or a ```json fence - try a plain parse first, then the first {...} block."""
-    candidates = [text]
-    match = _JSON_OBJECT_RE.search(text)
-    if match:
-        candidates.append(match.group(0))
-    for raw in candidates:
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
 
 
 def _run_local_model(
@@ -104,7 +84,7 @@ def _run_local_model(
         for seq in generated:
             new_tokens = seq[enc["input_ids"].shape[1] :]
             decoded = str(tokenizer.decode(new_tokens, skip_special_tokens=True))
-            predictions.append(_extract_json(decoded))
+            predictions.append(extract_json_object(decoded))
 
     del model
     gc.collect()
