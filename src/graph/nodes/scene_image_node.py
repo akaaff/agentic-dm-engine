@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src import config
 from src.graph.state_schema import GraphState
 from src.imagegen.service import MEDIA_URL_PREFIX, generate_scene_image
 
@@ -33,6 +34,9 @@ def _scene_prompt(state: GraphState) -> str:
 
 
 def scene_image_node(state: GraphState) -> dict[str, Any]:
+    if not config.SCENE_IMAGES_ENABLED:
+        return {"scene_image_url": None}
+
     game_state = state["game_state"]
     is_scene_start = state["events_before"] == 0
     is_round_start = game_state.round != state["round_before"]

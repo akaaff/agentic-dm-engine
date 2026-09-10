@@ -20,3 +20,8 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./agentic_dm_engine.db"
 #                 from INTENT_PARSER_ADAPTER_DIR. Same prompt either way.
 INTENT_PARSER_BACKEND = os.environ.get("INTENT_PARSER_BACKEND", "teacher")
 INTENT_PARSER_ADAPTER_DIR = os.environ.get("INTENT_PARSER_ADAPTER_DIR", "models/intent_parser_lora")
+
+# Set SCENE_IMAGES_ENABLED=0 to skip SD-Turbo entirely - frees ~3GB of VRAM
+# (e.g. to run the "finetuned" intent-parser student alongside the Ollama
+# teacher on a 10GB card, Day 27), or just for faster iteration.
+SCENE_IMAGES_ENABLED = os.environ.get("SCENE_IMAGES_ENABLED", "1") != "0"
