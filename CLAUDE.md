@@ -24,8 +24,6 @@ Python 3.13, managed via [uv](https://docs.astral.sh/uv/). Non-packaged app (`to
 - Run the backend: `uv run uvicorn src.api.main:app --port 8000`
 - Frontend (Day 17+, `web/` - Vite + React + TypeScript): `npm install` then `npm run dev` (serves on :5173); `npm run lint` (oxlint), `npx tsc -b` to type-check.
 
-(Training commands will be added here as each phase lands - see `C:\Users\yakra\.claude\plans\radiant-waddling-hellman.md` for the full day-by-day plan.)
-
 Ollama must be running on the host with `qwen2.5:7b-instruct` pulled for anything touching `tests/llm` or the live intent-parser/narrator nodes (Phase 3+). `torch`/`diffusers` need a CUDA-enabled torch build - installed via `uv add torch --index https://download.pytorch.org/whl/cu124` (plain `uv add torch` pulls a CPU-only wheel; `--index-url` instead of `--index` breaks resolution of the rest of the project's dependencies, since it replaces the default index globally rather than scoping to just this package).
 
 ## Architecture
