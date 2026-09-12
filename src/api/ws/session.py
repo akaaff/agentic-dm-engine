@@ -270,14 +270,20 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             return
         actor = session.game_state.characters[current_actor_id]
 
-        if not actor.is_pc:
-            parsed_action = choose_monster_action(session.game_state, actor)
-        elif consecutive_invalid >= 3:
+        if consecutive_invalid >= 3:
+            # Applies to monsters too, not just companions - found live as
+            # a real infinite loop once turn_engine started enforcing
+            # attack range: choose_monster_action's own path-finding can
+            # still fail to close the distance (blocked, or out of speed),
+            # and with nothing ever mutating game_state, this while loop
+            # never terminated on its own before this fallback existed.
             parsed_action = ParsedAction(
                 actor=current_actor_id,
                 verb="end_turn",
                 raw_text="(forced end_turn after repeated invalid actions)",
             )
+        elif not actor.is_pc:
+            parsed_action = choose_monster_action(session.game_state, actor)
         else:
             parsed_action = None
 

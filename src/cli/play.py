@@ -244,24 +244,29 @@ def _autoplay_combat_encounter(
         turns += 1
         actor = state.characters[state.turn_order[state.current_turn]]
 
-        if not actor.is_pc:
-            # Monsters never reach player_agent/intent_parser at all - the
-            # heuristic action is pre-supplied, the same bypass every
-            # scripted test since Day 7 relies on.
-            parsed_action = choose_monster_action(state, actor)
-        elif consecutive_invalid >= 3:
+        if consecutive_invalid >= 3:
             # Circuit breaker, found live: "invalid" deliberately doesn't
             # cost a turn (Day 14), which is right for a human who can just
             # try again, but a companion's persona-driven free text can loop
             # on pure flavor with no mechanical content forever (a cautious
             # "stays alert, watches the shadows" persona hit this on the
             # very first live autoplay run) - there's no human to unstick
-            # it, so force the turn to end after repeated failures.
+            # it, so force the turn to end after repeated failures. Applies
+            # to monsters too, not just companions: choose_monster_action's
+            # own path-finding can fail to close the distance (blocked, or
+            # out of speed) now that turn_engine enforces attack range -
+            # without this a stuck monster would burn the whole max_turns
+            # budget retrying the same rejected attack.
             parsed_action = ParsedAction(
                 actor=actor.id,
                 verb="end_turn",
                 raw_text="(forced end_turn after repeated invalid actions)",
             )
+        elif not actor.is_pc:
+            # Monsters never reach player_agent/intent_parser at all - the
+            # heuristic action is pre-supplied, the same bypass every
+            # scripted test since Day 7 relies on.
+            parsed_action = choose_monster_action(state, actor)
         else:
             # Empty raw_text/parsed_action so player_agent_node generates
             # the companion's turn via the LLM.
