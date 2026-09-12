@@ -30,6 +30,7 @@ FILES = [
     "5e-SRD-Subraces.json",
     "5e-SRD-Spells.json",
     "5e-SRD-Skills.json",
+    "5e-SRD-Traits.json",
 ]
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "srd"

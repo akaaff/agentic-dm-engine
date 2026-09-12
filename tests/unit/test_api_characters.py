@@ -58,6 +58,12 @@ def test_list_races_includes_human(client: TestClient) -> None:
     human = next(r for r in response.json() if r["index"] == "human")
     assert human["ability_bonuses"] == {"str": 1, "dex": 1, "con": 1, "int": 1, "wis": 1, "cha": 1}
 
+    dwarf = next(r for r in response.json() if r["index"] == "dwarf")
+    trait_names = {t["name"] for t in dwarf["traits"]}
+    assert "Darkvision" in trait_names
+    darkvision = next(t for t in dwarf["traits"] if t["name"] == "Darkvision")
+    assert darkvision["desc"]  # real SRD text, not asserting exact wording
+
 
 def test_get_class_detail_exposes_skill_choice_count_and_options(client: TestClient) -> None:
     response = client.get("/characters/classes/fighter")

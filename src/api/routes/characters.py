@@ -18,12 +18,18 @@ from src.engine.character_creation import (
     create_character,
 )
 from src.engine.position import Position
-from src.engine.srd_loader import load_srd
+from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character, Condition
 
 router = APIRouter(prefix="/characters", tags=["characters"])
 
 DbSession = Annotated[Session, Depends(get_db)]
+
+
+class RaceTrait(BaseModel):
+    index: str
+    name: str
+    desc: str
 
 
 class RaceSummary(BaseModel):
@@ -35,6 +41,10 @@ class RaceSummary(BaseModel):
     flat bonus. Applied automatically server-side in create_character - this
     is exposed purely for the wizard to show *why* final scores differ from
     what the player assigned, not something the player chooses."""
+    traits: list[RaceTrait]
+    """Base-race traits only (e.g. Darkvision, Dwarven Resilience) - display
+    only, same "subraces not applied" simplification as the ability bonuses
+    above (Day 5). Not mechanically enforced anywhere in the engine."""
 
 
 class ClassSummary(BaseModel):
@@ -89,6 +99,23 @@ def _race_ability_bonuses(race: dict[str, Any]) -> dict[str, int]:
     return {b["ability_score"]["index"]: b["bonus"] for b in race.get("ability_bonuses", [])}
 
 
+def _race_traits(race: dict[str, Any], srd: SrdIndex) -> list[RaceTrait]:
+    result = []
+    for ref in race.get("traits", []):
+        entry = srd.traits.get(ref["index"])
+        if entry is None:
+            continue
+        desc = entry.get("desc", [])
+        result.append(
+            RaceTrait(
+                index=entry["index"],
+                name=entry["name"],
+                desc=" ".join(desc) if isinstance(desc, list) else desc,
+            )
+        )
+    return result
+
+
 @router.get("/races", response_model=list[RaceSummary])
 def list_races() -> list[RaceSummary]:
     srd = load_srd()
@@ -98,6 +125,7 @@ def list_races() -> list[RaceSummary]:
             name=r["name"],
             speed=r["speed"],
             ability_bonuses=_race_ability_bonuses(r),
+            traits=_race_traits(r, srd),
         )
         for r in srd.races.values()
     ]

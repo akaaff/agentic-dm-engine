@@ -37,6 +37,10 @@ class SrdIndex:
     """Keyed by the bare skill index (e.g. "perception"), NOT the
     proficiency-style "skill-perception" used elsewhere (chosen_skills,
     Character.skill_proficiencies) - see rules.normalize_skill_name."""
+    traits: dict[str, SrdEntry]
+    """Racial traits (e.g. "darkvision", "dwarven-resilience") - a race's own
+    `traits` field only has {index, name} references, not descriptions;
+    look the full entry up here for the real SRD text."""
 
 
 def _load_indexed(data_dir: Path, filename: str) -> dict[str, SrdEntry]:
@@ -58,4 +62,5 @@ def load_srd(data_dir: Path = DEFAULT_DATA_DIR) -> SrdIndex:
         subclasses=_load_indexed(data_dir, "5e-SRD-Subclasses.json"),
         backgrounds=_load_indexed(data_dir, "5e-SRD-Backgrounds.json"),
         skills=_load_indexed(data_dir, "5e-SRD-Skills.json"),
+        traits=_load_indexed(data_dir, "5e-SRD-Traits.json"),
     )
