@@ -9,4 +9,9 @@ class_index: cleric
 background_index: acolyte
 base_ability_scores: { STR: 13, DEX: 10, CON: 14, INT: 8, WIS: 15, CHA: 12 }
 chosen_skills: [skill-medicine, skill-religion]
-chosen_equipment: [mace, chain-mail]
+chosen_equipment: [mace, scale-mail]
+# Not chain-mail (Heavy) - a base Cleric's SRD proficiencies are only
+# light/medium armor + shields, no heavy armor. Caught live wiring the
+# equipment-proficiency restriction below; scale-mail (Medium, same AC
+# formula as breastplate) keeps the "armored cleric" read while being
+# proficiency-legal.
