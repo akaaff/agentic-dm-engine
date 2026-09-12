@@ -47,6 +47,13 @@ class ClassDetail(ClassSummary):
     _validate_skill_choices enforces server-side."""
 
 
+class SkillSummary(BaseModel):
+    index: str
+    name: str
+    ability: str
+    desc: str
+
+
 class BackgroundSummary(BaseModel):
     index: str
     name: str
@@ -124,6 +131,24 @@ def get_class(class_index: str) -> ClassDetail:
         skill_choose=skill_choose,
         skill_options=skill_options,
     )
+
+
+@router.get("/skills", response_model=list[SkillSummary])
+def list_skills() -> list[SkillSummary]:
+    """Real SRD skill descriptions (not hand-written) - the wizard's skill
+    hints use these directly rather than duplicating flavor text client-side.
+    `index` is the "skill-<name>" form used everywhere else (skill_options,
+    Character.skill_proficiencies), not srd.skills' own bare-index keys."""
+    srd = load_srd()
+    return [
+        SkillSummary(
+            index=f"skill-{s['index']}",
+            name=s["name"],
+            ability=s["ability_score"]["name"],
+            desc=" ".join(s["desc"]) if isinstance(s["desc"], list) else s["desc"],
+        )
+        for s in srd.skills.values()
+    ]
 
 
 @router.get("/backgrounds", response_model=list[BackgroundSummary])

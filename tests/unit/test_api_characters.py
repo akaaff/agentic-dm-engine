@@ -92,6 +92,17 @@ def test_list_equipment_returns_only_weapons_and_armor(client: TestClient) -> No
     assert "chain-mail" in indices
 
 
+def test_list_skills_exposes_real_srd_descriptions(client: TestClient) -> None:
+    response = client.get("/characters/skills")
+    assert response.status_code == 200
+    body = response.json()
+    perception = next(s for s in body if s["index"] == "skill-perception")
+    assert perception["ability"] == "WIS"
+    assert perception["desc"]  # real SRD text, not asserting exact wording
+    indices = {s["index"] for s in body}
+    assert "skill-athletics" in indices  # matches ClassDetail.skill_options' format
+
+
 def test_list_classes_includes_fighter_with_hit_die(client: TestClient) -> None:
     response = client.get("/characters/classes")
     assert response.status_code == 200
