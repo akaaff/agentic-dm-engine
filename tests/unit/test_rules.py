@@ -4,6 +4,9 @@ from src.engine.position import Position
 from src.engine.rules import (
     ability_modifier,
     apply_damage,
+    class_equipment_options,
+    has_non_proficient_armor,
+    is_class_proficient_with,
     normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
@@ -22,7 +25,9 @@ class _FixedRandom:
         return self._values.pop(0)
 
 
-def _make_character(hp: int = 10) -> Character:
+def _make_character(
+    hp: int = 10, class_index: str | None = None, inventory: list[str] | None = None
+) -> Character:
     return Character(
         id="thorin",
         name="Thorin",
@@ -37,6 +42,8 @@ def _make_character(hp: int = 10) -> Character:
         race="Dwarf",
         class_="Fighter",
         background="Acolyte",
+        class_index=class_index,
+        inventory=inventory or [],
     )
 
 
@@ -167,3 +174,56 @@ def test_skill_ability_rejects_an_unknown_skill() -> None:
     srd = load_srd()
     with pytest.raises(ValueError, match="Unknown skill"):
         skill_ability("juggling", srd)
+
+
+def test_class_equipment_options_wizard_is_specific_weapons_only() -> None:
+    srd = load_srd()
+    options = set(class_equipment_options(srd.classes["wizard"], srd))
+    assert options == {"dagger", "dart", "sling", "quarterstaff", "crossbow-light"}
+
+
+def test_class_equipment_options_fighter_gets_everything() -> None:
+    # "all-armor" + "martial-weapons" + "simple-weapons" + "shields" -
+    # broad categories, not an enumerated list like Wizard's.
+    srd = load_srd()
+    options = set(class_equipment_options(srd.classes["fighter"], srd))
+    assert "plate-armor" in options
+    assert "shield" in options
+    assert "longsword" in options  # martial
+    assert "dagger" in options  # simple
+
+
+def test_class_equipment_options_rogue_gets_hand_crossbow_despite_naming() -> None:
+    # Regression guard for the one irregular alias: the SRD proficiency is
+    # named "hand-crossbows" but the equipment index is "crossbow-hand"
+    # (word order swapped) - see class_equipment_options' docstring.
+    srd = load_srd()
+    options = set(class_equipment_options(srd.classes["rogue"], srd))
+    assert "crossbow-hand" in options
+
+
+def test_is_class_proficient_with_checks_the_actual_equipped_item() -> None:
+    srd = load_srd()
+    wizard = _make_character(class_index="wizard")
+    assert is_class_proficient_with(wizard, "dagger", srd) is True
+    assert is_class_proficient_with(wizard, "longsword", srd) is False
+
+
+def test_is_class_proficient_with_treats_no_class_as_proficient_with_anything() -> None:
+    # Monsters have no class_index and attack via their own stat-block
+    # actions, never through this weapon-lookup path - nothing to restrict.
+    srd = load_srd()
+    monster = _make_character(class_index=None)
+    assert is_class_proficient_with(monster, "plate-armor", srd) is True
+
+
+def test_has_non_proficient_armor_true_only_for_armor_outside_the_class_pool() -> None:
+    srd = load_srd()
+    wizard_in_chainmail = _make_character(class_index="wizard", inventory=["chain-mail"])
+    assert has_non_proficient_armor(wizard_in_chainmail, srd) is True
+
+    fighter_in_chainmail = _make_character(class_index="fighter", inventory=["chain-mail"])
+    assert has_non_proficient_armor(fighter_in_chainmail, srd) is False
+
+    wizard_with_no_armor = _make_character(class_index="wizard", inventory=["dagger"])
+    assert has_non_proficient_armor(wizard_with_no_armor, srd) is False

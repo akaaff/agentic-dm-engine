@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from src.engine.position import Position
-from src.engine.rules import ability_modifier
+from src.engine.rules import ability_modifier, class_equipment_options
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character
 
@@ -188,61 +188,6 @@ def create_character(
         skill_proficiencies=skill_proficiencies,
         class_index=class_index,
     )
-
-
-_WEAPON_PROFICIENCY_ALIASES: dict[str, str] = {
-    "daggers": "dagger",
-    "darts": "dart",
-    "slings": "sling",
-    "quarterstaffs": "quarterstaff",
-    "crossbows-light": "crossbow-light",
-    "clubs": "club",
-    "javelins": "javelin",
-    "maces": "mace",
-    "sickles": "sickle",
-    "spears": "spear",
-    "scimitars": "scimitar",
-    "longswords": "longsword",
-    "rapiers": "rapier",
-    "shortswords": "shortsword",
-    "hand-crossbows": "crossbow-hand",
-}
-"""A class's `proficiencies` list names specific weapons in plural/reworded
-form (e.g. Wizard's "daggers", "crossbows-light") rather than the equipment
-list's own singular index ("dagger", "crossbow-light") - and one is
-irregular ("hand-crossbows" -> "crossbow-hand", word order swapped).
-Enumerated directly from all 12 vendored classes' actual proficiency lists,
-not a general singularization rule - safer than guessing at a pattern that
-might silently mismatch a class added later."""
-
-
-def class_equipment_options(cls: SrdEntry, srd: SrdIndex) -> list[str]:
-    """Weapon/armor equipment indices this class is actually SRD-proficient
-    with - e.g. a Wizard is proficient with exactly 5 specific weapons (not
-    "simple weapons" as a category) and no armor at all, while a Fighter's
-    "all-armor"/"martial-weapons" entries are broad categories. Used to
-    restrict the wizard's optional-extra-gear picker and to validate
-    `chosen_equipment` server-side - the same "don't offer/accept a choice
-    outside the real pool" discipline `class_skill_choice_pool` already
-    applies to skills."""
-    prof_indices = {p["index"] for p in cls.get("proficiencies", [])}
-    aliased_weapons = {_WEAPON_PROFICIENCY_ALIASES.get(p, p) for p in prof_indices}
-
-    options: list[str] = []
-    for item in srd.equipment.values():
-        weapon_category = item.get("weapon_category")
-        armor_category = item.get("armor_category")
-        if weapon_category and (
-            f"{weapon_category.lower()}-weapons" in prof_indices or item["index"] in aliased_weapons
-        ):
-            options.append(item["index"])
-        elif armor_category == "Shield" and "shields" in prof_indices:
-            options.append(item["index"])
-        elif armor_category and (
-            "all-armor" in prof_indices or f"{armor_category.lower()}-armor" in prof_indices
-        ):
-            options.append(item["index"])
-    return sorted(options)
 
 
 def class_skill_choice_pool(cls: SrdEntry) -> tuple[int, set[str]]:

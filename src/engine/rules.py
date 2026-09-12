@@ -11,7 +11,7 @@ import random
 from dataclasses import dataclass
 
 from src.engine.dice import RollResult, roll, roll_d20
-from src.engine.srd_loader import SrdIndex
+from src.engine.srd_loader import SrdEntry, SrdIndex
 from src.engine.state import AbilityScore, Character
 
 
@@ -117,3 +117,97 @@ def skill_ability(skill_name: str, srd: SrdIndex) -> AbilityScore:
         raise ValueError(f"Unknown skill: {skill_name!r}")
     ability: AbilityScore = skill_data["ability_score"]["index"].upper()
     return ability
+
+
+_WEAPON_PROFICIENCY_ALIASES: dict[str, str] = {
+    "daggers": "dagger",
+    "darts": "dart",
+    "slings": "sling",
+    "quarterstaffs": "quarterstaff",
+    "crossbows-light": "crossbow-light",
+    "clubs": "club",
+    "javelins": "javelin",
+    "maces": "mace",
+    "sickles": "sickle",
+    "spears": "spear",
+    "scimitars": "scimitar",
+    "longswords": "longsword",
+    "rapiers": "rapier",
+    "shortswords": "shortsword",
+    "hand-crossbows": "crossbow-hand",
+}
+"""A class's `proficiencies` list names specific weapons in plural/reworded
+form (e.g. Wizard's "daggers", "crossbows-light") rather than the equipment
+list's own singular index ("dagger", "crossbow-light") - and one is
+irregular ("hand-crossbows" -> "crossbow-hand", word order swapped).
+Enumerated directly from all 12 vendored classes' actual proficiency lists,
+not a general singularization rule - safer than guessing at a pattern that
+might silently mismatch a class added later."""
+
+
+def class_equipment_options(cls: SrdEntry, srd: SrdIndex) -> list[str]:
+    """Weapon/armor equipment indices this class is actually SRD-proficient
+    with - e.g. a Wizard is proficient with exactly 5 specific weapons (not
+    "simple weapons" as a category) and no armor at all, while a Fighter's
+    "all-armor"/"martial-weapons" entries are broad categories. Lives here
+    (not character_creation.py, which imports it) rather than in
+    turn_engine.py, same reasoning as skill_ability above: both creation-time
+    validation and turn_engine's live proficiency checks below need it, and
+    this module has no coupling to either caller.
+
+    Used to restrict the wizard's optional-extra-gear picker, to validate
+    `chosen_equipment` at creation, and (below) to determine whether an
+    *equipped* weapon/armor actually grants its proficiency bonus / avoids
+    the non-proficiency penalty during play."""
+    prof_indices = {p["index"] for p in cls.get("proficiencies", [])}
+    aliased_weapons = {_WEAPON_PROFICIENCY_ALIASES.get(p, p) for p in prof_indices}
+
+    options: list[str] = []
+    for item in srd.equipment.values():
+        weapon_category = item.get("weapon_category")
+        armor_category = item.get("armor_category")
+        if weapon_category and (
+            f"{weapon_category.lower()}-weapons" in prof_indices or item["index"] in aliased_weapons
+        ):
+            options.append(item["index"])
+        elif armor_category == "Shield" and "shields" in prof_indices:
+            options.append(item["index"])
+        elif armor_category and (
+            "all-armor" in prof_indices or f"{armor_category.lower()}-armor" in prof_indices
+        ):
+            options.append(item["index"])
+    return sorted(options)
+
+
+def is_class_proficient_with(character: Character, equipment_index: str, srd: SrdIndex) -> bool:
+    """Whether this character's class is SRD-proficient with the given
+    weapon/armor equipment index. Characters with no class (monsters -
+    they attack via their own stat-block actions, never through this
+    weapon-lookup path at all) are treated as proficient with anything,
+    since there's no class proficiency list to check against."""
+    if character.class_index is None:
+        return True
+    cls = srd.classes.get(character.class_index)
+    if cls is None:
+        return True
+    return equipment_index in class_equipment_options(cls, srd)
+
+
+def has_non_proficient_armor(character: Character, srd: SrdIndex) -> bool:
+    """True if the character's inventory contains armor or a shield their
+    class isn't proficient with - per SRD, wearing/using it imposes
+    disadvantage on any attack roll or STR/DEX-based ability check (see
+    turn_engine's _resolve_attack/_resolve_skill_check). Inventory is
+    treated as "currently equipped" throughout this engine (same
+    simplification character_creation._compute_ac already makes - a flat
+    list, not a worn/carried distinction)."""
+    if character.class_index is None:
+        return False
+    cls = srd.classes.get(character.class_index)
+    if cls is None:
+        return False
+    options = set(class_equipment_options(cls, srd))
+    return any(
+        (item := srd.equipment.get(idx)) and item.get("armor_category") and idx not in options
+        for idx in character.inventory
+    )

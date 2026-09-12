@@ -5,9 +5,17 @@ for the actual dice math, appends Events, checks victory/defeat, and
 advances the turn. This is the one place per-turn orchestration lives - Day
 11 wraps this exact function as the LangGraph rules_engine node.
 
+Weapon/armor proficiency is enforced here against the actor's class (see
+rules.class_equipment_options/is_class_proficient_with/
+has_non_proficient_armor): an equipped weapon the class isn't proficient
+with drops the proficiency bonus from the attack roll, and non-proficient
+armor/shield imposes disadvantage on attack rolls and STR/DEX skill checks,
+per SRD. In practice this can only trigger from hand-authored data (e.g. a
+companion YAML) since the character creator only ever offers proficient
+gear - added specifically because that exact mistake shipped once (Sister
+Mira's chain-mail) and the engine had no way to notice.
+
 Deliberate simplifications (documented, not silent):
-- Proficiency with equipped weapons is assumed for PCs (no weapon-specific
-  proficiency tracking) - attack_bonus always includes proficiency_bonus.
 - Movement takes an explicit path (list of intermediate squares) in
   params["path"], not just a destination - real pathfinding around
   obstacles is a future concern, not what this engine validates.
@@ -39,6 +47,8 @@ from src.engine.rules import (
     ability_check_modifier,
     ability_modifier,
     apply_damage,
+    has_non_proficient_armor,
+    is_class_proficient_with,
     normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
@@ -123,9 +133,12 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
     else:
         ability_mod = str_mod
 
+    proficient = is_class_proficient_with(actor, weapon["index"], srd)
+    prof_bonus = actor.proficiency_bonus if proficient else 0
+
     dice_count, dice_sides, notation_bonus = parse_dice_notation(weapon["damage"]["damage_dice"])
     return AttackParams(
-        attack_bonus=ability_mod + actor.proficiency_bonus,
+        attack_bonus=ability_mod + prof_bonus,
         damage_dice_count=dice_count,
         damage_dice_sides=dice_sides,
         damage_bonus=ability_mod + notation_bonus,
@@ -199,7 +212,8 @@ def _resolve_attack(
     # or not it changes the outcome; disadvantage from the target dodging
     # applies for as long as the target is dodging (until their own next
     # turn) rather than being consumed - roll_d20 already cancels the two
-    # out together when both apply, per SRD rules.
+    # out together when both apply, per SRD rules. The attacker's own
+    # non-proficient armor is a second, independent disadvantage source.
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
 
@@ -212,7 +226,7 @@ def _resolve_attack(
         damage_type=params.damage_type,
         rng=rng,
         advantage=advantage,
-        disadvantage=target.is_dodging,
+        disadvantage=target.is_dodging or has_non_proficient_armor(actor, srd),
     )
 
     state.events.append(
@@ -342,12 +356,16 @@ def _resolve_skill_check(
 
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
+    # Per SRD, non-proficient armor imposes disadvantage on STR/DEX checks
+    # specifically (not INT/WIS/CHA ones like Perception or Persuasion).
+    disadvantage = ability in ("STR", "DEX") and has_non_proficient_armor(actor, srd)
 
     result, success = resolve_skill_check(
         modifier=modifier,
         dc=DEFAULT_SKILL_CHECK_DC,
         rng=rng,
         advantage=advantage,
+        disadvantage=disadvantage,
     )
     state.events.append(
         Event(

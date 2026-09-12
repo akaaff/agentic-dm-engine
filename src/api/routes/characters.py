@@ -14,11 +14,11 @@ from src.api.db.models import CharacterRecord
 from src.api.db.session import get_db
 from src.engine.character_creation import (
     CharacterCreationError,
-    class_equipment_options,
     class_skill_choice_pool,
     create_character,
 )
 from src.engine.position import Position
+from src.engine.rules import class_equipment_options
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character, Condition
 

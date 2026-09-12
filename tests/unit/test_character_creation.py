@@ -2,37 +2,9 @@ import pytest
 
 from src.engine.character_creation import (
     CharacterCreationError,
-    class_equipment_options,
     create_character,
     validate_standard_array,
 )
-from src.engine.srd_loader import load_srd
-
-
-def test_class_equipment_options_wizard_is_specific_weapons_only() -> None:
-    srd = load_srd()
-    options = set(class_equipment_options(srd.classes["wizard"], srd))
-    assert options == {"dagger", "dart", "sling", "quarterstaff", "crossbow-light"}
-
-
-def test_class_equipment_options_fighter_gets_everything() -> None:
-    # "all-armor" + "martial-weapons" + "simple-weapons" + "shields" -
-    # broad categories, not an enumerated list like Wizard's.
-    srd = load_srd()
-    options = set(class_equipment_options(srd.classes["fighter"], srd))
-    assert "plate-armor" in options
-    assert "shield" in options
-    assert "longsword" in options  # martial
-    assert "dagger" in options  # simple
-
-
-def test_class_equipment_options_rogue_gets_hand_crossbow_despite_naming() -> None:
-    # Regression guard for the one irregular alias: the SRD proficiency is
-    # named "hand-crossbows" but the equipment index is "crossbow-hand"
-    # (word order swapped) - see class_equipment_options' docstring.
-    srd = load_srd()
-    options = set(class_equipment_options(srd.classes["rogue"], srd))
-    assert "crossbow-hand" in options
 
 
 def test_validate_standard_array_accepts_a_permutation() -> None:

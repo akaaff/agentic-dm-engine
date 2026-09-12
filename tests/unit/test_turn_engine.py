@@ -79,6 +79,18 @@ def test_pc_attack_params_finesse_uses_better_of_str_or_dex() -> None:
     assert params.damage_type == "piercing"
 
 
+def test_pc_attack_params_drops_proficiency_bonus_when_not_proficient() -> None:
+    # A Wizard isn't proficient with a longsword (not one of their 5 named
+    # weapons, and they have no "martial-weapons"/"simple-weapons" category
+    # either - see rules.class_equipment_options). Longsword isn't finesse,
+    # so STR applies even though DEX is better here: STR8 -> mod -1, and
+    # with no proficiency bonus the attack_bonus is just that mod, not -1+2.
+    srd = load_srd()
+    wizard = _two_person_party()[1]
+    params = _pc_attack_params(wizard, "longsword", srd)
+    assert params.attack_bonus == -1
+
+
 def test_pc_attack_params_falls_back_to_unarmed_strike() -> None:
     srd = load_srd()
     fighter = _two_person_party()[0]
@@ -181,3 +193,23 @@ def test_resolve_action_rejects_a_monster_attacking_another_monster() -> None:
     )
     with pytest.raises(TurnEngineError, match="same side"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_attack_gets_disadvantage_from_non_proficient_armor() -> None:
+    # Elrond (Wizard) has no armor proficiency at all - simulate exactly
+    # the authoring mistake this mechanic exists to catch (a companion
+    # shipped with armor its class can't use - see CLAUDE.md, Sister
+    # Mira's chain-mail) by giving him chain-mail directly. His attack
+    # should roll with disadvantage even though the target isn't dodging
+    # and he isn't being helped - two d20s [15, 3], keep the lower (3).
+    state = _build_demo_state([18, 10, 8, 3])
+    elrond = state.characters["elrond"]
+    elrond.inventory.append("chain-mail")
+    state.current_turn = state.turn_order.index("elrond")
+    action = ParsedAction(
+        actor="elrond", verb="attack", target="goblin_1", item_or_spell="dagger", raw_text="stab"
+    )
+    resolve_action(state, action, _FixedRandom([15, 3]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["natural"] == 3

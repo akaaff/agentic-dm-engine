@@ -91,6 +91,45 @@ def test_skill_check_fails_without_proficiency_same_natural_roll() -> None:
     assert event.payload["success"] is False
 
 
+def test_skill_check_gets_disadvantage_from_non_proficient_armor_on_dex_check() -> None:
+    # Elrond (Wizard, no armor proficiency at all) wearing chain-mail -
+    # simulates the same authoring mistake test_turn_engine.py's attack
+    # version does (see CLAUDE.md, Sister Mira's chain-mail). Disadvantage
+    # applies to STR/DEX checks specifically (rules.has_non_proficient_
+    # armor). DEX16 -> mod3, not skill-proficient in Acrobatics ->
+    # modifier 3. Two d20s [15, 4], keep the lower (4) -> total 7.
+    state = _build_demo_state(_INITIATIVE)
+    elrond = state.characters["elrond"]
+    elrond.inventory.append("chain-mail")
+    state.current_turn = 1
+    action = ParsedAction(
+        actor="elrond", verb="skill_check", params={"skill": "acrobatics"}, raw_text="tumble"
+    )
+    resolve_action(state, action, _FixedRandom([15, 4]))  # type: ignore[arg-type]
+
+    event = state.events[-1]
+    assert event.payload["roll_total"] == 7
+
+
+def test_skill_check_ignores_armor_proficiency_for_non_str_dex_skills() -> None:
+    # Same non-proficient armor, but Perception is WIS-governed - the SRD
+    # penalty only touches STR/DEX rolls. A single RNG value proves no
+    # disadvantage was rolled (a second, unconsumed value would desync
+    # _FixedRandom and fail loudly on the *next* call, not silently pass).
+    state = _build_demo_state(_INITIATIVE)
+    elrond = state.characters["elrond"]
+    elrond.inventory.append("chain-mail")
+    state.current_turn = 1
+    action = ParsedAction(
+        actor="elrond", verb="skill_check", params={"skill": "perception"}, raw_text="look around"
+    )
+    resolve_action(state, action, _FixedRandom([10]))  # type: ignore[arg-type]
+
+    event = state.events[-1]
+    # WIS13 -> mod1, not skill-proficient in Perception -> modifier 1.
+    assert event.payload["roll_total"] == 11
+
+
 def test_skill_check_requires_skill_param() -> None:
     state = _build_demo_state(_INITIATIVE)
     action = ParsedAction(actor="thorin", verb="skill_check", raw_text="do something skillful")
