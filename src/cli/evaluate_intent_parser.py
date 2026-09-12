@@ -13,6 +13,7 @@ import argparse
 import random
 from pathlib import Path
 
+from src import config
 from src.training.dataset_io import read_jsonl
 from src.training.evaluate_models import evaluate, predictions_to_jsonl, scores_to_markdown
 from src.training.tasks.intent_parser_task import build_intent_parser_task
@@ -32,6 +33,13 @@ def main() -> None:
     parser.add_argument("--adapter-dir", type=Path, default=_DEFAULT_ADAPTER_DIR)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--workers", type=int, default=16, help="Concurrent teacher calls.")
+    parser.add_argument(
+        "--ollama-model",
+        default=None,
+        help="Add a 4th column: the fine-tuned student served as this Ollama "
+        "model (Day 27 detour - GGUF, not transformers/peft). "
+        f"e.g. {config.INTENT_PARSER_OLLAMA_MODEL}",
+    )
     parser.add_argument("--out", type=Path, default=_RESULTS_PATH)
     args = parser.parse_args()
 
@@ -47,6 +55,7 @@ def main() -> None:
         teacher_model=task.teacher_model,
         batch_size=args.batch_size,
         teacher_workers=args.workers,
+        finetuned_ollama_model=args.ollama_model,
     )
 
     markdown = scores_to_markdown(run.scores, len(sample))

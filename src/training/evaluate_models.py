@@ -27,7 +27,7 @@ from pydantic import ValidationError
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.engine.actions import ParsedAction
-from src.llm.providers import chat_structured, extract_json_object
+from src.llm.providers import chat_structured, chat_structured_best_effort, extract_json_object
 from src.training.evaluate_structured_output import FieldAccuracy, score_fields
 from src.training.generate_synthetic import SyntheticExample
 
@@ -106,6 +106,26 @@ def _run_teacher(prompts: list[str], model: str, max_workers: int) -> list[dict[
         return list(pool.map(_one, prompts))
 
 
+def _run_ollama_unconstrained(
+    prompts: list[str], model: str, max_workers: int
+) -> list[dict[str, Any] | None]:
+    """Day 27 detour: for a model served by Ollama but *not* fine-tuned
+    under grammar-constrained decoding, `chat_structured`'s `format`
+    constraint measurably hurts it (see CLAUDE.md - it collapses
+    `ParsedAction.params` to `{}`) - so this mirrors the production
+    `finetuned_ollama` backend's actual code path (`chat_structured_best_
+    effort`, no grammar) instead of the teacher's."""
+
+    def _one(prompt: str) -> dict[str, Any] | None:
+        result = chat_structured_best_effort(
+            messages=[{"role": "user", "content": prompt}], schema=ParsedAction, model=model
+        )
+        return result.model_dump(mode="json") if result is not None else None
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        return list(pool.map(_one, prompts))
+
+
 def score_predictions(
     name: str, expected: list[dict[str, Any]], predicted: list[dict[str, Any] | None]
 ) -> ModelScore:
@@ -143,7 +163,13 @@ def evaluate(
     batch_size: int = 16,
     teacher_workers: int = 16,
     max_new_tokens: int = 256,
+    finetuned_ollama_model: str | None = None,
 ) -> EvalRun:
+    """`finetuned_ollama_model`, if given (Day 27 detour), adds a fourth
+    column: the same LoRA-merged student, but converted to GGUF and served
+    by Ollama - via `_run_ollama_unconstrained`, matching the production
+    `finetuned_ollama` backend's actual (grammar-free) code path, not the
+    teacher's grammar-constrained one."""
     prompts = [ex.input for ex in examples]
     expected = [ex.output for ex in examples]
 
@@ -156,6 +182,10 @@ def evaluate(
         ),
         "teacher (Ollama)": _run_teacher(prompts, teacher_model, teacher_workers),
     }
+    if finetuned_ollama_model is not None:
+        predictions["fine-tuned (Ollama GGUF)"] = _run_ollama_unconstrained(
+            prompts, finetuned_ollama_model, teacher_workers
+        )
     scores = [score_predictions(name, expected, preds) for name, preds in predictions.items()]
     return EvalRun(scores=scores, prompts=prompts, expected=expected, predictions=predictions)
 

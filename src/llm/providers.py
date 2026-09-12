@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.config import OLLAMA_BASE_URL, OLLAMA_TEACHER_MODEL
 
@@ -96,3 +96,37 @@ def chat_structured[T: BaseModel](
     response.raise_for_status()
     content = response.json()["message"]["content"]
     return schema.model_validate_json(content)
+
+
+def chat_structured_best_effort[T: BaseModel](
+    messages: list[dict[str, str]],
+    schema: type[T],
+    model: str,
+    temperature: float = 0.2,
+    attempts: int = 3,
+) -> T | None:
+    """Day 27 detour: `chat_structured`'s server-side grammar constraint
+    turned out to actively hurt a model that was never trained under it
+    (see CLAUDE.md) - it collapsed `ParsedAction.params` (an untyped, open
+    dict[str, Any]) to `{}` every time on the GGUF-served fine-tuned
+    student, even though the exact same model/prompt/temperature produces
+    the correct nested value when decoded unconstrained. This is the
+    same fallback shape `local_parser.parse_intent_local` uses for the
+    transformers-served student (no grammar there either): plain `chat()`,
+    best-effort JSON extraction, first attempt greedy then sampled retries,
+    `None` if nothing validates. Generic over any pydantic schema and any
+    Ollama model name - not intent-parser-specific."""
+    for attempt in range(attempts):
+        raw = chat(
+            messages=messages,
+            model=model,
+            temperature=temperature if attempt == 0 else 0.7,
+        )
+        parsed = extract_json_object(raw)
+        if parsed is None:
+            continue
+        try:
+            return schema.model_validate(parsed)
+        except ValidationError:
+            continue
+    return None

@@ -1,8 +1,15 @@
 """Day 27's end-to-end re-eval: run Day 15's autoplay judge harness with
 the teacher parser and again with the fine-tuned student, diff the episode
 scores, and micro-benchmark single-call parse latency for each. Needs a
-live Ollama and (for the fine-tuned backend) a CUDA GPU. Scene images are
+live Ollama and (for the "finetuned" backend) a CUDA GPU. Scene images are
 disabled so the 0.5B student can share the card with the Ollama teacher.
+
+Day 27 detour: also runs "finetuned_ollama" - the same distilled student,
+merged + converted to GGUF and served by Ollama (INTENT_PARSER_OLLAMA_MODEL)
+instead of transformers/peft. This is the backend that actually tests
+whether the latency win predicted in CLAUDE.md's Day 27 entry (same engine
+as the teacher, not just a smaller model) shows up in practice. Needs that
+Ollama model already created - see CLAUDE.md's Day 27 detour entry for how.
 
   uv run python -m src.cli.eval_end_to_end --runs 2
 """
@@ -19,13 +26,13 @@ from src import config
 from src.cli.play import run_autoplay
 from src.engine.actions import ParsedAction
 from src.graph.nodes.judge import judge_transcript
-from src.llm.providers import chat_structured
+from src.llm.providers import chat_structured, chat_structured_best_effort
 from src.training.tasks.intent_parser_task import build_intent_parser_task
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _OUT = _PROJECT_ROOT / "data" / "training" / "eval_results" / "intent_parser_end_to_end.md"
 
-_BACKENDS = ["teacher", "finetuned"]
+_BACKENDS = ["teacher", "finetuned", "finetuned_ollama"]
 
 
 def _autoplay_scores(campaign_id: str, runs: int) -> list[int]:
@@ -58,6 +65,16 @@ def _latency_ms(backend: str, prompts: list[str]) -> list[float]:
             chat_structured(
                 messages=[{"role": "user", "content": prompt}],
                 schema=ParsedAction,
+                temperature=0.2,
+            )
+        elif backend == "finetuned_ollama":
+            # Not chat_structured: its grammar constraint measurably hurts
+            # this model (see CLAUDE.md) - matches the production backend's
+            # actual code path (intent_parser_node).
+            chat_structured_best_effort(
+                messages=[{"role": "user", "content": prompt}],
+                schema=ParsedAction,
+                model=config.INTENT_PARSER_OLLAMA_MODEL,
                 temperature=0.2,
             )
         else:
@@ -104,14 +121,21 @@ def main() -> None:
         "LLM-sampled and noisy - the judge score column is a small-sample sanity",
         "check that swapping the parser doesn't degrade play, not a precise metric.",
         "",
-        "Latency caveat: the fine-tuned 0.5B student runs through plain",
-        "transformers/peft (bf16, merged adapter); the teacher runs through",
-        "Ollama's llama.cpp (q4, fused kernels, grammar-constrained stopping).",
-        "The student is only marginally faster despite being 14x smaller -",
-        "at this scale the inference stack matters more than the parameter",
-        "count. A real latency win needs the student on the same engine",
-        "(GGUF -> Ollama), which this Windows Ollama build can't import",
-        "(its experimental safetensors path needs Apple MLX).",
+        "Latency caveat: 'finetuned' runs the 0.5B student through plain",
+        "transformers/peft (bf16, merged adapter) - only marginally faster than",
+        "the 7B teacher despite being 14x smaller, because it gives up the",
+        "inference-stack advantages (fused kernels, exact stopping) the teacher",
+        "gets from Ollama's llama.cpp. 'finetuned_ollama' is the same distilled",
+        "student, merged + converted to GGUF and served by Ollama instead - same",
+        "engine as the teacher, isolating parameter count as the only remaining",
+        "variable, and it wins clearly once served that way. See CLAUDE.md's",
+        "Day 27 detour entry for how the GGUF was produced (a full llama.cpp",
+        "clone, run locally - no Colab, no quantization needed at this size)",
+        "and for a real, unrelated bug this detour also found and fixed: on",
+        "this Windows machine, httpx resolving 'localhost' (vs. the literal",
+        "127.0.0.1) added a flat ~2.2s to every Ollama call regardless of",
+        "model - which is why 'teacher' itself is now ~4x faster than it was",
+        "in the original Day 27 table, not just 'finetuned_ollama'.",
         "",
         "| backend | parse latency (median) | parse latency (p90) | judge overall_score |",
         "| --- | --- | --- | --- |",
