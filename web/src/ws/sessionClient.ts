@@ -47,15 +47,25 @@ export interface LiveGameState {
 type ServerMessage =
   | { type: 'state_update'; game_state: LiveGameState }
   | { type: 'narration'; text: string }
+  | { type: 'scene_narration'; text: string }
   | { type: 'scene_image'; url: string }
   | { type: 'awaiting_input'; actor: string }
   | { type: 'error'; detail: string }
+
+export interface NarrationEntry {
+  text: string
+  /** "scene" is the campaign's own scene-setting text (a narrative "hook"
+   * before a fight, a skill-challenge outcome, an outro) - delivered
+   * between encounters, not from an individual action. "action" is the
+   * ordinary per-turn narration this project has always had. */
+  kind: 'scene' | 'action'
+}
 
 const WS_BASE_URL = 'ws://localhost:8000'
 
 export function useSessionSocket(sessionId: string) {
   const [gameState, setGameState] = useState<LiveGameState | null>(null)
-  const [narrationLog, setNarrationLog] = useState<string[]>([])
+  const [narrationLog, setNarrationLog] = useState<NarrationEntry[]>([])
   const [sceneImageUrl, setSceneImageUrl] = useState<string | null>(null)
   const [awaitingActor, setAwaitingActor] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -91,7 +101,14 @@ export function useSessionSocket(sessionId: string) {
           setGameState(message.game_state)
           break
         case 'narration':
-          if (message.text) setNarrationLog((prev) => [...prev, message.text])
+          if (message.text) {
+            setNarrationLog((prev) => [...prev, { text: message.text, kind: 'action' }])
+          }
+          break
+        case 'scene_narration':
+          if (message.text) {
+            setNarrationLog((prev) => [...prev, { text: message.text, kind: 'scene' }])
+          }
           break
         case 'scene_image':
           setSceneImageUrl(message.url)

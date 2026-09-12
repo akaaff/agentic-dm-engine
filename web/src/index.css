@@ -405,6 +405,20 @@ button.secondary {
   line-height: 1.4;
 }
 
+/* The campaign's own scene-setting text (a hook before a fight, a
+   skill-challenge outcome, an outro) - visually distinct from ordinary
+   per-turn narration so it reads like a DM chapter beat, not an action's
+   outcome. */
+.narration-scene {
+  font-style: italic;
+  color: #cfc6de;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.75rem;
+  border-left: 3px solid #7c4dff;
+  background: rgba(124, 77, 255, 0.08);
+  border-radius: 0 6px 6px 0;
+}
+
 .action-form {
   display: flex;
   gap: 0.5rem;
