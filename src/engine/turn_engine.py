@@ -26,6 +26,16 @@ the map; a companion's free-text-parsed attack can still be rejected as
 out-of-range if the LLM doesn't reason about position (same class of gap as
 the already-documented "closest goblin" one - not fixed here).
 
+A move/dash is also rejected if its destination square is already occupied
+by another living character - caught live right after the range-enforcement
+fix above shipped: a companion's free-text-declared move landed exactly on
+the human player's own square (both characters visually stacked on one
+combat-grid token). Only the final destination is checked, not squares
+passed through mid-path - this engine has no opportunity-attack mechanic
+and doesn't distinguish ally from enemy squares for pass-through purposes,
+so checking every intermediate square would be effort spent on a
+distinction nothing else in the engine cares about yet.
+
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
   params["path"], not just a destination - real pathfinding around
@@ -368,6 +378,23 @@ def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> N
         cost = move_cost_feet(full_path, state.battle_map.terrain)
         raise TurnEngineError(
             f"{actor.id} cannot afford this move (cost={cost}, speed budget={speed})"
+        )
+
+    destination = steps[-1]
+    occupant = next(
+        (
+            c
+            for c in state.characters.values()
+            if not c.is_dead
+            and c.id != actor.id
+            and c.position.x == destination.x
+            and c.position.y == destination.y
+        ),
+        None,
+    )
+    if occupant is not None:
+        raise TurnEngineError(
+            f"({destination.x}, {destination.y}) is already occupied by {occupant.name}"
         )
 
     origin = actor.position

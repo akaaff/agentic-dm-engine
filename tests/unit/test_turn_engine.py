@@ -244,6 +244,23 @@ def test_attack_rejected_beyond_a_ranged_weapons_long_range() -> None:
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
+def test_move_rejected_onto_a_square_already_occupied_by_another_character() -> None:
+    # Caught live right after the range-enforcement fix landed: a
+    # companion's free-text-declared move landed exactly on the human
+    # player's own square (0,1)->(1,2 is elrond's square in the demo
+    # encounter), and the two characters were visually stacked on one
+    # combat-grid token, with the second one completely hidden.
+    state = _build_demo_state([18, 10, 8, 3])
+    action = ParsedAction(
+        actor="thorin",
+        verb="move",
+        raw_text="I move next to Elrond",
+        params={"path": [{"x": 1, "y": 2}]},
+    )
+    with pytest.raises(TurnEngineError, match="already occupied"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
 def test_attack_gets_disadvantage_beyond_a_ranged_weapons_normal_range() -> None:
     # 155ft: beyond a longbow's 150ft normal range but within its 600ft
     # long range - SRD imposes disadvantage rather than rejecting the shot
