@@ -8,6 +8,7 @@ from src.engine.actions import ParsedAction
 from src.engine.character_creation import create_character
 from src.engine.conditions import apply_condition, has_condition
 from src.engine.encounter import build_encounter_state
+from src.engine.position import Position
 from src.engine.state import Character, Condition
 from src.engine.turn_engine import HEALING_POTION_INDEX, TurnEngineError, resolve_action
 
@@ -88,6 +89,25 @@ def test_cast_cantrip_hits_and_does_not_touch_spell_slots() -> None:
     assert damage_event.payload["amount"] == 6
     assert state.characters["goblin_1"].hp == 1
     assert state.characters["elrond"].spell_slots == slots_before
+
+
+def test_cast_spell_rejected_when_target_beyond_spell_range() -> None:
+    # Fire Bolt's SRD range is "120 feet" - a flat max, no "beyond normal"
+    # disadvantage tier like a ranged weapon has (spells don't get one).
+    state = _build_demo_state(_INITIATIVE)
+    _end_turn(state, "thorin")
+    state.characters["elrond"].position = Position(x=0, y=0)
+    state.characters["goblin_1"].position = Position(x=30, y=0)  # 150ft > 120ft
+
+    action = ParsedAction(
+        actor="elrond",
+        verb="cast_spell",
+        target="goblin_1",
+        item_or_spell="fire bolt",
+        raw_text="I cast fire bolt at the goblin",
+    )
+    with pytest.raises(TurnEngineError, match="out of range"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
 def test_cast_leveled_spell_consumes_a_slot_and_can_kill() -> None:
@@ -297,6 +317,11 @@ def test_pc_at_zero_hp_goes_unconscious_not_dead() -> None:
     _end_turn(state, "thorin")
     _end_turn(state, "elrond")
     state.characters["thorin"].hp = 3
+    # The demo encounter's own spawn points put them 10ft apart - fine for
+    # every other test here, but this one needs a real melee hit to land
+    # now that turn_engine enforces range; the test is about death-save
+    # mechanics, not distance, so just place them adjacent.
+    state.characters["goblin_1"].position = state.characters["thorin"].position
 
     action = ParsedAction(actor="goblin_1", verb="attack", target="thorin", raw_text="attack")
     resolve_action(state, action, _FixedRandom([11, 6]))  # type: ignore[arg-type]

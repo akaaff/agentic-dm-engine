@@ -15,6 +15,17 @@ companion YAML) since the character creator only ever offers proficient
 gear - added specifically because that exact mistake shipped once (Sister
 Mira's chain-mail) and the engine had no way to notice.
 
+Attack range is enforced too (see rules.weapon_range_feet/
+monster_action_range_feet): a target beyond a melee weapon's reach (5ft,
+10ft with the "reach" property) or a ranged weapon's long range is rejected
+outright; beyond normal but within long range imposes disadvantage, per
+SRD. Caught live (a screenshot of a combat grid showing the attacker and
+target several squares apart, with a melee hit narrated anyway) - monster_ai
+now closes distance before attacking instead of hitting from anywhere on
+the map; a companion's free-text-parsed attack can still be rejected as
+out-of-range if the LLM doesn't reason about position (same class of gap as
+the already-documented "closest goblin" one - not fixed here).
+
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
   params["path"], not just a destination - real pathfinding around
@@ -42,18 +53,21 @@ from src.engine.conditions import apply_condition, has_condition, remove_conditi
 from src.engine.dice import roll
 from src.engine.events import Event
 from src.engine.movement import can_afford_move, move_cost_feet
-from src.engine.position import Position
+from src.engine.position import Position, distance_feet
 from src.engine.rules import (
     ability_check_modifier,
     ability_modifier,
     apply_damage,
     has_non_proficient_armor,
     is_class_proficient_with,
+    monster_action_range_feet,
     normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
     resolve_skill_check,
     skill_ability,
+    spell_range_feet,
+    weapon_range_feet,
 )
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character, Condition, GameState
@@ -96,6 +110,10 @@ class AttackParams:
     damage_type: str
     source_name: str
     """Weapon or monster-action name, for the Event payload/narration."""
+    range_normal_feet: int
+    range_long_feet: int | None
+    """None for melee (no "beyond normal range" concept) - see
+    rules.weapon_range_feet/monster_action_range_feet."""
 
 
 def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex) -> AttackParams:
@@ -115,7 +133,8 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
     dex_mod = ability_modifier(actor.stats["DEX"])
 
     if weapon is None:
-        # Unarmed strike (PHB): 1 bludgeoning damage + STR mod, no damage die.
+        # Unarmed strike (PHB): 1 bludgeoning damage + STR mod, no damage die,
+        # 5ft reach like any other melee attack.
         return AttackParams(
             attack_bonus=str_mod + actor.proficiency_bonus,
             damage_dice_count=0,
@@ -123,6 +142,8 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
             damage_bonus=str_mod + 1,
             damage_type="bludgeoning",
             source_name="unarmed strike",
+            range_normal_feet=5,
+            range_long_feet=None,
         )
 
     properties = {p["index"] for p in (weapon.get("properties") or [])}
@@ -135,6 +156,7 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
 
     proficient = is_class_proficient_with(actor, weapon["index"], srd)
     prof_bonus = actor.proficiency_bonus if proficient else 0
+    range_normal_feet, range_long_feet = weapon_range_feet(weapon)
 
     dice_count, dice_sides, notation_bonus = parse_dice_notation(weapon["damage"]["damage_dice"])
     return AttackParams(
@@ -144,6 +166,8 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
         damage_bonus=ability_mod + notation_bonus,
         damage_type=weapon["damage"]["damage_type"]["index"],
         source_name=weapon["name"],
+        range_normal_feet=range_normal_feet,
+        range_long_feet=range_long_feet,
     )
 
 
@@ -166,6 +190,7 @@ def _monster_attack_params(
 
     damage_entry = action["damage"][0]
     dice_count, dice_sides, notation_bonus = parse_dice_notation(damage_entry["damage_dice"])
+    range_normal_feet, range_long_feet = monster_action_range_feet(action)
     return AttackParams(
         attack_bonus=action["attack_bonus"],
         damage_dice_count=dice_count,
@@ -173,6 +198,8 @@ def _monster_attack_params(
         damage_bonus=notation_bonus,
         damage_type=damage_entry["damage_type"]["index"],
         source_name=action["name"],
+        range_normal_feet=range_normal_feet,
+        range_long_feet=range_long_feet,
     )
 
 
@@ -208,12 +235,30 @@ def _resolve_attack(
         else _pc_attack_params(actor, action.item_or_spell, srd)
     )
 
+    # Caught live: a combat grid can show attacker and target several
+    # squares apart while a melee attack still resolved as a hit - this
+    # engine never checked range at all. Beyond the weapon/action's max
+    # reach (long range if ranged, else normal) is rejected outright;
+    # beyond normal but within long range (ranged only - melee has no such
+    # tier) imposes disadvantage, per SRD.
+    distance = distance_feet(actor.position, target.position)
+    max_range = params.range_long_feet or params.range_normal_feet
+    if distance > max_range:
+        raise TurnEngineError(
+            f"{target.id} is {distance}ft away - out of range for {params.source_name} "
+            f"(max {max_range}ft)"
+        )
+    long_range_disadvantage = (
+        params.range_long_feet is not None and distance > params.range_normal_feet
+    )
+
     # Advantage from being helped (Day 13) is consumed by this roll whether
     # or not it changes the outcome; disadvantage from the target dodging
     # applies for as long as the target is dodging (until their own next
     # turn) rather than being consumed - roll_d20 already cancels the two
     # out together when both apply, per SRD rules. The attacker's own
-    # non-proficient armor is a second, independent disadvantage source.
+    # non-proficient armor and attacking beyond normal range are two more,
+    # independent disadvantage sources.
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
 
@@ -226,7 +271,9 @@ def _resolve_attack(
         damage_type=params.damage_type,
         rng=rng,
         advantage=advantage,
-        disadvantage=target.is_dodging or has_non_proficient_armor(actor, srd),
+        disadvantage=target.is_dodging
+        or has_non_proficient_armor(actor, srd)
+        or long_range_disadvantage,
     )
 
     state.events.append(
@@ -463,6 +510,8 @@ def _spell_attack_params(
         damage_bonus=notation_bonus,
         damage_type=damage_info["damage_type"]["index"],
         source_name=spell["name"],
+        range_normal_feet=spell_range_feet(str(spell.get("range", ""))),
+        range_long_feet=None,  # spells have no "beyond normal" disadvantage tier
     )
     return params, spell_level
 
@@ -480,6 +529,13 @@ def _resolve_cast_spell(
     _validate_attack_target(actor, target)
 
     params, spell_level = _spell_attack_params(actor, action.item_or_spell, srd)
+
+    distance = distance_feet(actor.position, target.position)
+    if distance > params.range_normal_feet:
+        raise TurnEngineError(
+            f"{target.id} is {distance}ft away - out of range for {params.source_name} "
+            f"(max {params.range_normal_feet}ft)"
+        )
 
     if spell_level > 0:
         remaining = actor.spell_slots.get(spell_level, 0)

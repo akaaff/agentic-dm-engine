@@ -213,3 +213,49 @@ def test_attack_gets_disadvantage_from_non_proficient_armor() -> None:
 
     attack_event = next(e for e in state.events if e.type == "attack_roll")
     assert attack_event.payload["natural"] == 3
+
+
+def test_attack_rejected_when_target_out_of_melee_range() -> None:
+    # thorin(0,1) and goblin_1(2,1) are 10ft apart in the demo encounter -
+    # out of range for a longsword's 5ft reach. Caught live: a combat grid
+    # showed exactly this geometry (attacker and target several squares
+    # apart) with a melee hit narrated anyway - this engine never checked
+    # range at all until now.
+    state = _build_demo_state([18, 10, 8, 3])
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="longsword",
+        raw_text="I attack the goblin",
+    )
+    with pytest.raises(TurnEngineError, match="out of range"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_attack_rejected_beyond_a_ranged_weapons_long_range() -> None:
+    state = _build_demo_state([18, 10, 8, 3])
+    state.characters["thorin"].position = Position(x=0, y=0)
+    state.characters["goblin_1"].position = Position(x=200, y=0)  # 1000ft > longbow's 600ft long
+    action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", item_or_spell="longbow", raw_text="shoot"
+    )
+    with pytest.raises(TurnEngineError, match="out of range"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_attack_gets_disadvantage_beyond_a_ranged_weapons_normal_range() -> None:
+    # 155ft: beyond a longbow's 150ft normal range but within its 600ft
+    # long range - SRD imposes disadvantage rather than rejecting the shot
+    # outright (unlike melee, which has no such tier). Two d20s [15, 3],
+    # keep the lower (3).
+    state = _build_demo_state([18, 10, 8, 3])
+    state.characters["thorin"].position = Position(x=0, y=0)
+    state.characters["goblin_1"].position = Position(x=31, y=0)
+    action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", item_or_spell="longbow", raw_text="shoot"
+    )
+    resolve_action(state, action, _FixedRandom([15, 3]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["natural"] == 3
