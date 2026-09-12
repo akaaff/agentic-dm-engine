@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session
 
 from src.api.db.models import CharacterRecord
 from src.api.db.session import get_db
-from src.engine.character_creation import CharacterCreationError, create_character
+from src.engine.character_creation import (
+    CharacterCreationError,
+    class_skill_choice_pool,
+    create_character,
+)
 from src.engine.position import Position
 from src.engine.srd_loader import load_srd
 from src.engine.state import AbilityScore, Character, Condition
@@ -115,21 +119,18 @@ def get_class(class_index: str) -> ClassDetail:
     if cls is None:
         raise HTTPException(status_code=404, detail=f"Class {class_index} not found")
 
-    # Mirrors character_creation._validate_skill_choices exactly - summed
-    # across every proficiency_choices entry, same as that function does
-    # (needed for e.g. Bard's two separate pools, see CLAUDE.md).
-    skill_choose = 0
-    skill_options: list[str] = []
-    for choice in cls.get("proficiency_choices", []):
-        skill_choose += choice["choose"]
-        skill_options.extend(option["item"]["index"] for option in choice["from"]["options"])
+    # Shares the exact same pool character_creation._validate_skill_choices
+    # enforces server-side - was duplicated inline here and had drifted into
+    # a real bug (crashed on Monk, whose tool/instrument choice isn't a flat
+    # reference list - see that function's docstring for the full story).
+    skill_choose, skill_options = class_skill_choice_pool(cls)
 
     return ClassDetail(
         index=cls["index"],
         name=cls["name"],
         hit_die=cls["hit_die"],
         skill_choose=skill_choose,
-        skill_options=skill_options,
+        skill_options=sorted(skill_options),
     )
 
 

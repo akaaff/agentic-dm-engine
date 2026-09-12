@@ -179,13 +179,35 @@ def create_character(
     )
 
 
-def _validate_skill_choices(cls: SrdEntry, chosen_skills: list[str]) -> None:
-    allowed: set[str] = set()
+def class_skill_choice_pool(cls: SrdEntry) -> tuple[int, set[str]]:
+    """(required_count, allowed_indices) summed across every one of a
+    class's proficiency_choices entries - a Bard's two separate pools
+    (3 skills + 3 instruments) are meant to combine into one flat pool this
+    way (see CLAUDE.md: chosen_skills can include non-skill proficiencies).
+
+    Skips any entry whose options aren't flat `option_type: "reference"`
+    items - confirmed live to be exactly one entry SRD-wide: Monk's "choose
+    one type of artisan's tools or one musical instrument", which nests a
+    *choice* inside each option (pick a category, then pick within it)
+    instead of a flat item. Tool/instrument proficiencies aren't modeled by
+    this project at all (no wizard step, no Character field) - same
+    "don't fully parse every SRD option-tree shape" simplification already
+    documented for equipment choices - so that entry is skipped entirely
+    rather than raising, and a Monk only ever needs to choose their 2
+    skills."""
     required_count = 0
+    allowed: set[str] = set()
     for choice in cls.get("proficiency_choices", []):
+        options = choice["from"]["options"]
+        if any(opt["option_type"] != "reference" for opt in options):
+            continue
         required_count += choice["choose"]
-        for option in choice["from"]["options"]:
-            allowed.add(option["item"]["index"])
+        allowed.update(opt["item"]["index"] for opt in options)
+    return required_count, allowed
+
+
+def _validate_skill_choices(cls: SrdEntry, chosen_skills: list[str]) -> None:
+    required_count, allowed = class_skill_choice_pool(cls)
 
     if len(chosen_skills) != required_count:
         raise CharacterCreationError(

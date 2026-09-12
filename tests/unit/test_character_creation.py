@@ -83,6 +83,29 @@ def test_create_elf_wizard_end_to_end() -> None:
     )
 
 
+def test_create_monk_only_requires_its_two_skill_choices() -> None:
+    # Regression guard: Monk's SRD proficiency_choices has a 2nd entry
+    # ("one type of artisan's tools or one musical instrument") shaped as a
+    # nested choice-within-a-choice rather than a flat reference list - the
+    # only entry SRD-wide shaped that way. Iterating it the same way as
+    # every other class's flat skill/instrument pools raised a raw
+    # `KeyError: 'item'`, caught live creating a Monk in the actual app (see
+    # CLAUDE.md). Tool/instrument proficiencies aren't modeled by this
+    # project at all, so that entry is skipped - a Monk should only ever
+    # need to supply their 2 real skill choices.
+    character = create_character(
+        character_id="kai",
+        name="Kai",
+        race_index="human",
+        class_index="monk",
+        background_index="acolyte",
+        base_ability_scores={"STR": 10, "DEX": 15, "CON": 13, "INT": 8, "WIS": 14, "CHA": 12},
+        chosen_skills=["skill-acrobatics", "skill-stealth"],
+    )
+    assert "skill-acrobatics" in character.skill_proficiencies
+    assert "skill-stealth" in character.skill_proficiencies
+
+
 def test_wrong_number_of_skill_choices_rejected() -> None:
     with pytest.raises(CharacterCreationError):
         create_character(

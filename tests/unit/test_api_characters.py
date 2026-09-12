@@ -76,6 +76,30 @@ def test_get_class_detail_sums_multiple_proficiency_choice_pools(client: TestCli
     assert response.json()["skill_choose"] == 6
 
 
+def test_get_class_detail_skips_monks_nested_tool_or_instrument_choice(
+    client: TestClient,
+) -> None:
+    # Regression guard: Monk's 2nd proficiency_choices entry ("one type of
+    # artisan's tools or one musical instrument") nests a choice inside each
+    # option instead of a flat reference - the only entry SRD-wide shaped
+    # that way. Crashed this endpoint with a raw KeyError before the fix
+    # (caught live - see CLAUDE.md). Tool/instrument proficiencies aren't
+    # modeled by this project, so that entry should be skipped entirely:
+    # only the 2 real skill choices should be required.
+    response = client.get("/characters/classes/monk")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["skill_choose"] == 2
+    assert set(body["skill_options"]) == {
+        "skill-acrobatics",
+        "skill-athletics",
+        "skill-history",
+        "skill-insight",
+        "skill-religion",
+        "skill-stealth",
+    }
+
+
 def test_get_unknown_class_detail_returns_404(client: TestClient) -> None:
     response = client.get("/characters/classes/not-a-class")
     assert response.status_code == 404
