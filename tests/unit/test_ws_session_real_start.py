@@ -9,6 +9,7 @@ this project stubs at that boundary rather than mocking individual calls.
 
 from __future__ import annotations
 
+import random
 from collections.abc import Generator
 from typing import Any
 
@@ -23,6 +24,10 @@ from src.api.db.session import get_db
 from src.api.main import app
 from src.api.ws import session as ws_session_module
 from src.engine.actions import ParsedAction
+from src.engine.campaign import load_campaign
+from src.engine.companions import build_companion, load_companion_spec
+from src.engine.encounter import build_encounter_state, load_encounter
+from src.engine.srd_loader import load_srd
 from src.graph.graph_builder import build_graph
 from src.graph.state_schema import GraphState
 
@@ -140,6 +145,47 @@ def test_human_only_controls_their_own_character(client: TestClient) -> None:
     assert msg["actor"] == "thorin"
 
 
+def test_real_session_narrates_scenes_before_first_combat(client: TestClient) -> None:
+    # Regression guard: a real session used to jump straight into the first
+    # combat encounter, silently skipping any narrative_beat/skill_challenge
+    # scenes before it (caught live playing kobold_warren_full - see
+    # CLAUDE.md). "hook" (a narrative_beat) and "read_the_signs" (a
+    # skill_challenge, whose outcome text also counts) should arrive as
+    # scene_narration messages before the warren_combat state_update.
+    create_response = client.post("/characters", json=_VALID_FIGHTER_BODY)
+    assert create_response.status_code == 201
+    session_response = client.post(
+        "/sessions",
+        json={
+            "campaign_id": "kobold_warren_full",
+            "character_id": "thorin",
+            "companion_ids": ["companion_grom"],
+        },
+    )
+    assert session_response.status_code == 201
+    session_id: str = session_response.json()["session_id"]
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        messages = []
+        msg = ws.receive_json()
+        messages.append(msg)
+        while msg["type"] != "state_update":
+            msg = ws.receive_json()
+            messages.append(msg)
+
+    scene_narrations = [m["text"] for m in messages if m["type"] == "scene_narration"]
+    # advance_to_next_encounter appends every scene's own narrative_intro
+    # (not just narrative_beat's) plus a skill_challenge's outcome text:
+    # hook's intro, read_the_signs' intro, its success/failure outcome, and
+    # warren_combat's own intro (included so the caller doesn't have to
+    # narrate a combat scene's start separately).
+    assert len(scene_narrations) == 4
+    assert "Hollowford" in scene_narrations[0]
+
+    state_update = next(m for m in messages if m["type"] == "state_update")
+    assert state_update["game_state"]["encounter_id"] == "kobold_ambush"
+
+
 def test_non_human_turns_auto_resolve_before_awaiting_input(client: TestClient) -> None:
     # Deterministic regardless of the session's real (unseeded) initiative
     # roll: exactly as many non-human turns as precede thorin in turn_order
@@ -162,3 +208,49 @@ def test_non_human_turns_auto_resolve_before_awaiting_input(client: TestClient) 
 
     narrations = [m for m in messages if m["type"] == "narration"]
     assert len(narrations) == thorin_index
+
+
+async def test_advance_campaign_after_victory_continues_to_the_next_encounter() -> None:
+    # Regression guard for the other half of the same gap as the
+    # scene_narration test above: a live session never advanced past one
+    # encounter's victory into the rest of the scene chain at all (see
+    # CLAUDE.md) - it would just sit on a finished fight forever. Sets
+    # "warren_combat just ended in victory" directly (same "set the state
+    # you need rather than scripting combat to reach it" pattern
+    # test_turn_engine_new_verbs.py already uses) and confirms the session
+    # picks up rising_action + scout_the_hideout's narration and lands in
+    # hideout_combat's own encounter - real content, not a synthetic
+    # fixture, since this is the exact campaign caught live.
+    srd = load_srd()
+    campaign = load_campaign("kobold_warren_full")
+    party = [
+        build_companion(load_companion_spec("grom_ironfist"), srd=srd),
+        build_companion(load_companion_spec("silvana_wren"), srd=srd),
+    ]
+    warren_scene = campaign.scene_by_id("warren_combat")
+    assert warren_scene.encounter_ref is not None
+    game_state = build_encounter_state(
+        load_encounter(warren_scene.encounter_ref), party, random.Random(), srd=srd
+    )
+    game_state.status = "victory"
+
+    session = ws_session_module.Session(
+        game_state=game_state,
+        action_rng=random.Random(),
+        graph=build_graph(
+            rng=random.Random(),
+            narrator_fn=_stub_narrator,
+            player_agent_fn=_stub_player_agent,
+            scene_image_fn=_stub_scene_image,
+        ),
+        campaign=campaign,
+        party=party,
+        srd=srd,
+        current_scene_id="warren_combat",
+    )
+
+    await ws_session_module._advance_campaign_after_victory(session)
+
+    assert session.current_scene_id == "hideout_combat"
+    assert session.game_state.encounter_id == "bandit_hideout"
+    assert session.game_state.status == "in_progress"

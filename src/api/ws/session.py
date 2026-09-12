@@ -30,12 +30,13 @@ from src.api.db.session import SessionLocal
 from src.api.routes.characters import _record_to_character
 from src.cli.play import build_demo_encounter, build_demo_party
 from src.engine.actions import ParsedAction
-from src.engine.campaign import load_campaign
+from src.engine.campaign import Campaign, load_campaign
+from src.engine.campaign_runner import advance_to_next_encounter
 from src.engine.companions import build_companion, load_companion_spec_by_character_id
 from src.engine.encounter import build_encounter_state, load_encounter
 from src.engine.monster_ai import choose_monster_action
-from src.engine.srd_loader import load_srd
-from src.engine.state import GameState
+from src.engine.srd_loader import SrdIndex, load_srd
+from src.engine.state import Character, GameState
 from src.engine.turn_engine import TurnEngineError
 from src.graph.graph_builder import build_graph
 from src.graph.state_schema import GraphState
@@ -64,6 +65,28 @@ class Session:
     "whoever connects controls every character" simplification, still used
     by the demo-encounter fallback below and by every offline test that
     calls create_session() directly."""
+    campaign: Campaign | None = None
+    """Set only for a real session - lets the session continue live past
+    one encounter's victory into the rest of the scene chain (see
+    _advance_campaign_after_victory), the same chaining cli.play.run_autoplay
+    already does for autoplay. None means "just play this one GameState and
+    stop," preserving every offline test/demo-encounter path unchanged."""
+    party: list[Character] | None = None
+    """The same Character objects reused across encounters within one
+    campaign, not fresh copies - HP/conditions/inventory genuinely carry
+    over between fights, matching run_autoplay."""
+    srd: SrdIndex | None = None
+    current_scene_id: str | None = None
+    """Which Scene the current game_state's encounter came from - lets
+    _advance_campaign_after_victory find campaign.next_scene(...) once this
+    encounter resolves."""
+    pending_scene_narration: list[str] = field(default_factory=list)
+    """Narrative-beat/skill-challenge text collected (via campaign_runner)
+    before this session's *first* encounter - delivered to the first
+    connecting client as scene_narration messages, then cleared. A second
+    connection joining later won't see it - the same "no narration replay
+    on late join" limitation this session already has for ordinary
+    per-turn narration, not something this change newly introduces."""
 
 
 _sessions: dict[str, Session] = {}
@@ -75,6 +98,11 @@ def create_session(
     action_rng: random.Random | None = None,
     graph: CompiledStateGraph[GraphState, Any, Any, Any] | None = None,
     human_character_id: str | None = None,
+    campaign: Campaign | None = None,
+    party: list[Character] | None = None,
+    srd: SrdIndex | None = None,
+    current_scene_id: str | None = None,
+    pending_scene_narration: list[str] | None = None,
 ) -> Session:
     """Explicit constructor for tests (and real session-start flows) to
     pre-seed a session with a specific initial state/rng before any
@@ -87,36 +115,45 @@ def create_session(
         action_rng=action_rng,
         graph=graph or build_graph(rng=action_rng),
         human_character_id=human_character_id,
+        campaign=campaign,
+        party=party,
+        srd=srd,
+        current_scene_id=current_scene_id,
+        pending_scene_narration=pending_scene_narration or [],
     )
     _sessions[session_id] = session
     return session
 
 
-def _build_real_session_game_state(progress: CampaignProgress) -> GameState | None:
-    """Builds a real GameState from a Day-18 CampaignProgress row: the
-    player's own persisted character plus their chosen companions, dropped
-    into the campaign's first combat encounter. Returns None (caller falls
-    back to the demo encounter) if anything expected is missing - defensive,
-    not expected to trigger in practice since POST /sessions already
-    validates the campaign/character/companion ids before writing the row.
+@dataclass
+class _RealSessionSetup:
+    game_state: GameState
+    pre_scene_narration: list[str]
+    campaign: Campaign
+    party: list[Character]
+    combat_scene_id: str
+    srd: SrdIndex
 
-    Still only ever the *first* combat encounter, even for the short-arc/
-    full campaigns campaign_runner.py (Day 22) can now walk end-to-end in
-    autoplay - a live session doesn't yet advance past one encounter's
-    victory into the rest of the scene chain. Narrating that live (and
-    rebuilding a fresh GameState for each subsequent combat scene) is real,
-    separate work, not covered by Day 22's autoplay-only verify gate."""
+
+def _build_real_session_setup(progress: CampaignProgress) -> _RealSessionSetup | None:
+    """Builds a real session from a Day-18 CampaignProgress row: the
+    player's own persisted character plus their chosen companions, walked
+    through the campaign's scene chain from its very first scene via
+    campaign_runner.advance_to_next_encounter - narrating any
+    narrative_beat/skill_challenge scenes along the way (the "hook" before
+    a fight, not just dropping straight into combat - caught live, a real
+    session used to skip this entirely) into its first combat encounter.
+
+    Returns None (caller falls back to the demo encounter) if anything
+    expected is missing - defensive, not expected to trigger in practice
+    since POST /sessions already validates the campaign/character/companion
+    ids before writing the row, or if the campaign has no combat scene at
+    all (not a real authored campaign's shape, but not this function's job
+    to assume)."""
     try:
         campaign = load_campaign(progress.campaign_id)
     except FileNotFoundError:
         return None
-
-    scene = campaign.first_scene()
-    while scene.encounter_ref is None:
-        if scene.next_scene_id is None:
-            return None
-        scene = campaign.scene_by_id(scene.next_scene_id)
-    encounter = load_encounter(scene.encounter_ref)
 
     srd = load_srd()
     with SessionLocal() as db:
@@ -132,7 +169,25 @@ def _build_real_session_game_state(progress: CampaignProgress) -> GameState | No
             return None
         party.append(build_companion(spec, srd=srd))
 
-    return build_encounter_state(encounter, party, random.Random(), srd=srd)
+    rng = random.Random()
+    combat_scene, narration = advance_to_next_encounter(
+        campaign, campaign.first_scene(), party, srd, rng
+    )
+    if combat_scene is None:
+        return None
+
+    assert combat_scene.encounter_ref is not None  # guaranteed by Scene.type == "combat"
+    encounter = load_encounter(combat_scene.encounter_ref)
+    game_state = build_encounter_state(encounter, party, rng, srd=srd)
+
+    return _RealSessionSetup(
+        game_state=game_state,
+        pre_scene_narration=narration,
+        campaign=campaign,
+        party=party,
+        combat_scene_id=combat_scene.id,
+        srd=srd,
+    )
 
 
 def _get_or_create_default_session(session_id: str) -> Session:
@@ -145,10 +200,17 @@ def _get_or_create_default_session(session_id: str) -> Session:
         with SessionLocal() as db:
             progress = db.get(CampaignProgress, session_id)
 
-        game_state = _build_real_session_game_state(progress) if progress else None
-        if game_state is not None and progress is not None:
+        setup = _build_real_session_setup(progress) if progress else None
+        if setup is not None and progress is not None:
             create_session(
-                session_id, game_state, human_character_id=progress.party_character_ids[0]
+                session_id,
+                setup.game_state,
+                human_character_id=progress.party_character_ids[0],
+                campaign=setup.campaign,
+                party=setup.party,
+                srd=setup.srd,
+                current_scene_id=setup.combat_scene_id,
+                pending_scene_narration=setup.pre_scene_narration,
             )
         else:
             encounter = build_demo_encounter()
@@ -249,6 +311,61 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             consecutive_invalid = 0
 
 
+async def _advance_campaign_after_victory(session: Session) -> None:
+    """After a combat scene resolves in victory (not defeat), continues the
+    campaign's scene chain live: narrates any narrative_beat/skill_challenge
+    scenes between the finished encounter and the next combat to every
+    connection, then drops the session into a fresh GameState for the next
+    encounter - the same chaining cli.play.run_autoplay already does for
+    autoplay, now live. No-ops immediately for a session with no campaign
+    set (the demo-encounter fallback and every offline test that calls
+    create_session() directly), so this can be called unconditionally right
+    alongside _autoplay_non_human_turns.
+
+    A loop, not a single step: companions alone can sometimes finish a
+    trivial encounter before the human's own turn ever comes up (
+    _autoplay_non_human_turns stops there), which could chain straight into
+    another encounter without the human acting in between."""
+    if (
+        session.campaign is None
+        or session.party is None
+        or session.srd is None
+        or session.current_scene_id is None
+    ):
+        return
+
+    while session.game_state.status == "victory":
+        current_scene = session.campaign.scene_by_id(session.current_scene_id)
+        next_scene = session.campaign.next_scene(current_scene)
+        if next_scene is None:
+            return  # campaign complete - no further scenes authored
+
+        combat_scene, narration = advance_to_next_encounter(
+            session.campaign, next_scene, session.party, session.srd, session.action_rng
+        )
+        for line in narration:
+            await _broadcast(session, {"type": "scene_narration", "text": line})
+
+        if combat_scene is None:
+            return  # ran off the end of the chain - campaign complete
+
+        assert combat_scene.encounter_ref is not None  # guaranteed by Scene.type == "combat"
+        encounter = load_encounter(combat_scene.encounter_ref)
+        # Reuses the same party objects, not fresh copies - HP/conditions/
+        # inventory genuinely carry over between fights, matching
+        # run_autoplay; build_encounter_state only overwrites position and
+        # re-rolls initiative.
+        session.game_state = build_encounter_state(
+            encounter, session.party, session.action_rng, srd=session.srd
+        )
+        session.current_scene_id = combat_scene.id
+        await _broadcast(session, _state_update_message(session))
+        # A new encounter can itself open on a non-human turn (e.g. a
+        # monster winning initiative) - resolve those before anyone's told
+        # it's their turn, same reasoning as the very first connect.
+        await _autoplay_non_human_turns(session)
+
+
 async def _handle_client_message(
     session: Session, websocket: WebSocket, raw: dict[str, object]
 ) -> None:
@@ -316,6 +433,7 @@ async def _handle_client_message(
         await _broadcast(session, {"type": "scene_image", "url": result["scene_image_url"]})
 
     await _autoplay_non_human_turns(session)
+    await _advance_campaign_after_victory(session)
     await _send_awaiting_input(session)
 
 
@@ -333,11 +451,24 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     session.connections.append(connection)
 
     try:
+        # The campaign's own scene-setting text (a narrative "hook" before
+        # the fight, etc.) - collected once at session setup, sent to
+        # whichever connection arrives first. See Session.pending_scene_
+        # narration's docstring for why a second connection won't see it.
+        for line in session.pending_scene_narration:
+            await websocket.send_json({"type": "scene_narration", "text": line})
+        session.pending_scene_narration = []
+
         # Resolve any monster/companion turns that come before the human's
         # first one (e.g. a monster going first in initiative) before this
         # connection's own initial state_update, so it opens on a state the
         # human can actually act on rather than one that's already stale.
         await _autoplay_non_human_turns(session)
+        # Rare, but possible: companions alone finish the first encounter
+        # before the human ever acts - continue the campaign the same way
+        # a mid-session victory does, before this connection's first
+        # state_update rather than leaving it stuck on a finished fight.
+        await _advance_campaign_after_victory(session)
         await websocket.send_json(_state_update_message(session))
         # Personal, not the shared _send_awaiting_input (which searches the
         # whole session for whoever should act next, after an action
