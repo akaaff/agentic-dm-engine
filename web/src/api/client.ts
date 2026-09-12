@@ -43,6 +43,13 @@ export interface ClassDetail extends ClassSummary {
   skill_options: string[]
 }
 
+export interface SkillSummary {
+  index: string
+  name: string
+  ability: string
+  desc: string
+}
+
 export interface BackgroundSummary {
   index: string
   name: string
@@ -108,6 +115,7 @@ export const api = {
   listRaces: () => request<RaceSummary[]>('/characters/races'),
   listClasses: () => request<ClassSummary[]>('/characters/classes'),
   getClass: (classIndex: string) => request<ClassDetail>(`/characters/classes/${classIndex}`),
+  listSkills: () => request<SkillSummary[]>('/characters/skills'),
   listBackgrounds: () => request<BackgroundSummary[]>('/characters/backgrounds'),
   listEquipment: () => request<EquipmentSummary[]>('/characters/equipment'),
   createCharacter: (body: CreateCharacterRequest) =>

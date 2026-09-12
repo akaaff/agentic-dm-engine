@@ -62,25 +62,14 @@ label {
 }
 
 .ability-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.ability-row label {
   flex-direction: row;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.6rem;
+  width: fit-content;
 }
 
 .ability-row select {
   width: 4.5rem;
-}
-
-.ability-hint {
-  margin: 0;
-  font-size: 0.78rem;
-  color: #9d94ad;
 }
 
 .final-score {
@@ -91,12 +80,55 @@ label {
 
 .recommend-row {
   display: flex;
+}
+
+.select-row {
+  flex-direction: row;
   align-items: center;
   gap: 0.5rem;
 }
 
-.recommend-row select {
-  flex: 1;
+/* Hover/focus tooltip - dependency-free, keyboard-accessible. */
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  cursor: help;
+  outline: none;
+}
+
+.info-tip-icon {
+  font-size: 0.85rem;
+  color: #9d94ad;
+}
+
+.info-tip-bubble {
+  position: absolute;
+  bottom: 130%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #26222f;
+  border: 1px solid #3a3448;
+  color: #f0eef5;
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: normal;
+  width: max-content;
+  max-width: 220px;
+  white-space: normal;
+  line-height: 1.35;
+  z-index: 10;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.info-tip:hover .info-tip-bubble,
+.info-tip:focus .info-tip-bubble,
+.info-tip:focus-within .info-tip-bubble {
+  visibility: visible;
+  opacity: 1;
 }
 
 .checkbox-row {

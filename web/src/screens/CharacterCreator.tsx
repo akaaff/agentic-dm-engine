@@ -9,33 +9,62 @@ import {
   type ClassSummary,
   type EquipmentSummary,
   type RaceSummary,
+  type SkillSummary,
 } from '../api/client'
 
 const ABILITIES: AbilityScore[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 const STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
 
-// Short, standard 5e explanations - shown inline so a new player doesn't have
-// to already know what each ability governs before assigning scores.
+// Short, standard 5e explanations, shown as hover/focus tooltips rather than
+// permanently-visible text - a new player doesn't have to already know what
+// each ability governs, but it doesn't have to take up space for everyone
+// who does.
 const ABILITY_HINTS: Record<AbilityScore, string> = {
   STR: 'Melee attack/damage rolls, carrying capacity, Athletics.',
   DEX: 'Armor Class, ranged & finesse weapons, Stealth/Acrobatics, initiative.',
-  CON: "Hit points and concentration saves - rarely a dump stat.",
+  CON: 'Hit points and concentration saves - rarely a dump stat.',
   INT: 'Arcane spellcasting (Wizard), Investigation/Arcana checks.',
   WIS: 'Divine/Nature spellcasting (Cleric/Druid/Ranger), Perception/Insight.',
   CHA: 'Charisma-based spellcasting (Bard/Sorcerer/Warlock/Paladin), Persuasion/Deception.',
 }
 
-// A recommended standard-array assignment is necessarily a guess at this step
-// (class isn't chosen until the next one) - offered as a starting point per
-// broad archetype, not a single "best" answer. CON is kept high across the
-// board since it's rarely a dump stat for any build.
-const RECOMMENDED_PRIORITIES: Record<string, AbilityScore[]> = {
-  'Melee (Fighter/Barbarian/Paladin)': ['STR', 'CON', 'DEX', 'WIS', 'CHA', 'INT'],
-  'Finesse/Ranged (Rogue/Ranger/Monk)': ['DEX', 'CON', 'WIS', 'STR', 'CHA', 'INT'],
-  'Arcane caster (Wizard)': ['INT', 'CON', 'DEX', 'WIS', 'CHA', 'STR'],
-  'Divine/Nature caster (Cleric/Druid)': ['WIS', 'CON', 'DEX', 'STR', 'CHA', 'INT'],
-  'Charisma caster (Bard/Sorcerer/Warlock)': ['CHA', 'CON', 'DEX', 'WIS', 'STR', 'INT'],
+// Short, original one-line role summaries - not SRD/PHB flavor text (this
+// project's vendored SRD data has no class description field), same spirit
+// as the hand-authored companion personas already elsewhere in the project.
+const CLASS_HINTS: Record<string, string> = {
+  barbarian: 'A fierce warrior who channels primal rage into reckless, unstoppable fury.',
+  bard: 'A charismatic performer whose music and magic inspire allies and confound foes.',
+  cleric: 'A holy warrior and healer, channeling divine power to smite foes and mend allies.',
+  druid: 'A guardian of the natural world, wielding elemental and shapeshifting magic.',
+  fighter: 'A versatile master of martial combat, skilled with a wide array of weapons and armor.',
+  monk: 'A disciplined martial artist channeling inner energy into extraordinary unarmed feats.',
+  paladin: 'A holy knight bound by a sacred oath, blending martial prowess with divine magic.',
+  ranger: 'A skilled hunter and tracker at home in the wild, blending martial skill with nature magic.',
+  rogue: 'A cunning, stealthy expert in precision strikes, traps, and subterfuge.',
+  sorcerer: 'A spellcaster wielding instinctive magic drawn from an innate magical bloodline.',
+  warlock: 'A spellcaster who draws power from a bargain with an otherworldly patron.',
+  wizard: 'A scholarly spellcaster who masters arcane magic through rigorous study.',
 }
+
+// Now that Class & Skills comes before Ability Scores in the wizard, "fill
+// recommended" can key off the actually-chosen class instead of asking the
+// player to separately describe their build. CON stays high everywhere -
+// rarely a dump stat for any class.
+const CLASS_ABILITY_PRIORITY: Record<string, AbilityScore[]> = {
+  barbarian: ['STR', 'CON', 'DEX', 'WIS', 'CHA', 'INT'],
+  fighter: ['STR', 'CON', 'DEX', 'WIS', 'CHA', 'INT'],
+  paladin: ['STR', 'CHA', 'CON', 'WIS', 'DEX', 'INT'],
+  monk: ['DEX', 'WIS', 'CON', 'STR', 'CHA', 'INT'],
+  ranger: ['DEX', 'WIS', 'CON', 'STR', 'CHA', 'INT'],
+  rogue: ['DEX', 'CON', 'INT', 'WIS', 'CHA', 'STR'],
+  bard: ['CHA', 'DEX', 'CON', 'WIS', 'INT', 'STR'],
+  sorcerer: ['CHA', 'CON', 'DEX', 'WIS', 'STR', 'INT'],
+  warlock: ['CHA', 'CON', 'DEX', 'WIS', 'STR', 'INT'],
+  cleric: ['WIS', 'CON', 'STR', 'DEX', 'CHA', 'INT'],
+  druid: ['WIS', 'CON', 'DEX', 'CHA', 'STR', 'INT'],
+  wizard: ['INT', 'CON', 'DEX', 'WIS', 'CHA', 'STR'],
+}
+const DEFAULT_ABILITY_PRIORITY: AbilityScore[] = ['STR', 'DEX', 'CON', 'WIS', 'CHA', 'INT']
 
 function slugify(name: string): string {
   return (
@@ -56,17 +85,37 @@ function skillLabel(skillIndex: string): string {
     .join(' ')
 }
 
+/** Hover/focus tooltip - keyboard-accessible (tabIndex + :focus-within),
+ * dependency-free. Used for ability/skill/class explanations so the wizard
+ * stays compact for players who already know the rules. */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="info-tip" tabIndex={0}>
+      <span aria-hidden="true" className="info-tip-icon">
+        ⓘ
+      </span>
+      <span role="tooltip" className="info-tip-bubble">
+        {text}
+      </span>
+    </span>
+  )
+}
+
 export default function CharacterCreator({ onCreated }: { onCreated: (character: Character) => void }) {
   const [step, setStep] = useState(0)
 
   const [races, setRaces] = useState<RaceSummary[]>([])
   const [classes, setClasses] = useState<ClassSummary[]>([])
+  const [skills, setSkills] = useState<SkillSummary[]>([])
   const [backgrounds, setBackgrounds] = useState<BackgroundSummary[]>([])
   const [equipment, setEquipment] = useState<EquipmentSummary[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const [name, setName] = useState('')
   const [raceIndex, setRaceIndex] = useState('')
+  const [classIndex, setClassIndex] = useState('')
+  const [classDetail, setClassDetail] = useState<ClassDetail | null>(null)
+  const [chosenSkills, setChosenSkills] = useState<string[]>([])
   const [assignments, setAssignments] = useState<Record<AbilityScore, number | ''>>({
     STR: '',
     DEX: '',
@@ -75,12 +124,6 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     WIS: '',
     CHA: '',
   })
-  const [recommendedArchetype, setRecommendedArchetype] = useState(
-    Object.keys(RECOMMENDED_PRIORITIES)[0],
-  )
-  const [classIndex, setClassIndex] = useState('')
-  const [classDetail, setClassDetail] = useState<ClassDetail | null>(null)
-  const [chosenSkills, setChosenSkills] = useState<string[]>([])
   const [backgroundIndex, setBackgroundIndex] = useState('')
   const [chosenEquipment, setChosenEquipment] = useState<string[]>([])
 
@@ -89,10 +132,17 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   const [created, setCreated] = useState<Character | null>(null)
 
   useEffect(() => {
-    Promise.all([api.listRaces(), api.listClasses(), api.listBackgrounds(), api.listEquipment()])
-      .then(([r, c, b, e]) => {
+    Promise.all([
+      api.listRaces(),
+      api.listClasses(),
+      api.listSkills(),
+      api.listBackgrounds(),
+      api.listEquipment(),
+    ])
+      .then(([r, c, sk, b, e]) => {
         setRaces(r)
         setClasses(c)
+        setSkills(sk)
         setBackgrounds(b)
         setEquipment(e)
         if (b.length === 1) setBackgroundIndex(b[0].index)
@@ -112,6 +162,10 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
       .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : String(err)))
   }, [classIndex])
 
+  const skillDesc = useMemo(
+    () => new Map(skills.map((s) => [s.index, s.desc])),
+    [skills],
+  )
   const selectedRace = races.find((r) => r.index === raceIndex)
   const usedValues = Object.values(assignments).filter((v) => v !== '')
   const remainingValues = useMemo(() => {
@@ -128,7 +182,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   }
 
   function fillRecommended() {
-    const priority = RECOMMENDED_PRIORITIES[recommendedArchetype]
+    const priority = CLASS_ABILITY_PRIORITY[classIndex] ?? DEFAULT_ABILITY_PRIORITY
     const next = {} as Record<AbilityScore, number | ''>
     priority.forEach((ability, i) => {
       next[ability] = STANDARD_ARRAY[i]
@@ -151,9 +205,9 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   }
 
   const canProceedFromBasics = name.trim().length > 0 && raceIndex !== ''
-  const canProceedFromAbilities = allAbilitiesAssigned
   const canProceedFromClass =
     classIndex !== '' && classDetail !== null && chosenSkills.length === classDetail.skill_choose
+  const canProceedFromAbilities = allAbilitiesAssigned
   const canSubmit = backgroundIndex !== ''
 
   async function handleSubmit() {
@@ -245,7 +299,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     <div className="wizard">
       <h1>Create a Character</h1>
       <ol className="steps">
-        {['Basics', 'Ability Scores', 'Class & Skills', 'Background', 'Equipment'].map(
+        {['Basics', 'Class & Skills', 'Ability Scores', 'Background', 'Equipment'].map(
           (label, i) => (
             <li key={label} className={i === step ? 'active' : i < step ? 'done' : ''}>
               {label}
@@ -281,78 +335,19 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
 
       {step === 1 && (
         <section>
-          <p>Assign the standard array ({STANDARD_ARRAY.join(', ')}) to your abilities.</p>
-
-          <div className="recommend-row">
-            <select
-              value={recommendedArchetype}
-              onChange={(e) => setRecommendedArchetype(e.target.value)}
-              aria-label="Recommended build archetype"
-            >
-              {Object.keys(RECOMMENDED_PRIORITIES).map((archetype) => (
-                <option key={archetype} value={archetype}>
-                  {archetype}
-                </option>
-              ))}
-            </select>
-            <button type="button" className="secondary" onClick={fillRecommended}>
-              Fill recommended
-            </button>
-          </div>
-
-          {ABILITIES.map((ability) => (
-            <div key={ability} className="ability-row">
-              <label>
-                {ability}
-                <select
-                  value={assignments[ability]}
-                  onChange={(e) =>
-                    setAssignments((prev) => ({
-                      ...prev,
-                      [ability]: e.target.value === '' ? '' : Number(e.target.value),
-                    }))
-                  }
-                >
-                  <option value="">-</option>
-                  {(assignments[ability] === ''
-                    ? remainingValues
-                    : [assignments[ability] as number, ...remainingValues]
-                  ).map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-                {finalScore(ability) !== null && (
-                  <span className="final-score">-&gt; {finalScore(ability)} with racial bonus</span>
-                )}
-              </label>
-              <p className="ability-hint">{ABILITY_HINTS[ability]}</p>
-            </div>
-          ))}
-          <div className="wizard-nav">
-            <button type="button" onClick={() => setStep(0)}>
-              Back
-            </button>
-            <button type="button" disabled={!canProceedFromAbilities} onClick={() => setStep(2)}>
-              Next
-            </button>
-          </div>
-        </section>
-      )}
-
-      {step === 2 && (
-        <section>
           <label>
             Class
-            <select value={classIndex} onChange={(e) => setClassIndex(e.target.value)}>
-              <option value="">Choose a class...</option>
-              {classes.map((c) => (
-                <option key={c.index} value={c.index}>
-                  {c.name} (d{c.hit_die} hit die)
-                </option>
-              ))}
-            </select>
+            <span className="select-row">
+              <select value={classIndex} onChange={(e) => setClassIndex(e.target.value)}>
+                <option value="">Choose a class...</option>
+                {classes.map((c) => (
+                  <option key={c.index} value={c.index}>
+                    {c.name} (d{c.hit_die} hit die)
+                  </option>
+                ))}
+              </select>
+              {classIndex && CLASS_HINTS[classIndex] && <InfoTip text={CLASS_HINTS[classIndex]} />}
+            </span>
           </label>
           {classDetail && (
             <fieldset>
@@ -369,15 +364,65 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                     onChange={() => toggleSkill(skill)}
                   />
                   {skillLabel(skill)}
+                  {skillDesc.has(skill) && <InfoTip text={skillDesc.get(skill) as string} />}
                 </label>
               ))}
             </fieldset>
           )}
           <div className="wizard-nav">
+            <button type="button" onClick={() => setStep(0)}>
+              Back
+            </button>
+            <button type="button" disabled={!canProceedFromClass} onClick={() => setStep(2)}>
+              Next
+            </button>
+          </div>
+        </section>
+      )}
+
+      {step === 2 && (
+        <section>
+          <p>Assign the standard array ({STANDARD_ARRAY.join(', ')}) to your abilities.</p>
+
+          <div className="recommend-row">
+            <button type="button" className="secondary" onClick={fillRecommended}>
+              Fill recommended for {classes.find((c) => c.index === classIndex)?.name ?? 'your class'}
+            </button>
+          </div>
+
+          {ABILITIES.map((ability) => (
+            <label key={ability} className="ability-row">
+              {ability}
+              <InfoTip text={ABILITY_HINTS[ability]} />
+              <select
+                value={assignments[ability]}
+                onChange={(e) =>
+                  setAssignments((prev) => ({
+                    ...prev,
+                    [ability]: e.target.value === '' ? '' : Number(e.target.value),
+                  }))
+                }
+              >
+                <option value="">-</option>
+                {(assignments[ability] === ''
+                  ? remainingValues
+                  : [assignments[ability] as number, ...remainingValues]
+                ).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              {finalScore(ability) !== null && (
+                <span className="final-score">-&gt; {finalScore(ability)} with racial bonus</span>
+              )}
+            </label>
+          ))}
+          <div className="wizard-nav">
             <button type="button" onClick={() => setStep(1)}>
               Back
             </button>
-            <button type="button" disabled={!canProceedFromClass} onClick={() => setStep(3)}>
+            <button type="button" disabled={!canProceedFromAbilities} onClick={() => setStep(3)}>
               Next
             </button>
           </div>
