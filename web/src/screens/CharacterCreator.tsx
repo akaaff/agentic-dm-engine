@@ -175,10 +175,14 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   }, [usedValues])
   const allAbilitiesAssigned = usedValues.length === ABILITIES.length
 
+  function raceBonus(ability: AbilityScore): number {
+    return selectedRace?.ability_bonuses[ability.toLowerCase()] ?? 0
+  }
+
   function finalScore(ability: AbilityScore): number | null {
     const base = assignments[ability]
     if (base === '') return null
-    return base + (selectedRace?.ability_bonuses[ability.toLowerCase()] ?? 0)
+    return base + raceBonus(ability)
   }
 
   function fillRecommended() {
@@ -394,6 +398,11 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
             <label key={ability} className="ability-row">
               {ability}
               <InfoTip text={ABILITY_HINTS[ability]} />
+              {raceBonus(ability) > 0 && (
+                <span className="race-bonus-badge" title={`${selectedRace?.name} racial bonus`}>
+                  +{raceBonus(ability)}
+                </span>
+              )}
               <select
                 value={assignments[ability]}
                 onChange={(e) =>
@@ -413,8 +422,8 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                   </option>
                 ))}
               </select>
-              {finalScore(ability) !== null && (
-                <span className="final-score">-&gt; {finalScore(ability)} with racial bonus</span>
+              {finalScore(ability) !== null && raceBonus(ability) > 0 && (
+                <span className="final-score">-&gt; {finalScore(ability)} total</span>
               )}
             </label>
           ))}

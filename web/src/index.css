@@ -78,6 +78,19 @@ label {
   white-space: nowrap;
 }
 
+/* Shown as soon as a race is picked, before any score is even assigned -
+   the point is to help the player decide *where* to put their best rolls. */
+.race-bonus-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #ffcc66;
+  background: rgba(255, 204, 102, 0.15);
+  border: 1px solid rgba(255, 204, 102, 0.4);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  white-space: nowrap;
+}
+
 .recommend-row {
   display: flex;
 }
