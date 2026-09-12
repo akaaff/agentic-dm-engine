@@ -14,6 +14,29 @@ import {
 const ABILITIES: AbilityScore[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 const STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
 
+// Short, standard 5e explanations - shown inline so a new player doesn't have
+// to already know what each ability governs before assigning scores.
+const ABILITY_HINTS: Record<AbilityScore, string> = {
+  STR: 'Melee attack/damage rolls, carrying capacity, Athletics.',
+  DEX: 'Armor Class, ranged & finesse weapons, Stealth/Acrobatics, initiative.',
+  CON: "Hit points and concentration saves - rarely a dump stat.",
+  INT: 'Arcane spellcasting (Wizard), Investigation/Arcana checks.',
+  WIS: 'Divine/Nature spellcasting (Cleric/Druid/Ranger), Perception/Insight.',
+  CHA: 'Charisma-based spellcasting (Bard/Sorcerer/Warlock/Paladin), Persuasion/Deception.',
+}
+
+// A recommended standard-array assignment is necessarily a guess at this step
+// (class isn't chosen until the next one) - offered as a starting point per
+// broad archetype, not a single "best" answer. CON is kept high across the
+// board since it's rarely a dump stat for any build.
+const RECOMMENDED_PRIORITIES: Record<string, AbilityScore[]> = {
+  'Melee (Fighter/Barbarian/Paladin)': ['STR', 'CON', 'DEX', 'WIS', 'CHA', 'INT'],
+  'Finesse/Ranged (Rogue/Ranger/Monk)': ['DEX', 'CON', 'WIS', 'STR', 'CHA', 'INT'],
+  'Arcane caster (Wizard)': ['INT', 'CON', 'DEX', 'WIS', 'CHA', 'STR'],
+  'Divine/Nature caster (Cleric/Druid)': ['WIS', 'CON', 'DEX', 'STR', 'CHA', 'INT'],
+  'Charisma caster (Bard/Sorcerer/Warlock)': ['CHA', 'CON', 'DEX', 'WIS', 'STR', 'INT'],
+}
+
 function slugify(name: string): string {
   return (
     name
@@ -52,6 +75,9 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     WIS: '',
     CHA: '',
   })
+  const [recommendedArchetype, setRecommendedArchetype] = useState(
+    Object.keys(RECOMMENDED_PRIORITIES)[0],
+  )
   const [classIndex, setClassIndex] = useState('')
   const [classDetail, setClassDetail] = useState<ClassDetail | null>(null)
   const [chosenSkills, setChosenSkills] = useState<string[]>([])
@@ -99,6 +125,15 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     const base = assignments[ability]
     if (base === '') return null
     return base + (selectedRace?.ability_bonuses[ability.toLowerCase()] ?? 0)
+  }
+
+  function fillRecommended() {
+    const priority = RECOMMENDED_PRIORITIES[recommendedArchetype]
+    const next = {} as Record<AbilityScore, number | ''>
+    priority.forEach((ability, i) => {
+      next[ability] = STANDARD_ARRAY[i]
+    })
+    setAssignments(next)
   }
 
   function toggleSkill(skill: string) {
@@ -182,24 +217,26 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
           <p>Skills: {created.skill_proficiencies.map(skillLabel).join(', ') || 'none'}</p>
           <p>Inventory: {created.inventory.join(', ') || 'none'}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setCreated(null)
-            setStep(0)
-            setName('')
-            setRaceIndex('')
-            setAssignments({ STR: '', DEX: '', CON: '', INT: '', WIS: '', CHA: '' })
-            setClassIndex('')
-            setChosenSkills([])
-            setChosenEquipment([])
-          }}
-        >
-          Create another character
-        </button>
-        <button type="button" onClick={() => onCreated(created)}>
-          Continue to Party Setup
-        </button>
+        <div className="wizard-nav">
+          <button
+            type="button"
+            onClick={() => {
+              setCreated(null)
+              setStep(0)
+              setName('')
+              setRaceIndex('')
+              setAssignments({ STR: '', DEX: '', CON: '', INT: '', WIS: '', CHA: '' })
+              setClassIndex('')
+              setChosenSkills([])
+              setChosenEquipment([])
+            }}
+          >
+            Create another character
+          </button>
+          <button type="button" onClick={() => onCreated(created)}>
+            Continue to Party Setup
+          </button>
+        </div>
       </div>
     )
   }
@@ -234,48 +271,73 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               ))}
             </select>
           </label>
-          <button type="button" disabled={!canProceedFromBasics} onClick={() => setStep(1)}>
-            Next
-          </button>
+          <div className="wizard-nav">
+            <button type="button" disabled={!canProceedFromBasics} onClick={() => setStep(1)}>
+              Next
+            </button>
+          </div>
         </section>
       )}
 
       {step === 1 && (
         <section>
           <p>Assign the standard array ({STANDARD_ARRAY.join(', ')}) to your abilities.</p>
+
+          <div className="recommend-row">
+            <select
+              value={recommendedArchetype}
+              onChange={(e) => setRecommendedArchetype(e.target.value)}
+              aria-label="Recommended build archetype"
+            >
+              {Object.keys(RECOMMENDED_PRIORITIES).map((archetype) => (
+                <option key={archetype} value={archetype}>
+                  {archetype}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="secondary" onClick={fillRecommended}>
+              Fill recommended
+            </button>
+          </div>
+
           {ABILITIES.map((ability) => (
-            <label key={ability} className="ability-row">
-              {ability}
-              <select
-                value={assignments[ability]}
-                onChange={(e) =>
-                  setAssignments((prev) => ({
-                    ...prev,
-                    [ability]: e.target.value === '' ? '' : Number(e.target.value),
-                  }))
-                }
-              >
-                <option value="">-</option>
-                {(assignments[ability] === ''
-                  ? remainingValues
-                  : [assignments[ability] as number, ...remainingValues]
-                ).map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-              {finalScore(ability) !== null && (
-                <span className="final-score">-&gt; {finalScore(ability)} with racial bonus</span>
-              )}
-            </label>
+            <div key={ability} className="ability-row">
+              <label>
+                {ability}
+                <select
+                  value={assignments[ability]}
+                  onChange={(e) =>
+                    setAssignments((prev) => ({
+                      ...prev,
+                      [ability]: e.target.value === '' ? '' : Number(e.target.value),
+                    }))
+                  }
+                >
+                  <option value="">-</option>
+                  {(assignments[ability] === ''
+                    ? remainingValues
+                    : [assignments[ability] as number, ...remainingValues]
+                  ).map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+                {finalScore(ability) !== null && (
+                  <span className="final-score">-&gt; {finalScore(ability)} with racial bonus</span>
+                )}
+              </label>
+              <p className="ability-hint">{ABILITY_HINTS[ability]}</p>
+            </div>
           ))}
-          <button type="button" onClick={() => setStep(0)}>
-            Back
-          </button>
-          <button type="button" disabled={!canProceedFromAbilities} onClick={() => setStep(2)}>
-            Next
-          </button>
+          <div className="wizard-nav">
+            <button type="button" onClick={() => setStep(0)}>
+              Back
+            </button>
+            <button type="button" disabled={!canProceedFromAbilities} onClick={() => setStep(2)}>
+              Next
+            </button>
+          </div>
         </section>
       )}
 
@@ -311,12 +373,14 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               ))}
             </fieldset>
           )}
-          <button type="button" onClick={() => setStep(1)}>
-            Back
-          </button>
-          <button type="button" disabled={!canProceedFromClass} onClick={() => setStep(3)}>
-            Next
-          </button>
+          <div className="wizard-nav">
+            <button type="button" onClick={() => setStep(1)}>
+              Back
+            </button>
+            <button type="button" disabled={!canProceedFromClass} onClick={() => setStep(3)}>
+              Next
+            </button>
+          </div>
         </section>
       )}
 
@@ -333,12 +397,14 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               ))}
             </select>
           </label>
-          <button type="button" onClick={() => setStep(2)}>
-            Back
-          </button>
-          <button type="button" disabled={backgroundIndex === ''} onClick={() => setStep(4)}>
-            Next
-          </button>
+          <div className="wizard-nav">
+            <button type="button" onClick={() => setStep(2)}>
+              Back
+            </button>
+            <button type="button" disabled={backgroundIndex === ''} onClick={() => setStep(4)}>
+              Next
+            </button>
+          </div>
         </section>
       )}
 
@@ -375,12 +441,14 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 </label>
               ))}
           </fieldset>
-          <button type="button" onClick={() => setStep(3)}>
-            Back
-          </button>
-          <button type="button" disabled={!canSubmit || submitting} onClick={handleSubmit}>
-            {submitting ? 'Creating...' : 'Create Character'}
-          </button>
+          <div className="wizard-nav">
+            <button type="button" onClick={() => setStep(3)}>
+              Back
+            </button>
+            <button type="button" disabled={!canSubmit || submitting} onClick={handleSubmit}>
+              {submitting ? 'Creating...' : 'Create Character'}
+            </button>
+          </div>
           {submitError && <p className="wizard-error">{submitError}</p>}
         </section>
       )}

@@ -62,20 +62,41 @@ label {
 }
 
 .ability-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.ability-row label {
   flex-direction: row;
   align-items: center;
   gap: 0.75rem;
-  width: 6rem;
 }
 
 .ability-row select {
   width: 4.5rem;
 }
 
+.ability-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #9d94ad;
+}
+
 .final-score {
   font-size: 0.8rem;
   color: #9d94ad;
   white-space: nowrap;
+}
+
+.recommend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.recommend-row select {
+  flex: 1;
 }
 
 .checkbox-row {
@@ -122,6 +143,24 @@ button:disabled {
 
 button + button {
   margin-left: 0.5rem;
+}
+
+button.secondary {
+  background: #26222f;
+  color: #cfc6de;
+  border: 1px solid #3a3448;
+}
+
+/* section is a column flex container, so plain sibling buttons stack
+   vertically instead of sitting side by side - wrap step-nav buttons in
+   this row instead of relying on `button + button`'s margin alone. */
+.wizard-nav {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.wizard-nav button {
+  margin-left: 0;
 }
 
 .wizard-error {
