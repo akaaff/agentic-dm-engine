@@ -156,6 +156,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
       return
     }
     setChosenSkills([])
+    setChosenEquipment([])
     api
       .getClass(classIndex)
       .then(setClassDetail)
@@ -165,6 +166,16 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   const skillDesc = useMemo(
     () => new Map(skills.map((s) => [s.index, s.desc])),
     [skills],
+  )
+  // Server-enforced too (create_character rejects a choice outside this
+  // pool) - filtering the picker down to it here just avoids showing gear
+  // the class would then get rejected for at submission.
+  const proficientEquipment = useMemo(
+    () =>
+      classDetail
+        ? equipment.filter((e) => classDetail.equipment_options.includes(e.index))
+        : [],
+    [equipment, classDetail],
   )
   const selectedRace = races.find((r) => r.index === raceIndex)
   const usedValues = Object.values(assignments).filter((v) => v !== '')
@@ -503,10 +514,17 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
 
       {step === 4 && (
         <section>
-          <p>Optional extra gear, beyond your class/background's starting kit:</p>
+          <p>
+            Optional extra gear, beyond your class/background's starting kit - restricted to what{' '}
+            {classes.find((c) => c.index === classIndex)?.name ?? 'your class'} is actually
+            proficient with.
+          </p>
           <fieldset>
             <legend>Weapons</legend>
-            {equipment
+            {proficientEquipment.filter((e) => e.category === 'weapon').length === 0 && (
+              <p className="companion-meta">No weapon proficiencies for this class.</p>
+            )}
+            {proficientEquipment
               .filter((e) => e.category === 'weapon')
               .map((item) => (
                 <label key={item.index} className="checkbox-row">
@@ -521,7 +539,10 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
           </fieldset>
           <fieldset>
             <legend>Armor</legend>
-            {equipment
+            {proficientEquipment.filter((e) => e.category === 'armor').length === 0 && (
+              <p className="companion-meta">No armor proficiencies for this class.</p>
+            )}
+            {proficientEquipment
               .filter((e) => e.category === 'armor')
               .map((item) => (
                 <label key={item.index} className="checkbox-row">

@@ -48,6 +48,7 @@ export interface ClassSummary {
 export interface ClassDetail extends ClassSummary {
   skill_choose: number
   skill_options: string[]
+  equipment_options: string[]
 }
 
 export interface SkillSummary {
