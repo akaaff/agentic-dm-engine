@@ -51,3 +51,23 @@ Scene images are generated with SD-Turbo (SD1.5-distilled, ~2-3GB VRAM, 1-4 step
 **Why:** the user explicitly wants two extensions after the core build: dynamic on-the-fly campaign adaptation (the DM improvising new scenes mid-session when players go off-script) and multiplayer. Neither is in scope for the initial 26-day build, but both are real priorities for this project specifically (it's a personal project as much as a portfolio one) - so the initial design deliberately avoids choices that would force a rewrite to add them later.
 
 **Cost:** slightly more upfront design care in Day 6/11/20/21 (keeping the scene chain mutable, keeping the session layer connection-aware) for zero near-term functional gain - a bet that the extensions are worth building later.
+
+## 7. A generic distillation toolkit, not a one-off intent-parser fine-tuning script
+
+`src/training/` is built as schema-agnostic pipeline stages (`task_spec.py`'s `DistillationTask`, `generate_synthetic.py`, `curate_dataset.py`, `evaluate_structured_output.py`, `finetune_lora.py`) that take a task-specific spec (prompt template, example generator, output pydantic schema, model names) as their only D&D-aware input. The intent parser is the first `DistillationTask` instance plugged into it, not something the pipeline is hardcoded around.
+
+**Why:** a reusable tool is a stronger standalone portfolio artifact than a task-specific notebook, and it costs nothing to the timeline - the pipeline needed all of this generality anyway to fine-tune one task correctly (calling a teacher, validating structured output, splitting data, running LoRA, scoring field accuracy). The genericity claim is verified, not just asserted: `tests/llm/test_distillation_toolkit_toy_task.py` runs the entire pipeline against a deliberately unrelated toy task (extract a person's name+age from a sentence - chosen specifically because it shares no structural resemblance to `ParsedAction`) before any intent-parser-specific code exists, and it passed clean on the first attempt.
+
+**Cost:** more upfront design discipline (a strict boundary between what the pipeline owns vs. what a task spec supplies) for a project that, as of this build, only ever exercises the toolkit with one real task. A second distillation target (e.g. a narration-quality judge) would need only a new task spec to prove the investment was real, not aspirational - not yet attempted in this build.
+
+**Considered and not taken:** a single bespoke script (`finetune_intent_parser.py` doing everything inline) - simpler for exactly one task, but would have to be substantially rewritten (not just extended) for a second one, and reads as a much smaller portfolio artifact.
+
+## 8. Serve the distilled model through the teacher's own engine (GGUF via Ollama), not the framework it was trained in
+
+The intent-parser student is fine-tuned with `transformers`/`peft`/`trl`, but production serving has three interchangeable backends behind one config flag (`INTENT_PARSER_BACKEND`): the teacher itself, the fine-tuned adapter served via `transformers`/`peft` directly, or the same adapter merged and converted to GGUF and served by Ollama alongside the teacher.
+
+**Why:** the training framework and the serving engine are different concerns, and conflating them cost real latency - a naive `transformers.generate()` serving path gives up the fused kernels, exact stopping, and grammar-constrained decoding that make Ollama's `llama.cpp` engine fast, so the fine-tuned 0.5B was barely faster than the 7B teacher when served that way despite being 14x smaller. Putting the student on the *same* engine as the teacher isolates parameter count as the only remaining variable and lets the size advantage actually show up (measured ~2x latency win - see README).
+
+**Cost:** an extra conversion step (merge adapter -> `llama.cpp`'s `convert_hf_to_gguf.py` -> `ollama create`) outside this project's own `uv`-managed dependency tree, and a real bug surfaced by the switch: Ollama's grammar-constrained decoding (which helps the teacher) corrupted the untyped `ParsedAction.params` field on a model never trained under that specific constraint - worked around with a generic unconstrained-decode-plus-retry helper (`chat_structured_best_effort`) rather than by changing the schema. Full account of both the conversion process and the bug: `CLAUDE.md`'s Day 27 detour entries.
+
+**Considered and not taken:** quantizing the GGUF (e.g. Q4_K_M) for a further size/speed gain - skipped deliberately, since the model is already ~1GB in F16 and quantization would need re-verifying field accuracy against a lossy conversion for a benefit this project didn't need.
