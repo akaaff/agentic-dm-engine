@@ -25,11 +25,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+export interface RaceTrait {
+  index: string
+  name: string
+  desc: string
+}
+
 export interface RaceSummary {
   index: string
   name: string
   speed: number
   ability_bonuses: Record<string, number>
+  traits: RaceTrait[]
 }
 
 export interface ClassSummary {

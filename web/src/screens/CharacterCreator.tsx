@@ -279,6 +279,19 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               ))}
             </tbody>
           </table>
+          {selectedRace && selectedRace.traits.length > 0 && (
+            <>
+              <p>Racial traits:</p>
+              <div className="race-trait-row">
+                {selectedRace.traits.map((trait) => (
+                  <span key={trait.index} className="trait-chip">
+                    {trait.name}
+                    <InfoTip text={trait.desc} />
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
           <p>Skills: {created.skill_proficiencies.map(skillLabel).join(', ') || 'none'}</p>
           <p>Inventory: {created.inventory.join(', ') || 'none'}</p>
         </div>
@@ -336,6 +349,25 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               ))}
             </select>
           </label>
+          {selectedRace && Object.keys(selectedRace.ability_bonuses).length > 0 && (
+            <div className="race-bonus-row">
+              {ABILITIES.filter((a) => raceBonus(a) > 0).map((a) => (
+                <span key={a} className="race-bonus-badge">
+                  +{raceBonus(a)} {a}
+                </span>
+              ))}
+            </div>
+          )}
+          {selectedRace && selectedRace.traits.length > 0 && (
+            <div className="race-trait-row">
+              {selectedRace.traits.map((trait) => (
+                <span key={trait.index} className="trait-chip">
+                  {trait.name}
+                  <InfoTip text={trait.desc} />
+                </span>
+              ))}
+            </div>
+          )}
           <div className="wizard-nav">
             <button type="button" disabled={!canProceedFromBasics} onClick={() => setStep(1)}>
               Next
