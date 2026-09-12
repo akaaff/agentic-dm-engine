@@ -152,6 +152,30 @@ def test_move_path_respects_speed_budget() -> None:
     assert last_step["x"] == 6
 
 
+def test_move_path_avoids_a_square_already_occupied_by_another_character() -> None:
+    # Caught live: two monsters converging on the same target from
+    # different directions could independently pick the identical "best"
+    # square and end up stacked on top of each other - invisible as two
+    # tokens on the combat grid. goblin_2 already sits at (5,0), directly on
+    # goblin_1's straight-line path toward thorin at (6,0) - goblin_1 must
+    # route around it (e.g. via (5,1)) rather than stepping onto it.
+    goblin_1 = _make_character(
+        "goblin_1", is_pc=False, position=Position(x=0, y=0), monster_index="goblin"
+    )
+    goblin_2 = _make_character(
+        "goblin_2", is_pc=False, position=Position(x=5, y=0), monster_index="goblin"
+    )
+    thorin = _make_character("thorin", is_pc=True, position=Position(x=6, y=0))
+    state = _make_state([goblin_1, goblin_2, thorin], battle_map=_open_map(10, 10))
+
+    action = choose_monster_action(state, goblin_1)
+
+    assert action.verb == "move"
+    first_step = action.params["path"][0]
+    assert (first_step["x"], first_step["y"]) != (5, 0)
+    assert all((p["x"], p["y"]) != (5, 0) for p in action.params["path"])
+
+
 def test_attacks_anyway_when_movement_is_impossible() -> None:
     # No battle_map at all (e.g. an ad-hoc test GameState) - can't compute
     # a path, so fall back to the pre-existing "just attack" behavior

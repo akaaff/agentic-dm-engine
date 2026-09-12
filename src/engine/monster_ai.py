@@ -18,7 +18,11 @@ target regardless of actual distance - would have made every out-of-range
 monster fail every attack forever, since it never moves. Greedy step-by-
 step approach, not real pathfinding (matches turn_engine's own documented
 stance that real pathfinding is a future concern) - good enough for this
-project's small, mostly-open battle maps."""
+project's small, mostly-open battle maps. The approach path also avoids
+squares already occupied by another living character (a snapshot taken
+once per monster turn, see _approach_path's docstring) - added live after
+two monsters converging on the same target ended up stacked on the exact
+same square, invisible as two separate tokens on the combat grid."""
 
 from __future__ import annotations
 
@@ -52,13 +56,16 @@ def _monster_range_feet(actor: Character) -> int:
 
 
 def _best_step(
-    current: Position, target: Position, terrain: list[list[TerrainType]]
+    current: Position,
+    target: Position,
+    terrain: list[list[TerrainType]],
+    occupied: set[tuple[int, int]],
 ) -> Position | None:
     """One square toward `target` - whichever of the 8 adjacent squares
-    most reduces distance, skipping walls/out-of-bounds. A simple greedy
-    heuristic, not real pathfinding: can get stuck going the "wrong" way
-    around a wall it can't see past. Returns None if every adjacent square
-    is blocked."""
+    most reduces distance, skipping walls/out-of-bounds/`occupied` squares.
+    A simple greedy heuristic, not real pathfinding: can get stuck going the
+    "wrong" way around a wall it can't see past. Returns None if every
+    adjacent square is blocked."""
     candidates = [
         Position(x=current.x + dx, y=current.y + dy)
         for dx in (-1, 0, 1)
@@ -66,7 +73,9 @@ def _best_step(
         if (dx, dy) != (0, 0)
     ]
     in_bounds = [p for p in candidates if 0 <= p.y < len(terrain) and 0 <= p.x < len(terrain[p.y])]
-    open_squares = [p for p in in_bounds if terrain[p.y][p.x] != "wall"]
+    open_squares = [
+        p for p in in_bounds if terrain[p.y][p.x] != "wall" and (p.x, p.y) not in occupied
+    ]
     if not open_squares:
         return None
     return min(open_squares, key=lambda p: chebyshev_distance(p, target))
@@ -78,17 +87,27 @@ def _approach_path(
     speed: int,
     range_feet: int,
     terrain: list[list[TerrainType]],
+    occupied: set[tuple[int, int]],
 ) -> list[Position]:
     """Greedy step-by-step path toward `target`, stopping once within
     `range_feet` or the speed budget runs out. May be empty (already in
-    range) or short of `range_feet` (blocked, or not enough speed) - the
-    caller attacks anyway either way; turn_engine's own range check is the
-    honest final word on whether that lands."""
+    range) or short of `range_feet` (blocked, occupied, or not enough
+    speed) - the caller attacks anyway either way; turn_engine's own range
+    check is the honest final word on whether that lands.
+
+    `occupied` is a snapshot taken once at the start of this monster's turn
+    (every other living character's square) - not updated as this path is
+    built, since a single monster only ever moves once per turn anyway.
+    Caught live: two monsters converging on the same target from different
+    starting squares could independently choose the identical "best"
+    intermediate square and end up stacked exactly on top of each other -
+    invisible as two tokens on the combat grid, and a real (if minor) break
+    of the "no two creatures share a square" rule."""
     path: list[Position] = []
     current = start
     remaining = speed
     while distance_feet(current, target) > range_feet:
-        step = _best_step(current, target, terrain)
+        step = _best_step(current, target, terrain, occupied)
         if step is None:
             break
         cost = FEET_PER_SQUARE * (2 if terrain[step.y][step.x] == "difficult" else 1)
@@ -125,8 +144,18 @@ def choose_monster_action(game_state: GameState, actor: Character) -> ParsedActi
             raw_text=f"{actor.name} attacks {target.name}.",
         )
 
+    occupied = {
+        (c.position.x, c.position.y)
+        for c in game_state.characters.values()
+        if not c.is_dead and c.id != actor.id
+    }
     path = _approach_path(
-        actor.position, target.position, actor.speed, range_feet, game_state.battle_map.terrain
+        actor.position,
+        target.position,
+        actor.speed,
+        range_feet,
+        game_state.battle_map.terrain,
+        occupied,
     )
     if not path:
         # Can't get any closer (blocked, or no speed left) - attack anyway.
