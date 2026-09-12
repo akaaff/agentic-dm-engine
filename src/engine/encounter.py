@@ -7,6 +7,7 @@ scenes (campaign.py).
 from __future__ import annotations
 
 import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,27 @@ def _parse_speed_feet(speed_field: dict[str, Any]) -> int:
     return int(str(walk).split()[0])
 
 
+_INSTANCE_SUFFIX_RE = re.compile(r"_(\d+)$")
+
+
+def _display_name(base_name: str, character_id: str) -> str:
+    """A per-instance display name (e.g. "Kobold 2") derived from the
+    character_id's trailing "_<n>" (every authored encounter names its
+    monsters "<monster_index>_<n>", e.g. "kobold_2"), falling back to the
+    bare SRD name unchanged if the id doesn't match that shape.
+
+    Caught live: three kobolds in one encounter all had the identical SRD
+    stat-block name "Kobold" - the combat grid's token label and the
+    character-sheet sidebar both display Character.name directly, so all
+    three were visually indistinguishable (same "K" token, same "Kobold"
+    sidebar entry) even though their ids (kobold_1/2/3) were unique the
+    whole time."""
+    match = _INSTANCE_SUFFIX_RE.search(character_id)
+    if match is None:
+        return base_name
+    return f"{base_name} {match.group(1)}"
+
+
 def monster_to_character(monster: SrdEntry, character_id: str, position: Position) -> Character:
     """Monsters skip the PC creation pipeline entirely - their stats come
     directly from the SRD stat block, not from ability-score assignment or
@@ -72,7 +94,7 @@ def monster_to_character(monster: SrdEntry, character_id: str, position: Positio
     }
     return Character(
         id=character_id,
-        name=monster["name"],
+        name=_display_name(monster["name"], character_id),
         is_pc=False,
         hp=hp,
         max_hp=hp,

@@ -62,7 +62,10 @@ def test_monster_to_character_reads_srd_stat_block() -> None:
 
     character = monster_to_character(goblin_data, "goblin_1", Position(x=6, y=1))
 
-    assert character.name == "Goblin"
+    # "Goblin 1", not the bare SRD name "Goblin" - see _display_name's
+    # docstring: three identically-named monsters in one encounter used to
+    # be visually indistinguishable on both the sidebar and the combat grid.
+    assert character.name == "Goblin 1"
     assert character.is_pc is False
     assert character.hp == 7
     assert character.max_hp == 7
@@ -70,6 +73,17 @@ def test_monster_to_character_reads_srd_stat_block() -> None:
     assert character.stats == {"STR": 8, "DEX": 14, "CON": 10, "INT": 10, "WIS": 8, "CHA": 8}
     assert character.speed == 30
     assert character.position == Position(x=6, y=1)
+
+
+def test_monster_to_character_falls_back_to_bare_name_without_a_numeric_suffix() -> None:
+    # Every authored encounter names monsters "<index>_<n>", but the display
+    # name shouldn't crash or garble a differently-shaped id.
+    srd = load_srd()
+    goblin_data = srd.monsters["goblin"]
+
+    character = monster_to_character(goblin_data, "the_boss", Position(x=0, y=0))
+
+    assert character.name == "Goblin"
 
 
 def test_build_encounter_state_places_everyone_and_rolls_initiative() -> None:
