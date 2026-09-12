@@ -4,16 +4,19 @@ Scene images disabled (judge scores narration, not images). Autoplay is
 LLM-sampled and noisy - the judge score column is a small-sample sanity
 check that swapping the parser doesn't degrade play, not a precise metric.
 
-Latency caveat: the fine-tuned 0.5B student runs through plain
-transformers/peft (bf16, merged adapter); the teacher runs through
-Ollama's llama.cpp (q4, fused kernels, grammar-constrained stopping).
-The student is only marginally faster despite being 14x smaller -
-at this scale the inference stack matters more than the parameter
-count. A real latency win needs the student on the same engine
-(GGUF -> Ollama), which this Windows Ollama build can't import
-(its experimental safetensors path needs Apple MLX).
+Latency caveat: 'finetuned' runs the 0.5B student through plain
+transformers/peft (bf16, merged adapter) - only marginally faster than
+the 7B teacher despite being 14x smaller, because it gives up the
+inference-stack advantages (fused kernels, exact stopping) the teacher
+gets from Ollama's llama.cpp. 'finetuned_ollama' is the same distilled
+student, merged + converted to GGUF and served by Ollama instead -
+same engine as the teacher, isolating parameter count as the only
+remaining variable. See CLAUDE.md's Day 27 detour entry for how the
+GGUF was produced (a full llama.cpp clone, run locally - no Colab, no
+quantization needed at this size).
 
 | backend | parse latency (median) | parse latency (p90) | judge overall_score |
 | --- | --- | --- | --- |
-| teacher | 2938 ms | 3008 ms | [7, 7] |
-| finetuned | 2714 ms | 3301 ms | [6, 7] |
+| teacher | 726 ms | 783 ms | [7, 7] |
+| finetuned | 2731 ms | 3318 ms | [7, 7] |
+| finetuned_ollama | 509 ms | 656 ms | [7, 6] |
