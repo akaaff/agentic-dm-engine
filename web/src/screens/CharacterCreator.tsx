@@ -268,6 +268,13 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 <tr key={a}>
                   <td>{a}</td>
                   <td>{created.stats[a]}</td>
+                  <td>
+                    {raceBonus(a) > 0 && (
+                      <span className="race-bonus-badge" title={`${created.race} racial bonus`}>
+                        +{raceBonus(a)} {created.race}
+                      </span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
