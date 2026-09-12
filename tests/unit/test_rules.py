@@ -7,11 +7,14 @@ from src.engine.rules import (
     class_equipment_options,
     has_non_proficient_armor,
     is_class_proficient_with,
+    monster_action_range_feet,
     normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
     resolve_skill_check,
     skill_ability,
+    spell_range_feet,
+    weapon_range_feet,
 )
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character
@@ -227,3 +230,31 @@ def test_has_non_proficient_armor_true_only_for_armor_outside_the_class_pool() -
 
     wizard_with_no_armor = _make_character(class_index="wizard", inventory=["dagger"])
     assert has_non_proficient_armor(wizard_with_no_armor, srd) is False
+
+
+def test_weapon_range_feet_melee_vs_ranged_vs_reach() -> None:
+    srd = load_srd()
+    assert weapon_range_feet(srd.equipment["longsword"]) == (5, None)
+    assert weapon_range_feet(srd.equipment["longbow"]) == (150, 600)
+    # Reach (glaive, whip - the only two SRD-wide) extends melee range by
+    # 5ft; the equipment data's own range.normal is 5ft regardless of the
+    # "reach" property, so this is the one place that distinction matters.
+    assert weapon_range_feet(srd.equipment["glaive"]) == (10, None)
+
+
+def test_monster_action_range_feet_parses_melee_and_ranged() -> None:
+    srd = load_srd()
+    kobold_actions = srd.monsters["kobold"]["actions"]
+    dagger = next(a for a in kobold_actions if a["name"] == "Dagger")
+    sling = next(a for a in kobold_actions if a["name"] == "Sling")
+    assert monster_action_range_feet(dagger) == (5, None)
+    assert monster_action_range_feet(sling) == (30, 120)
+
+
+def test_monster_action_range_feet_falls_back_to_melee_for_unparseable_desc() -> None:
+    assert monster_action_range_feet({"desc": "does something unusual"}) == (5, None)
+
+
+def test_spell_range_feet_parses_feet_and_falls_back_for_touch() -> None:
+    assert spell_range_feet("120 feet") == 120
+    assert spell_range_feet("Touch") == 5

@@ -8,6 +8,7 @@ the turn loop and translates results into Events.
 from __future__ import annotations
 
 import random
+import re
 from dataclasses import dataclass
 
 from src.engine.dice import RollResult, roll, roll_d20
@@ -211,3 +212,58 @@ def has_non_proficient_armor(character: Character, srd: SrdIndex) -> bool:
         (item := srd.equipment.get(idx)) and item.get("armor_category") and idx not in options
         for idx in character.inventory
     )
+
+
+def weapon_range_feet(weapon: SrdEntry) -> tuple[int, int | None]:
+    """(normal, long) range in feet for a weapon - `long` is None for melee
+    weapons (no "attack at disadvantage from farther away" concept, unlike
+    ranged ones). A "reach" weapon (glaive, whip - the only two SRD-wide)
+    extends melee range by 5ft; the equipment data's own `range.normal` is
+    5ft for every melee weapon regardless of reach, so this is the only
+    place that distinction has to be applied."""
+    range_info = weapon.get("range") or {"normal": 5}
+    normal = int(range_info["normal"])
+    properties = {p["index"] for p in (weapon.get("properties") or [])}
+    if "reach" in properties:
+        normal += 5
+    long = range_info.get("long")
+    return normal, int(long) if long is not None else None
+
+
+_SPELL_RANGE_RE = re.compile(r"(\d+)\s*feet", re.IGNORECASE)
+
+
+def spell_range_feet(range_str: str) -> int:
+    """A spell's SRD `range` field is a plain string ("120 feet", "Touch",
+    "Self") - no {normal, long} structure like weapons, since spells have
+    no "beyond normal range" disadvantage tier in 5e; you're either in
+    range or you aren't. "Touch"/"Self"/anything unparseable falls back to
+    5ft (melee-adjacent) - a safe default since cast_spell only resolves
+    single-target attack-roll spells (Day 14 scope), which are never
+    "Self"-range in practice."""
+    match = _SPELL_RANGE_RE.search(range_str)
+    return int(match.group(1)) if match else 5
+
+
+_MONSTER_RANGE_RE = re.compile(r"range (\d+)/(\d+)\s*ft", re.IGNORECASE)
+
+
+def monster_action_range_feet(action: SrdEntry) -> tuple[int, int | None]:
+    """(normal, long) range in feet for a monster's stat-block action.
+
+    Unlike weapons, monster actions don't carry structured range data - only
+    a free-text `desc` ("Melee Weapon Attack: +4 to hit, reach 5 ft., one
+    target..." / "Ranged Weapon Attack: +4 to hit, range 30/120 ft., one
+    target..."). Every SRD monster stat block starts that description with
+    exactly "Melee" or "Ranged", which is reliable enough to branch on; the
+    numeric range for a ranged action is parsed from the same consistent
+    "range N/N ft." phrasing SRD-wide. Falls back to a flat 5ft melee range
+    (true for every monster this project curates - goblins, kobolds, wolves,
+    bandits all reach no further) if a description doesn't match either
+    pattern, rather than leaving a monster's attack unrestricted."""
+    desc = str(action.get("desc", ""))
+    if desc.lower().startswith("ranged"):
+        match = _MONSTER_RANGE_RE.search(desc)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    return 5, None
