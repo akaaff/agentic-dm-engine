@@ -122,9 +122,20 @@ def create_character(
 
     _validate_skill_choices(cls, chosen_skills)
 
+    equipment_options = set(class_equipment_options(cls, srd))
     for idx in chosen_equipment:
         if idx not in srd.equipment and idx not in EXTRA_EQUIPMENT_INDICES:
             raise CharacterCreationError(f"Unknown equipment index: {idx}")
+        item = srd.equipment.get(idx)
+        # Only weapons/armor are proficiency-gated - EXTRA_EQUIPMENT_INDICES
+        # (e.g. a healing potion) and general adventuring gear aren't SRD
+        # weapon/armor entries at all, so they have no proficiency to check.
+        if item is not None and (item.get("weapon_category") or item.get("armor_category")):
+            if idx not in equipment_options:
+                raise CharacterCreationError(
+                    f"{cls['name']} isn't proficient with {item['name']} - "
+                    "choose gear from a proficient category"
+                )
 
     inventory: list[str] = []
     for item in cls.get("starting_equipment", []):
@@ -177,6 +188,61 @@ def create_character(
         skill_proficiencies=skill_proficiencies,
         class_index=class_index,
     )
+
+
+_WEAPON_PROFICIENCY_ALIASES: dict[str, str] = {
+    "daggers": "dagger",
+    "darts": "dart",
+    "slings": "sling",
+    "quarterstaffs": "quarterstaff",
+    "crossbows-light": "crossbow-light",
+    "clubs": "club",
+    "javelins": "javelin",
+    "maces": "mace",
+    "sickles": "sickle",
+    "spears": "spear",
+    "scimitars": "scimitar",
+    "longswords": "longsword",
+    "rapiers": "rapier",
+    "shortswords": "shortsword",
+    "hand-crossbows": "crossbow-hand",
+}
+"""A class's `proficiencies` list names specific weapons in plural/reworded
+form (e.g. Wizard's "daggers", "crossbows-light") rather than the equipment
+list's own singular index ("dagger", "crossbow-light") - and one is
+irregular ("hand-crossbows" -> "crossbow-hand", word order swapped).
+Enumerated directly from all 12 vendored classes' actual proficiency lists,
+not a general singularization rule - safer than guessing at a pattern that
+might silently mismatch a class added later."""
+
+
+def class_equipment_options(cls: SrdEntry, srd: SrdIndex) -> list[str]:
+    """Weapon/armor equipment indices this class is actually SRD-proficient
+    with - e.g. a Wizard is proficient with exactly 5 specific weapons (not
+    "simple weapons" as a category) and no armor at all, while a Fighter's
+    "all-armor"/"martial-weapons" entries are broad categories. Used to
+    restrict the wizard's optional-extra-gear picker and to validate
+    `chosen_equipment` server-side - the same "don't offer/accept a choice
+    outside the real pool" discipline `class_skill_choice_pool` already
+    applies to skills."""
+    prof_indices = {p["index"] for p in cls.get("proficiencies", [])}
+    aliased_weapons = {_WEAPON_PROFICIENCY_ALIASES.get(p, p) for p in prof_indices}
+
+    options: list[str] = []
+    for item in srd.equipment.values():
+        weapon_category = item.get("weapon_category")
+        armor_category = item.get("armor_category")
+        if weapon_category and (
+            f"{weapon_category.lower()}-weapons" in prof_indices or item["index"] in aliased_weapons
+        ):
+            options.append(item["index"])
+        elif armor_category == "Shield" and "shields" in prof_indices:
+            options.append(item["index"])
+        elif armor_category and (
+            "all-armor" in prof_indices or f"{armor_category.lower()}-armor" in prof_indices
+        ):
+            options.append(item["index"])
+    return sorted(options)
 
 
 def class_skill_choice_pool(cls: SrdEntry) -> tuple[int, set[str]]:

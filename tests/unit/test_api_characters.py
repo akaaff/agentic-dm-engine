@@ -74,6 +74,17 @@ def test_get_class_detail_exposes_skill_choice_count_and_options(client: TestCli
     assert len(body["skill_options"]) == 8
 
 
+def test_get_class_detail_restricts_equipment_options_to_proficient_gear(
+    client: TestClient,
+) -> None:
+    response = client.get("/characters/classes/wizard")
+    assert response.status_code == 200
+    options = set(response.json()["equipment_options"])
+    assert options == {"dagger", "dart", "sling", "quarterstaff", "crossbow-light"}
+    assert "plate-armor" not in options
+    assert "longsword" not in options
+
+
 def test_get_class_detail_sums_multiple_proficiency_choice_pools(client: TestClient) -> None:
     # Regression guard for the Bard two-pool gotcha (see CLAUDE.md) - the
     # wizard needs this same count to ask for the right number of choices.

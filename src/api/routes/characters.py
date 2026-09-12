@@ -14,6 +14,7 @@ from src.api.db.models import CharacterRecord
 from src.api.db.session import get_db
 from src.engine.character_creation import (
     CharacterCreationError,
+    class_equipment_options,
     class_skill_choice_pool,
     create_character,
 )
@@ -59,6 +60,11 @@ class ClassDetail(ClassSummary):
     """SRD skill-proficiency indices (e.g. "skill-athletics") the player may
     choose skill_choose of - the same set create_character's
     _validate_skill_choices enforces server-side."""
+    equipment_options: list[str]
+    """Weapon/armor equipment indices this class is SRD-proficient with -
+    the same set create_character's chosen_equipment validation enforces
+    server-side, exposed so the wizard's optional-gear step only offers
+    legal choices instead of erroring after submission."""
 
 
 class SkillSummary(BaseModel):
@@ -159,6 +165,7 @@ def get_class(class_index: str) -> ClassDetail:
         hit_die=cls["hit_die"],
         skill_choose=skill_choose,
         skill_options=sorted(skill_options),
+        equipment_options=class_equipment_options(cls, srd),
     )
 
 
