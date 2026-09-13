@@ -112,6 +112,10 @@ class Character(BaseModel):
     """3 successful death saves: stops rolling, but stays unconscious (at 0
     HP) until healed - distinct from "still needs to roll" so the turn
     engine knows not to prompt for another death save."""
+    level: int = 1
+    """Character level (Phase 9J) - 1 at creation, incremented one at a time
+    by character_creation.level_up. Scoped to roughly 1-5 for this pass (see
+    character_creation.PROFICIENCY_BONUS_BY_LEVEL/SPELL_SLOTS_BY_LEVEL)."""
 
 
 class GameState(BaseModel):
