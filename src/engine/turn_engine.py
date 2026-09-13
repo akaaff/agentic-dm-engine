@@ -522,6 +522,150 @@ def _resolve_help(state: GameState, actor: Character, action: ParsedAction) -> N
     )
 
 
+def _grapple_shove_contest(
+    actor: Character, target: Character, rng: random.Random
+) -> tuple[int, int]:
+    """The contested check shared by grapple and shove (Phase 9E): per SRD
+    both use the attacker's Athletics check against the target's choice of
+    Athletics or Acrobatics.
+
+    RNG consumption order - exactly 3 d20s, always consumed in this order
+    regardless of outcome (both of the target's two defense checks are
+    always rolled, even though only the higher one ends up counting, so a
+    fixed-rng test fixture must always supply exactly 3 values for a single
+    grapple/shove attempt):
+      1. actor's Athletics check (STR, +proficiency bonus if
+         "skill-athletics" is in actor.skill_proficiencies)
+      2. target's own Athletics check (STR, same proficiency rule)
+      3. target's Acrobatics check (DEX, same proficiency rule)
+
+    Returns (actor_total, target_total), where target_total is whichever of
+    (2)/(3) came out higher. `resolve_skill_check`'s `dc` parameter is
+    unused for this purpose (passed as 0) - pass/fail is a plain comparison
+    of the two totals, decided by the caller, not a fixed DC.
+
+    Deliberately out of scope for this pass (documented, not silent, same
+    spirit as this engine's other narrow simplifications): no 5ft range/
+    reach check on the attempt (grapple/shove are SRD melee-only, but
+    nothing here enforces adjacency), and a successful shove never
+    implements the optional "push 5ft away" - it only ever knocks prone.
+    """
+    actor_modifier = ability_check_modifier(
+        actor, "STR", proficient="skill-athletics" in actor.skill_proficiencies
+    )
+    actor_result, _ = resolve_skill_check(modifier=actor_modifier, dc=0, rng=rng)
+
+    target_athletics_modifier = ability_check_modifier(
+        target, "STR", proficient="skill-athletics" in target.skill_proficiencies
+    )
+    target_athletics_result, _ = resolve_skill_check(
+        modifier=target_athletics_modifier, dc=0, rng=rng
+    )
+
+    target_acrobatics_modifier = ability_check_modifier(
+        target, "DEX", proficient="skill-acrobatics" in target.skill_proficiencies
+    )
+    target_acrobatics_result, _ = resolve_skill_check(
+        modifier=target_acrobatics_modifier, dc=0, rng=rng
+    )
+
+    target_total = max(target_athletics_result.total, target_acrobatics_result.total)
+    return actor_result.total, target_total
+
+
+def _resolve_grapple(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random
+) -> None:
+    if action.target is None:
+        raise TurnEngineError("grapple action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown grapple target: {action.target}")
+    _validate_attack_target(actor, target)
+
+    actor_total, target_total = _grapple_shove_contest(actor, target, rng)
+    # SRD contested-check resolution: the higher total wins outright, but a
+    # tie leaves the situation as it was before the contest ("the situation
+    # remains the same as it was before the contest" - PHB) - since a
+    # grapple attempt is trying to *change* the target's state, a tie means
+    # it fails, so this needs a strict ">" rather than ">=".
+    success = actor_total > target_total
+
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="grapple_attempt",
+            payload={
+                "target": target.id,
+                "actor_total": actor_total,
+                "target_total": target_total,
+                "success": success,
+            },
+        )
+    )
+    if not success:
+        return
+
+    apply_condition(target, Condition(name="grappled", source=actor.id))
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="condition_applied",
+            payload={"condition": "grappled", "target": target.id},
+        )
+    )
+
+
+def _resolve_shove(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random
+) -> None:
+    if action.target is None:
+        raise TurnEngineError("shove action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown shove target: {action.target}")
+    _validate_attack_target(actor, target)
+
+    actor_total, target_total = _grapple_shove_contest(actor, target, rng)
+    # Same contest and same tie-goes-to-the-defender resolution as grapple -
+    # see _resolve_grapple's comment above.
+    success = actor_total > target_total
+
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="shove_attempt",
+            payload={
+                "target": target.id,
+                "actor_total": actor_total,
+                "target_total": target_total,
+                "success": success,
+            },
+        )
+    )
+    if not success:
+        return
+
+    # Prone-only (SRD's other shove option, pushing the target 5ft away, is
+    # out of scope for this pass - see _grapple_shove_contest's docstring).
+    apply_condition(target, Condition(name="prone", source=actor.id))
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="condition_applied",
+            payload={"condition": "prone", "target": target.id},
+        )
+    )
+
+
 def _spell_attack_params(
     actor: Character, spell_name: str, srd: SrdIndex
 ) -> tuple[AttackParams, int]:
@@ -889,6 +1033,10 @@ def resolve_action(
         _resolve_disengage(state, actor)
     elif action.verb == "help":
         _resolve_help(state, actor, action)
+    elif action.verb == "grapple":
+        _resolve_grapple(state, actor, action, rng)
+    elif action.verb == "shove":
+        _resolve_shove(state, actor, action, rng)
     elif action.verb == "cast_spell":
         _resolve_cast_spell(state, actor, action, rng, srd)
     elif action.verb == "use_item":

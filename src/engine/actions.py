@@ -20,6 +20,8 @@ ActionVerb = Literal[
     "skill_check",
     "death_save",
     "help",
+    "grapple",
+    "shove",
     "end_turn",
     "invalid",
 ]

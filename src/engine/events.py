@@ -28,6 +28,8 @@ EventType = Literal[
     "dodge",
     "disengage",
     "help",
+    "grapple_attempt",
+    "shove_attempt",
 ]
 
 
