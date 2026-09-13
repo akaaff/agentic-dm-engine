@@ -52,10 +52,20 @@ rules.set_exhaustion_level's docstring for why).
 Phase 9J (character leveling) adds Extra Attack: an eligible PC (see
 character_creation.is_eligible_for_extra_attack - level 5+ Fighter/
 Barbarian/Paladin/Ranger) resolves two attack rolls for a single `attack`
-action instead of one, via a small loop inside _resolve_attack - Phase 9F's
-Multiattack (monsters resolving several named sub-actions in one action)
-hadn't landed in this worktree yet when this was written, so there was no
-existing "resolve N attacks in one action" helper to reuse.
+action instead of one. Phase 9F adds the monster equivalent: a "Multiattack"
+action (see _resolve_multiattack/rules.multiattack_sub_actions) rolls each
+of its named sub-attacks as its own attack_roll event. Both funnel through
+the same _resolve_single_attack helper (one full attack roll: range check,
+advantage/disadvantage, damage, downing) so unconscious-hit handling,
+condition effects, and every other per-attack-roll rule apply identically
+regardless of which of the two multi-roll mechanisms is in play. Phase 9F
+also adds ranged-attack-while-engaged disadvantage (_has_adjacent_hostile,
+SRD's "Ranged Attacks in Close Combat" - not previously enforced at all) and
+gives "hazard" terrain (previously declared in TerrainType but with zero
+mechanical effect - see _resolve_move) a small fixed damage-on-entry effect,
+matching the caltrops-like "littered with bones" flavor of the one hazard
+square this project has authored so far (data/campaigns/encounters/
+wolf_den.yaml).
 
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
@@ -97,6 +107,7 @@ from src.engine.rules import (
     has_non_proficient_armor,
     is_class_proficient_with,
     monster_action_range_feet,
+    multiattack_sub_actions,
     normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
@@ -122,6 +133,21 @@ HEALING_POTION_DICE = "2d4+2"
 for why (the Magic Items endpoint isn't vendored, and its entries don't carry
 machine-readable mechanical data anyway - this amount is straight from the
 SRD 5.1 text)."""
+
+HAZARD_DAMAGE = 1
+HAZARD_DAMAGE_TYPE = "piercing"
+"""Phase 9F: "hazard" terrain (TerrainType, position.py) had zero mechanical
+effect until now - confirmed via `grep -rn '"hazard"' src/` finding only the
+type declaration. The one hazard square this project has authored so far
+(data/campaigns/encounters/wolf_den.yaml, in a den described as "littered
+with bones") is functionally a bed of sharp bone/rock shards underfoot -
+close enough to the SRD's own Caltrops item (vendored in
+data/srd/5e-SRD-Equipment.json) to reuse its exact numbers rather than
+invent new ones: "Any creature that enters the area... take[s] 1 piercing
+damage." This engine doesn't model the caltrops' DC 15 DEX save (no hazard
+authoring format carries a save DC yet) - entering a hazard square always
+deals this flat, undodgeable amount, a deliberate simplification of the
+full caltrops rule, not a different game fact."""
 
 
 class TurnEngineError(ValueError):
@@ -207,23 +233,35 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
     )
 
 
-def _monster_attack_params(
-    actor: Character, action_name: str | None, srd: SrdIndex
-) -> AttackParams:
+def _monster_action(actor: Character, action_name: str | None, srd: SrdIndex) -> SrdEntry:
+    """Looks up the raw SRD action dict a monster's attack should use - the
+    named action if given, else the stat block's first action (every
+    curated monster lists its signature/most relevant action first, which
+    is why _monster_attack_params defaults to it too). Split out from
+    _monster_attack_params so _resolve_attack can inspect the chosen
+    action's name (to detect "Multiattack") before committing to building a
+    single-attack's damage params from it."""
     if actor.monster_index is None:
         raise TurnEngineError(f"{actor.id} is not a monster (no monster_index)")
     monster_data = srd.monsters[actor.monster_index]
-    actions = monster_data.get("actions") or []
+    actions: list[SrdEntry] = monster_data.get("actions") or []
     if not actions:
         raise TurnEngineError(f"{monster_data['name']} has no actions")
 
     if action_name:
-        action = next((a for a in actions if a["name"].lower() == action_name.lower()), None)
+        action: SrdEntry | None = next(
+            (a for a in actions if a["name"].lower() == action_name.lower()), None
+        )
         if action is None:
             raise TurnEngineError(f"{monster_data['name']} has no action named {action_name!r}")
-    else:
-        action = actions[0]
+        return action
+    return actions[0]
 
+
+def _monster_attack_params(
+    actor: Character, action_name: str | None, srd: SrdIndex
+) -> AttackParams:
+    action = _monster_action(actor, action_name, srd)
     damage_entry = action["damage"][0]
     dice_count, dice_sides, notation_bonus = parse_dice_notation(damage_entry["damage_dice"])
     range_normal_feet, range_long_feet = monster_action_range_feet(action)
@@ -260,22 +298,31 @@ def _validate_attack_target(actor: Character, target: Character) -> None:
         raise TurnEngineError(f"{actor.id} is charmed by {target.id} and cannot attack them")
 
 
-def _resolve_attack(
-    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
-) -> None:
-    if action.target is None:
-        raise TurnEngineError("attack action requires a target")
-    target = state.characters.get(action.target)
-    if target is None:
-        raise TurnEngineError(f"Unknown attack target: {action.target}")
-    _validate_attack_target(actor, target)
-
-    params = (
-        _monster_attack_params(actor, action.item_or_spell, srd)
-        if actor.monster_index
-        else _pc_attack_params(actor, action.item_or_spell, srd)
+def _has_adjacent_hostile(state: GameState, actor: Character) -> bool:
+    """True if any living hostile (opposite `is_pc`) creature is within 5ft
+    of `actor` - used by _resolve_single_attack to impose the SRD's
+    ranged-attack-while-engaged-in-melee disadvantage (Phase 9F)."""
+    return any(
+        other.id != actor.id
+        and not other.is_dead
+        and other.is_pc != actor.is_pc
+        and distance_feet(actor.position, other.position) <= 5
+        for other in state.characters.values()
     )
 
+
+def _resolve_single_attack(
+    state: GameState,
+    actor: Character,
+    target: Character,
+    params: AttackParams,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """One full attack roll (range check through hit/damage/downing) against
+    `target` - the body every single `attack` action resolves, and what a
+    Multiattack action (Phase 9F, see _resolve_multiattack) calls once per
+    named sub-attack within the same turn."""
     # Caught live: a combat grid can show attacker and target several
     # squares apart while a melee attack still resolved as a hit - this
     # engine never checked range at all. Beyond the weapon/action's max
@@ -292,92 +339,82 @@ def _resolve_attack(
     long_range_disadvantage = (
         params.range_long_feet is not None and distance > params.range_normal_feet
     )
+    # Phase 9F: a ranged attack (anything with a "long" range tier - melee
+    # weapons/actions have none, see weapon_range_feet/monster_action_range_
+    # feet) rolls with disadvantage while a hostile creature is within 5ft
+    # of the attacker, per SRD ("Ranged Attacks in Close Combat").
+    is_ranged = params.range_long_feet is not None
+    engaged_disadvantage = is_ranged and _has_adjacent_hostile(state, actor)
 
-    # Extra Attack (Phase 9J): an eligible PC makes two attack rolls for this
-    # one `attack` action instead of one - still a single action, no
-    # bonus-action/reaction machinery (Phase 9H) needed. Each iteration
-    # appends its own `attack_roll` event, exactly like a single attack
-    # already does; the loop stops early if the target dies partway through
-    # (attacking a corpse with the second roll would be meaningless).
-    num_attacks = 2 if is_eligible_for_extra_attack(actor) else 1
-    for _ in range(num_attacks):
-        # Advantage from being helped (Day 13) is consumed by this roll
-        # whether or not it changes the outcome - only the first of two
-        # Extra Attack rolls can ever benefit from it, matching the SRD
-        # (Help grants advantage on "the next attack roll," singular);
-        # disadvantage from the target dodging applies for as long as the
-        # target is dodging (until their own next turn) rather than being
-        # consumed - roll_d20 already cancels the two out together when both
-        # apply, per SRD rules. The attacker's own non-proficient armor,
-        # attacking beyond normal range, and SRD condition effects (Phase
-        # 9A - blinded/prone/restrained/invisible/etc. on either side) are
-        # further independent sources, unchanged across every attack roll
-        # this action makes.
-        advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
-        actor.has_help_advantage = False
+    # Advantage from being helped (Day 13) is consumed by this roll whether
+    # or not it changes the outcome; disadvantage from the target dodging
+    # applies for as long as the target is dodging (until their own next
+    # turn) rather than being consumed - roll_d20 already cancels the two
+    # out together when both apply, per SRD rules. The attacker's own
+    # non-proficient armor, attacking beyond normal range, being engaged
+    # while shooting, and SRD condition effects (Phase 9A -
+    # blinded/prone/restrained/invisible/etc. on either side) are further
+    # independent sources.
+    advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
+    actor.has_help_advantage = False
 
-        # Phase 9C: per SRD, any hit against an unconscious creature is a
-        # critical hit - checked before resolve_attack runs (not after)
-        # since it must reflect whether the target was ALREADY down before
-        # THIS attack roll, not whether this very hit is the one that drops
-        # them. Re-checked fresh every iteration (not just once before the
-        # loop): an Extra Attack's first roll can itself knock the target
-        # unconscious, in which case the second roll of this same action
-        # correctly gets the helpless treatment the first one didn't.
-        already_unconscious = has_condition(target, "unconscious")
+    # Phase 9C: per SRD, any hit against an unconscious creature is a
+    # critical hit - checked before resolve_attack runs (not after) since it
+    # must reflect whether the target was ALREADY down before THIS attack
+    # roll, not whether this very hit is the one that drops them. This
+    # matters for both of _resolve_attack's multi-roll callers (Phase 9J
+    # Extra Attack, Phase 9F Multiattack): each call to _resolve_single_attack
+    # re-checks fresh, so a roll that itself knocks the target unconscious
+    # correctly makes a LATER roll in the same action get the helpless
+    # treatment the earlier one didn't.
+    already_unconscious = has_condition(target, "unconscious")
 
-        result = resolve_attack(
-            defender_ac=target.ac,
-            attack_bonus=params.attack_bonus,
-            damage_dice_count=params.damage_dice_count,
-            damage_dice_sides=params.damage_dice_sides,
-            damage_bonus=params.damage_bonus,
-            damage_type=params.damage_type,
-            rng=rng,
-            advantage=advantage,
-            disadvantage=target.is_dodging
-            or has_non_proficient_armor(actor, srd)
-            or long_range_disadvantage
-            or condition_attack_disadvantage(actor, target, distance),
-            force_critical=already_unconscious,
+    result = resolve_attack(
+        defender_ac=target.ac,
+        attack_bonus=params.attack_bonus,
+        damage_dice_count=params.damage_dice_count,
+        damage_dice_sides=params.damage_dice_sides,
+        damage_bonus=params.damage_bonus,
+        damage_type=params.damage_type,
+        rng=rng,
+        advantage=advantage,
+        disadvantage=target.is_dodging
+        or has_non_proficient_armor(actor, srd)
+        or long_range_disadvantage
+        or engaged_disadvantage
+        or condition_attack_disadvantage(actor, target, distance),
+        force_critical=already_unconscious,
+    )
+
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="attack_roll",
+            payload={
+                "target": target.id,
+                "source": params.source_name,
+                "roll_total": result.attack_roll.total,
+                "natural": result.attack_roll.kept[0],
+                "target_ac": target.ac,
+                "hit": result.hit,
+                "critical": result.critical,
+            },
         )
+    )
 
-        state.events.append(
-            Event(
-                round=state.round,
-                turn_index=state.current_turn,
-                actor=actor.id,
-                type="attack_roll",
-                payload={
-                    "target": target.id,
-                    "source": params.source_name,
-                    "roll_total": result.attack_roll.total,
-                    "natural": result.attack_roll.kept[0],
-                    "target_ac": target.ac,
-                    "hit": result.hit,
-                    "critical": result.critical,
-                },
-            )
-        )
+    if result.hit and result.damage is not None:
+        _apply_damage_and_handle_downing(state, actor, target, result.damage, params.damage_type)
 
-        if result.hit and result.damage is not None:
-            _apply_damage_and_handle_downing(
-                state, actor, target, result.damage, params.damage_type
-            )
-
-        # Separate from normal damage (per SRD): a hit against an already-
-        # unconscious PC also inflicts 2 automatic death-save failures, on
-        # top of whatever damage did (usually nothing further, since the
-        # target is already clamped at 0 HP). Checked per iteration, not
-        # once after the whole loop - Extra Attack can trigger this more
-        # than once in the same action if both rolls hit an already-down
-        # target. Gated on result.hit the same way the pre-Extra-Attack
-        # code gated it via an early return on a miss.
-        if result.hit and already_unconscious and target.is_pc and not target.is_dead:
-            _apply_unconscious_hit_death_save_failures(state, target)
-
-        if target.is_dead:
-            break
+    # Separate from normal damage (per SRD): a hit against an already-
+    # unconscious PC also inflicts 2 automatic death-save failures, on top of
+    # whatever damage did (usually nothing further, since the target is
+    # already clamped at 0 HP). Gated on result.hit the same way a miss used
+    # to short-circuit this whole tail via an early return, before this
+    # function was split out of a single, non-reusable _resolve_attack body.
+    if result.hit and already_unconscious and target.is_pc and not target.is_dead:
+        _apply_unconscious_hit_death_save_failures(state, target)
 
 
 def _apply_unconscious_hit_death_save_failures(state: GameState, target: Character) -> None:
@@ -405,6 +442,76 @@ def _apply_unconscious_hit_death_save_failures(state: GameState, target: Charact
         )
     )
     _check_death_save_failure_threshold(state, target)
+
+
+def _resolve_multiattack(
+    state: GameState,
+    actor: Character,
+    target: Character,
+    multiattack_action: SrdEntry,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """Phase 9F: a monster's "Multiattack" action names (in free-text
+    `desc`) which of its other actions to actually roll, and how many times
+    each - e.g. giant-badger: "The badger makes two attacks: one with its
+    bite and one with its claws." Resolves each named sub-attack as its own
+    full attack roll (rules.multiattack_sub_actions does the desc parsing;
+    _resolve_single_attack is the same per-attack-roll logic a plain
+    single-action attack uses) within this one turn - still one `attack`
+    verb/action, multiple `attack_roll` events. Stops early if the target
+    dies partway through, since there's nothing left to attack."""
+    if actor.monster_index is None:
+        raise TurnEngineError(f"{actor.id} is not a monster (no monster_index)")
+    monster_data = srd.monsters[actor.monster_index]
+    other_action_names = [
+        a["name"] for a in (monster_data.get("actions") or []) if a.get("name") != "Multiattack"
+    ]
+    sub_actions = multiattack_sub_actions(
+        str(multiattack_action.get("desc", "")), other_action_names
+    )
+    if not sub_actions:
+        raise TurnEngineError(
+            f"Could not parse Multiattack sub-actions from {multiattack_action.get('desc', '')!r}"
+        )
+    for sub_action_name, count in sub_actions:
+        for _ in range(count):
+            if target.is_dead:
+                return
+            params = _monster_attack_params(actor, sub_action_name, srd)
+            _resolve_single_attack(state, actor, target, params, rng, srd)
+
+
+def _resolve_attack(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> None:
+    if action.target is None:
+        raise TurnEngineError("attack action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown attack target: {action.target}")
+    _validate_attack_target(actor, target)
+
+    if actor.monster_index is not None:
+        monster_action = _monster_action(actor, action.item_or_spell, srd)
+        if monster_action.get("name") == "Multiattack":
+            _resolve_multiattack(state, actor, target, monster_action, rng, srd)
+            return
+        params = _monster_attack_params(actor, action.item_or_spell, srd)
+        _resolve_single_attack(state, actor, target, params, rng, srd)
+        return
+
+    params = _pc_attack_params(actor, action.item_or_spell, srd)
+    # Extra Attack (Phase 9J): an eligible PC (level 5+ Fighter/Barbarian/
+    # Paladin/Ranger) makes two attack rolls for this one `attack` action
+    # instead of one - the PC-side equivalent of a monster's Multiattack
+    # above, sharing the same _resolve_single_attack per-roll logic. Stops
+    # early if the target dies partway through the second roll.
+    num_attacks = 2 if is_eligible_for_extra_attack(actor) else 1
+    for _ in range(num_attacks):
+        if target.is_dead:
+            return
+        _resolve_single_attack(state, actor, target, params, rng, srd)
 
 
 def _apply_damage_and_handle_downing(
@@ -474,6 +581,60 @@ def _apply_damage_and_handle_downing(
     )
 
 
+def _apply_hazard_damage(state: GameState, actor: Character, position: Position) -> None:
+    """A character that moves onto a "hazard" square takes HAZARD_DAMAGE
+    immediately - see that constant's docstring for the SRD-adjacent amount
+    and flavor. A distinct event type ("hazard_damage", not "damage_dealt")
+    since there's no attacking character here, just terrain; mirrors
+    _apply_damage_and_handle_downing's monster-dies/PC-goes-unconscious
+    handling for the (unlikely, at 1 flat damage) case this finishes off an
+    already-critical character."""
+    actual_loss = apply_damage(actor, HAZARD_DAMAGE)
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="hazard_damage",
+            payload={
+                "amount": actual_loss,
+                "damage_type": HAZARD_DAMAGE_TYPE,
+                "position": {"x": position.x, "y": position.y},
+                "hp_remaining": actor.hp,
+            },
+        )
+    )
+    if actor.hp > 0 or actor.is_dead:
+        return
+
+    if not actor.is_pc:
+        actor.is_dead = True
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="death",
+                payload={"killed_by": "hazard"},
+            )
+        )
+        return
+
+    apply_condition(actor, Condition(name="unconscious", source="hazard"))
+    actor.death_save_successes = 0
+    actor.death_save_failures = 0
+    actor.is_stable = False
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="condition_applied",
+            payload={"condition": "unconscious"},
+        )
+    )
+
+
 def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> None:
     if state.battle_map is None:
         raise TurnEngineError("Cannot resolve movement without a battle_map on GameState")
@@ -528,6 +689,14 @@ def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> N
             },
         )
     )
+
+    # Phase 9F: "hazard" terrain previously had zero mechanical effect - see
+    # HAZARD_DAMAGE's docstring for the amount/flavor reasoning. Only the
+    # final destination is checked, matching this function's pre-existing
+    # "only the destination matters, not squares passed through" stance for
+    # occupancy above.
+    if state.battle_map.terrain[destination.y][destination.x] == "hazard":
+        _apply_hazard_damage(state, actor, destination)
 
 
 def _resolve_skill_check(
