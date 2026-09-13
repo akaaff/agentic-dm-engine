@@ -8,9 +8,17 @@ Deliberate simplifications, both documented here and in DECISIONS.md/CLAUDE.md:
   not parsed into a choice UI; callers pass a flat `chosen_equipment` list of
   equipment indices, validated only for existence (not against the exact
   option-tree shape a real character sheet would enforce).
-- Level 1 only - no leveling, no level-dependent class tables beyond hit die
-  and the level-1 spell slot count below (the SRD's level-by-level class
-  tables live behind a separate API endpoint, not in the vendored JSON).
+- `create_character` always builds a level-1 sheet; level-dependent class
+  tables beyond hit die and the level-1 spell slot count (below) aren't in
+  the vendored SRD JSON either (`srd.classes["fighter"]["class_levels"]` is a
+  bare URL string, not embedded data) - confirmed live, same as the level-1
+  spell slots already were.
+
+Phase 9J adds `level_up` (below), which advances an existing Character one
+level at a time (roughly levels 1-5 - see PROFICIENCY_BONUS_BY_LEVEL/
+SPELL_SLOTS_BY_LEVEL/EXTRA_ATTACK_LEVEL/ABILITY_SCORE_IMPROVEMENT_LEVELS),
+hardcoding the same class of well-documented SRD 5.1 facts LEVEL_1_SPELL_SLOTS
+already hardcodes, for the same reason.
 """
 
 from __future__ import annotations
@@ -43,6 +51,106 @@ LEVEL_1_SPELL_SLOTS: dict[str, dict[int, int]] = {
 }
 """Not in the vendored SRD JSON (level tables live behind a separate API
 endpoint) - these are basic SRD 5.1 game facts, hardcoded rather than fetched."""
+
+PROFICIENCY_BONUS_BY_LEVEL: dict[int, int] = {
+    1: 2,
+    2: 2,
+    3: 2,
+    4: 2,
+    5: 3,
+    6: 3,
+    7: 3,
+    8: 3,
+    9: 4,
+    10: 4,
+    11: 4,
+    12: 4,
+    13: 5,
+    14: 5,
+    15: 5,
+    16: 5,
+    17: 6,
+    18: 6,
+    19: 6,
+    20: 6,
+}
+"""Not in the vendored SRD JSON (level tables live behind a separate API
+endpoint) - this is the well-known SRD 5.1 proficiency-bonus-by-level table
+(+2 at 1-4, +3 at 5-8, +4 at 9-12, +5 at 13-16, +6 at 17-20), hardcoded rather
+than fetched. Phase 9J's scope only needs levels 1-5, but the full table costs
+nothing extra to implement and documents the real fact rather than a
+truncated one."""
+
+SPELL_SLOTS_BY_LEVEL: dict[str, dict[int, dict[int, int]]] = {
+    "wizard": {
+        1: {1: 2},
+        2: {1: 3},
+        3: {1: 4, 2: 2},
+        4: {1: 4, 2: 3},
+        5: {1: 4, 2: 3, 3: 2},
+    },
+    "cleric": {
+        1: {1: 2},
+        2: {1: 3},
+        3: {1: 4, 2: 2},
+        4: {1: 4, 2: 3},
+        5: {1: 4, 2: 3, 3: 2},
+    },
+    "druid": {
+        1: {1: 2},
+        2: {1: 3},
+        3: {1: 4, 2: 2},
+        4: {1: 4, 2: 3},
+        5: {1: 4, 2: 3, 3: 2},
+    },
+    "sorcerer": {
+        1: {1: 2},
+        2: {1: 3},
+        3: {1: 4, 2: 2},
+        4: {1: 4, 2: 3},
+        5: {1: 4, 2: 3, 3: 2},
+    },
+    "bard": {
+        1: {1: 2},
+        2: {1: 3},
+        3: {1: 4, 2: 2},
+        4: {1: 4, 2: 3},
+        5: {1: 4, 2: 3, 3: 2},
+    },
+    "warlock": {
+        1: {1: 1},
+        2: {1: 2},
+        3: {2: 2},
+        4: {2: 2},
+        5: {3: 2},
+    },
+}
+"""Not in the vendored SRD JSON (level tables live behind a separate API
+endpoint) - these are the real PHB full-caster and Pact Magic slot
+progressions through character level 5, hardcoded as basic SRD 5.1 game
+facts, same precedent as LEVEL_1_SPELL_SLOTS (whose level-1 row this table's
+level-1 row exactly reproduces). Wizard/cleric/druid/sorcerer/bard are full
+casters (slots per the standard multiclassing-table shape: a 2nd-level slot
+first appears at character level 3, a 3rd-level slot at level 5). Warlock is
+the SRD's one exception - Pact Magic grants far fewer slots, but at a higher
+spell level than a full caster would have at the same character level (a
+level-3 Warlock has two 2nd-level slots and nothing else, not one 2nd-level
+plus leftover 1st-level slots)."""
+
+EXTRA_ATTACK_LEVEL = 5
+"""SRD 5.1: Fighter/Barbarian/Paladin/Ranger gain Extra Attack at level 5 -
+one `attack` action resolves two attack rolls instead of one (see
+turn_engine._resolve_attack / is_eligible_for_extra_attack below)."""
+
+EXTRA_ATTACK_CLASSES = {"fighter", "barbarian", "paladin", "ranger"}
+"""The four base SRD classes whose level-5 class table grants Extra Attack.
+(Monk also gets a version of it in the full PHB, but the SRD 5.1 Monk stat
+block doesn't include it - not included here.)"""
+
+ABILITY_SCORE_IMPROVEMENT_LEVELS = {4}
+"""SRD 5.1 grants an Ability Score Improvement at levels 4/8/12/16/19 - this
+pass is scoped to roughly levels 1-5 (see CLAUDE.md Phase 9J), so only level
+4 is modeled; the later levels are out of scope, not silently wrong."""
 
 
 class CharacterCreationError(ValueError):
@@ -235,3 +343,74 @@ def _validate_skill_choices(cls: SrdEntry, chosen_skills: list[str]) -> None:
     for skill in chosen_skills:
         if skill not in allowed:
             raise CharacterCreationError(f"{skill} is not a valid skill choice for {cls['name']}")
+
+
+def is_eligible_for_extra_attack(character: Character) -> bool:
+    return character.level >= EXTRA_ATTACK_LEVEL and character.class_index in EXTRA_ATTACK_CLASSES
+
+
+def _validate_ability_score_increase(increase: Mapping[AbilityScore, int]) -> None:
+    """Mirrors validate_standard_array's error style. Legal SRD 5.1 ASI
+    allocations are exactly +2 to one ability or +1 to two different
+    abilities - never a flat +3, a +2 split across two abilities, or a bonus
+    to more than two abilities."""
+    total = sum(increase.values())
+    legal = (len(increase) == 1 and total == 2 and all(v == 2 for v in increase.values())) or (
+        len(increase) == 2 and total == 2 and all(v == 1 for v in increase.values())
+    )
+    if not legal:
+        raise CharacterCreationError(
+            f"Ability score improvement {dict(increase)} must be +2 to one ability "
+            "or +1 to two different abilities"
+        )
+
+
+def level_up(
+    character: Character,
+    srd: SrdIndex,
+    ability_score_increase: dict[AbilityScore, int] | None = None,
+) -> Character:
+    """Advances `character` by exactly one level, recomputing everything the
+    same way create_character derives it at level 1 (see the module
+    docstring's leveling note) rather than a second, subtly-different
+    formula: proficiency bonus from PROFICIENCY_BONUS_BY_LEVEL, HP gain as
+    the SRD's fixed "average" value for the class hit die (die/2 + 1, e.g.
+    d10 -> 6) plus CON mod - added to both hp and max_hp, not re-derived from
+    scratch, since a character can already have taken damage - and spell
+    slots refreshed from SPELL_SLOTS_BY_LEVEL for a casting class. An
+    Ability Score Improvement is only ever applied at a level in
+    ABILITY_SCORE_IMPROVEMENT_LEVELS *and* only when the caller actually
+    supplies one - a level-4 character.level_up() call with no
+    ability_score_increase argument just doesn't apply one (the caller
+    presenting that choice to a human is out of this function's scope, same
+    division of responsibility as the module docstring already states for
+    equipment/skill choices at creation).
+
+    Calling this repeatedly takes a level-1 character to level 5 one call at
+    a time - each call only ever advances by one level."""
+    cls = srd.classes.get(character.class_index) if character.class_index else None
+    if cls is None:
+        raise CharacterCreationError(f"Unknown or missing class for character {character.id!r}")
+
+    character.level += 1
+    character.proficiency_bonus = PROFICIENCY_BONUS_BY_LEVEL[character.level]
+
+    con_mod = ability_modifier(character.stats["CON"])
+    hp_gain = cls["hit_die"] // 2 + 1 + con_mod
+    character.max_hp += hp_gain
+    character.hp += hp_gain
+
+    class_slots_by_level = (
+        SPELL_SLOTS_BY_LEVEL.get(character.class_index) if character.class_index else None
+    )
+    if class_slots_by_level is not None:
+        slots_this_level = class_slots_by_level.get(character.level)
+        if slots_this_level is not None:
+            character.spell_slots = dict(slots_this_level)
+
+    if character.level in ABILITY_SCORE_IMPROVEMENT_LEVELS and ability_score_increase is not None:
+        _validate_ability_score_increase(ability_score_increase)
+        for ability, bonus in ability_score_increase.items():
+            character.stats[ability] = character.stats.get(ability, 0) + bonus
+
+    return character
