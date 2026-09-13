@@ -36,6 +36,19 @@ and doesn't distinguish ally from enemy squares for pass-through purposes,
 so checking every intermediate square would be effort spent on a
 distinction nothing else in the engine cares about yet.
 
+Phase 9A (a full 5e-rules-completeness audit, not a live-play find) wired
+real mechanical effects into the SRD conditions - previously schema-only
+tags (state.ConditionName) that nothing but "unconscious" ever checked. See
+rules.condition_attack_advantage/condition_attack_disadvantage/
+condition_check_disadvantage/effective_speed/saving_throw_bonus for exactly
+what each condition (and exhaustion, now a leveled 0-6 field rather than one
+of those tags) does to an attack roll, an ability check, or movement speed.
+Deliberately still narrow: the "can this actor act at all" side of
+paralyzed/petrified/stunned/incapacitated (they should force an automatic
+end_turn, not just modify rolls) is Phase 9B, not this one; exhaustion
+level 4's "hit point maximum is halved" is explicitly not implemented (see
+rules.set_exhaustion_level's docstring for why).
+
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
   params["path"], not just a destination - real pathfinding around
@@ -68,6 +81,10 @@ from src.engine.rules import (
     ability_check_modifier,
     ability_modifier,
     apply_damage,
+    condition_attack_advantage,
+    condition_attack_disadvantage,
+    condition_check_disadvantage,
+    effective_speed,
     has_non_proficient_armor,
     is_class_proficient_with,
     monster_action_range_feet,
@@ -227,6 +244,11 @@ def _validate_attack_target(actor: Character, target: Character) -> None:
     model, so the deterministic engine enforces the actual game rule."""
     if target.is_pc == actor.is_pc:
         raise TurnEngineError(f"{actor.id} cannot attack {target.id} - same side")
+    charmed_by = next(
+        (c.source for c in actor.conditions if c.name == "charmed" and c.source), None
+    )
+    if charmed_by == target.id:
+        raise TurnEngineError(f"{actor.id} is charmed by {target.id} and cannot attack them")
 
 
 def _resolve_attack(
@@ -267,9 +289,10 @@ def _resolve_attack(
     # applies for as long as the target is dodging (until their own next
     # turn) rather than being consumed - roll_d20 already cancels the two
     # out together when both apply, per SRD rules. The attacker's own
-    # non-proficient armor and attacking beyond normal range are two more,
-    # independent disadvantage sources.
-    advantage = actor.has_help_advantage
+    # non-proficient armor, attacking beyond normal range, and SRD condition
+    # effects (Phase 9A - blinded/prone/restrained/invisible/etc. on either
+    # side) are further independent sources.
+    advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
     actor.has_help_advantage = False
 
     result = resolve_attack(
@@ -283,7 +306,8 @@ def _resolve_attack(
         advantage=advantage,
         disadvantage=target.is_dodging
         or has_non_proficient_armor(actor, srd)
-        or long_range_disadvantage,
+        or long_range_disadvantage
+        or condition_attack_disadvantage(actor, target, distance),
     )
 
     state.events.append(
@@ -372,7 +396,12 @@ def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> N
 
     steps = [Position(x=p["x"], y=p["y"]) for p in raw_path]
     full_path = [actor.position, *steps]
-    speed = actor.speed * 2 if action.verb == "dash" else actor.speed
+    # effective_speed (Phase 9A) accounts for grappled (speed 0) and
+    # exhaustion (halved at level 2+, 0 at level 5+) - dash then doubles
+    # whatever that reduced budget is, per SRD (dash doesn't restore speed
+    # exhaustion/grappling has already taken away).
+    base_speed = effective_speed(actor)
+    speed = base_speed * 2 if action.verb == "dash" else base_speed
 
     if not can_afford_move(speed, full_path, state.battle_map.terrain):
         cost = move_cost_feet(full_path, state.battle_map.terrain)
@@ -431,8 +460,11 @@ def _resolve_skill_check(
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
     # Per SRD, non-proficient armor imposes disadvantage on STR/DEX checks
-    # specifically (not INT/WIS/CHA ones like Perception or Persuasion).
-    disadvantage = ability in ("STR", "DEX") and has_non_proficient_armor(actor, srd)
+    # specifically (not INT/WIS/CHA ones like Perception or Persuasion);
+    # poisoned/frightened/exhaustion (Phase 9A) apply to every ability check.
+    disadvantage = (
+        ability in ("STR", "DEX") and has_non_proficient_armor(actor, srd)
+    ) or condition_check_disadvantage(actor)
 
     result, success = resolve_skill_check(
         modifier=modifier,
@@ -570,7 +602,7 @@ def _resolve_cast_spell(
             raise TurnEngineError(f"{actor.id} has no level-{spell_level} spell slots remaining")
         actor.spell_slots[spell_level] = remaining - 1
 
-    advantage = actor.has_help_advantage
+    advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
     actor.has_help_advantage = False
 
     result = resolve_attack(
@@ -582,7 +614,7 @@ def _resolve_cast_spell(
         damage_type=params.damage_type,
         rng=rng,
         advantage=advantage,
-        disadvantage=target.is_dodging,
+        disadvantage=target.is_dodging or condition_attack_disadvantage(actor, target, distance),
     )
 
     state.events.append(

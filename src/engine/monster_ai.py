@@ -34,7 +34,7 @@ from src.engine.position import (
     chebyshev_distance,
     distance_feet,
 )
-from src.engine.rules import monster_action_range_feet
+from src.engine.rules import effective_speed, monster_action_range_feet
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
 
@@ -152,7 +152,7 @@ def choose_monster_action(game_state: GameState, actor: Character) -> ParsedActi
     path = _approach_path(
         actor.position,
         target.position,
-        actor.speed,
+        effective_speed(actor),
         range_feet,
         game_state.battle_map.terrain,
         occupied,
