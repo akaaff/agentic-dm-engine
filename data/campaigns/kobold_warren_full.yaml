@@ -39,6 +39,14 @@ scenes:
       The culvert opens into a cramped warren lit by guttering torches.
       Kobolds spill out of side-tunnels, yipping alarm as they close in.
     encounter_ref: kobold_ambush
+    next_scene_id: warren_rest
+
+  - id: warren_rest
+    type: short_rest
+    narrative_intro: >
+      With the last kobold routed, the party retreats to the culvert mouth
+      to catch their breath - binding wounds and steadying nerves before
+      pressing deeper into the warren's spoils.
     next_scene_id: rising_action
 
   - id: rising_action
