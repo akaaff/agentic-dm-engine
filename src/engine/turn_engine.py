@@ -52,7 +52,10 @@ rules.set_exhaustion_level's docstring for why).
 Phase 9F: a monster's "Multiattack" action (see _resolve_multiattack/
 rules.multiattack_sub_actions) now actually rolls each of its named
 sub-attacks as its own attack_roll event, rather than being unresolvable or
-mistakenly treated like any other single action.
+mistakenly treated like any other single action. A ranged attack while a
+hostile is within 5ft of the attacker also now rolls with disadvantage
+(_has_adjacent_hostile), per SRD's "Ranged Attacks in Close Combat" - not
+previously enforced at all.
 
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
@@ -269,6 +272,19 @@ def _validate_attack_target(actor: Character, target: Character) -> None:
         raise TurnEngineError(f"{actor.id} is charmed by {target.id} and cannot attack them")
 
 
+def _has_adjacent_hostile(state: GameState, actor: Character) -> bool:
+    """True if any living hostile (opposite `is_pc`) creature is within 5ft
+    of `actor` - used by _resolve_single_attack to impose the SRD's
+    ranged-attack-while-engaged-in-melee disadvantage (Phase 9F)."""
+    return any(
+        other.id != actor.id
+        and not other.is_dead
+        and other.is_pc != actor.is_pc
+        and distance_feet(actor.position, other.position) <= 5
+        for other in state.characters.values()
+    )
+
+
 def _resolve_single_attack(
     state: GameState,
     actor: Character,
@@ -297,15 +313,22 @@ def _resolve_single_attack(
     long_range_disadvantage = (
         params.range_long_feet is not None and distance > params.range_normal_feet
     )
+    # Phase 9F: a ranged attack (anything with a "long" range tier - melee
+    # weapons/actions have none, see weapon_range_feet/monster_action_range_
+    # feet) rolls with disadvantage while a hostile creature is within 5ft
+    # of the attacker, per SRD ("Ranged Attacks in Close Combat").
+    is_ranged = params.range_long_feet is not None
+    engaged_disadvantage = is_ranged and _has_adjacent_hostile(state, actor)
 
     # Advantage from being helped (Day 13) is consumed by this roll whether
     # or not it changes the outcome; disadvantage from the target dodging
     # applies for as long as the target is dodging (until their own next
     # turn) rather than being consumed - roll_d20 already cancels the two
     # out together when both apply, per SRD rules. The attacker's own
-    # non-proficient armor, attacking beyond normal range, and SRD condition
-    # effects (Phase 9A - blinded/prone/restrained/invisible/etc. on either
-    # side) are further independent sources.
+    # non-proficient armor, attacking beyond normal range, being engaged
+    # while shooting, and SRD condition effects (Phase 9A -
+    # blinded/prone/restrained/invisible/etc. on either side) are further
+    # independent sources.
     advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
     actor.has_help_advantage = False
 
@@ -321,6 +344,7 @@ def _resolve_single_attack(
         disadvantage=target.is_dodging
         or has_non_proficient_armor(actor, srd)
         or long_range_disadvantage
+        or engaged_disadvantage
         or condition_attack_disadvantage(actor, target, distance),
     )
 
