@@ -5,6 +5,10 @@ from src.engine.rules import (
     ability_modifier,
     apply_damage,
     class_equipment_options,
+    condition_attack_advantage,
+    condition_attack_disadvantage,
+    condition_check_disadvantage,
+    effective_speed,
     has_non_proficient_armor,
     is_class_proficient_with,
     monster_action_range_feet,
@@ -12,12 +16,14 @@ from src.engine.rules import (
     resolve_attack,
     resolve_saving_throw,
     resolve_skill_check,
+    saving_throw_bonus,
+    set_exhaustion_level,
     skill_ability,
     spell_range_feet,
     weapon_range_feet,
 )
 from src.engine.srd_loader import load_srd
-from src.engine.state import Character
+from src.engine.state import AbilityScore, Character, Condition, ConditionName
 
 
 class _FixedRandom:
@@ -29,11 +35,17 @@ class _FixedRandom:
 
 
 def _make_character(
-    hp: int = 10, class_index: str | None = None, inventory: list[str] | None = None
+    hp: int = 10,
+    class_index: str | None = None,
+    inventory: list[str] | None = None,
+    conditions: list[ConditionName] | None = None,
+    saving_throw_proficiencies: list[AbilityScore] | None = None,
+    exhaustion_level: int = 0,
+    char_id: str = "thorin",
 ) -> Character:
     return Character(
-        id="thorin",
-        name="Thorin",
+        id=char_id,
+        name=char_id.title(),
         is_pc=True,
         hp=hp,
         max_hp=hp,
@@ -47,6 +59,9 @@ def _make_character(
         background="Acolyte",
         class_index=class_index,
         inventory=inventory or [],
+        conditions=[Condition(name=c) for c in (conditions or [])],
+        saving_throw_proficiencies=saving_throw_proficiencies or [],
+        exhaustion_level=exhaustion_level,
     )
 
 
@@ -258,3 +273,87 @@ def test_monster_action_range_feet_falls_back_to_melee_for_unparseable_desc() ->
 def test_spell_range_feet_parses_feet_and_falls_back_for_touch() -> None:
     assert spell_range_feet("120 feet") == 120
     assert spell_range_feet("Touch") == 5
+
+
+# --- Phase 9A: saving throws + condition mechanics ------------------------
+
+
+def test_saving_throw_bonus_adds_proficiency_only_when_proficient() -> None:
+    fighter = _make_character(saving_throw_proficiencies=["STR", "CON"])
+    # STR16 -> mod+3, proficient -> +3+2=5; INT10 -> mod+0, not proficient -> 0
+    assert saving_throw_bonus(fighter, "STR") == 5
+    assert saving_throw_bonus(fighter, "INT") == 0
+
+
+def test_condition_attack_advantage_from_target_conditions() -> None:
+    attacker = _make_character(char_id="attacker")
+    for condition in ("blinded", "paralyzed", "petrified", "restrained", "stunned", "unconscious"):
+        target = _make_character(char_id="target", conditions=[condition])
+        assert condition_attack_advantage(attacker, target, distance_feet=5) is True
+
+
+def test_condition_attack_advantage_prone_target_only_within_melee_range() -> None:
+    attacker = _make_character(char_id="attacker")
+    target = _make_character(char_id="target", conditions=["prone"])
+    assert condition_attack_advantage(attacker, target, distance_feet=5) is True
+    assert condition_attack_advantage(attacker, target, distance_feet=30) is False
+
+
+def test_condition_attack_advantage_from_invisible_attacker() -> None:
+    attacker = _make_character(char_id="attacker", conditions=["invisible"])
+    target = _make_character(char_id="target")
+    assert condition_attack_advantage(attacker, target, distance_feet=5) is True
+
+
+def test_condition_attack_disadvantage_from_attacker_conditions() -> None:
+    target = _make_character(char_id="target")
+    for condition in ("blinded", "poisoned", "restrained", "prone", "frightened"):
+        attacker = _make_character(char_id="attacker", conditions=[condition])
+        assert condition_attack_disadvantage(attacker, target, distance_feet=5) is True
+
+
+def test_condition_attack_disadvantage_prone_target_beyond_melee_range() -> None:
+    attacker = _make_character(char_id="attacker")
+    target = _make_character(char_id="target", conditions=["prone"])
+    assert condition_attack_disadvantage(attacker, target, distance_feet=30) is True
+    assert condition_attack_disadvantage(attacker, target, distance_feet=5) is False
+
+
+def test_condition_attack_disadvantage_from_invisible_target() -> None:
+    attacker = _make_character(char_id="attacker")
+    target = _make_character(char_id="target", conditions=["invisible"])
+    assert condition_attack_disadvantage(attacker, target, distance_feet=5) is True
+
+
+def test_condition_attack_disadvantage_from_exhaustion_level_3() -> None:
+    attacker = _make_character(char_id="attacker", exhaustion_level=3)
+    target = _make_character(char_id="target")
+    assert condition_attack_disadvantage(attacker, target, distance_feet=5) is True
+
+
+def test_condition_check_disadvantage_from_conditions_and_exhaustion() -> None:
+    assert condition_check_disadvantage(_make_character(conditions=["poisoned"])) is True
+    assert condition_check_disadvantage(_make_character(conditions=["frightened"])) is True
+    assert condition_check_disadvantage(_make_character(exhaustion_level=1)) is True
+    assert condition_check_disadvantage(_make_character()) is False
+
+
+def test_effective_speed_grappled_and_exhaustion() -> None:
+    assert effective_speed(_make_character(conditions=["grappled"])) == 0
+    assert effective_speed(_make_character(exhaustion_level=2)) == 15  # 30 // 2
+    assert effective_speed(_make_character(exhaustion_level=5)) == 0
+    assert effective_speed(_make_character()) == 30
+
+
+def test_set_exhaustion_level_clamps_and_kills_at_six() -> None:
+    character = _make_character()
+    set_exhaustion_level(character, 3)
+    assert character.exhaustion_level == 3
+    assert character.is_dead is False
+
+    set_exhaustion_level(character, 9)  # clamps to 6
+    assert character.exhaustion_level == 6
+    assert character.is_dead is True
+
+    set_exhaustion_level(character, -2)  # clamps to 0
+    assert character.exhaustion_level == 0

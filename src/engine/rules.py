@@ -11,6 +11,7 @@ import random
 import re
 from dataclasses import dataclass
 
+from src.engine.conditions import has_condition
 from src.engine.dice import RollResult, roll, roll_d20
 from src.engine.srd_loader import SrdEntry, SrdIndex
 from src.engine.state import AbilityScore, Character
@@ -99,6 +100,19 @@ def ability_check_modifier(
 ) -> int:
     mod = ability_modifier(character.stats[ability])
     return mod + character.proficiency_bonus if proficient else mod
+
+
+def saving_throw_bonus(character: Character, ability: AbilityScore) -> int:
+    """Ability modifier, plus proficiency bonus if this character's class is
+    SRD-proficient in this save (Character.saving_throw_proficiencies,
+    populated at creation from the SRD class's `saving_throws` - e.g.
+    Fighter: STR, CON). Empty for monsters, who save via their own stat
+    block's `saving_throws` field rather than this class-based path - callers
+    resolving a monster's save should prefer that when present."""
+    mod = ability_modifier(character.stats[ability])
+    if ability in character.saving_throw_proficiencies:
+        return mod + character.proficiency_bonus
+    return mod
 
 
 def normalize_skill_name(raw: str) -> str:
@@ -267,3 +281,94 @@ def monster_action_range_feet(action: SrdEntry) -> tuple[int, int | None]:
         if match:
             return int(match.group(1)), int(match.group(2))
     return 5, None
+
+
+# --- Condition mechanics (Phase 9A) ---------------------------------------
+#
+# state.py's ConditionName enumerates all 15 SRD conditions and conditions.py
+# can apply/remove/tick them, but until now nothing actually checked for one
+# outside "unconscious" (death saves) - blinded, prone, restrained, etc. were
+# schema-only. These functions compute what each condition actually does to
+# an attack roll, an ability check, or movement speed; callers (turn_engine)
+# OR the results into whatever other advantage/disadvantage sources they
+# already track (help, dodging, non-proficient armor, attack range).
+
+
+def condition_attack_advantage(actor: Character, target: Character, distance_feet: int) -> bool:
+    """Whether `actor`'s attack against `target` has advantage purely from
+    SRD conditions. Blinded/paralyzed/petrified/restrained/stunned/
+    unconscious targets are always easier to hit; a prone target is easier
+    to hit only from melee range (SRD: ranged attacks against a prone target
+    have disadvantage instead - see condition_attack_disadvantage). An
+    invisible actor also gets advantage on their own attacks."""
+    return (
+        has_condition(actor, "invisible")
+        or has_condition(target, "blinded")
+        or has_condition(target, "paralyzed")
+        or has_condition(target, "petrified")
+        or has_condition(target, "restrained")
+        or has_condition(target, "stunned")
+        or has_condition(target, "unconscious")
+        or (has_condition(target, "prone") and distance_feet <= 5)
+    )
+
+
+def condition_attack_disadvantage(actor: Character, target: Character, distance_feet: int) -> bool:
+    """The disadvantage-side mirror of condition_attack_advantage - an
+    actor's own blinded/poisoned/restrained/prone/frightened status, an
+    invisible target, a prone target attacked from beyond melee range, or
+    exhaustion level 3+ (SRD: disadvantage on attack rolls and saving
+    throws)."""
+    return (
+        has_condition(actor, "blinded")
+        or has_condition(actor, "poisoned")
+        or has_condition(actor, "restrained")
+        or has_condition(actor, "prone")
+        or has_condition(actor, "frightened")
+        or actor.exhaustion_level >= 3
+        or has_condition(target, "invisible")
+        or (has_condition(target, "prone") and distance_feet > 5)
+    )
+
+
+def condition_save_disadvantage(character: Character) -> bool:
+    """SRD: a restrained creature has disadvantage on DEX saves specifically;
+    exhaustion level 3+ gives disadvantage on every saving throw."""
+    return character.exhaustion_level >= 3
+
+
+def condition_check_disadvantage(character: Character) -> bool:
+    """SRD: poisoned and frightened both impose disadvantage on ability
+    checks (not just attack rolls); exhaustion level 1+ does too."""
+    return (
+        has_condition(character, "poisoned")
+        or has_condition(character, "frightened")
+        or character.exhaustion_level >= 1
+    )
+
+
+def effective_speed(character: Character) -> int:
+    """Character.speed as authored, adjusted for conditions that reduce it:
+    grappled or exhaustion level 5+ reduces speed to 0; exhaustion level 2+
+    halves it (SRD rounds down, matching plain integer division)."""
+    if has_condition(character, "grappled") or character.exhaustion_level >= 5:
+        return 0
+    if character.exhaustion_level >= 2:
+        return character.speed // 2
+    return character.speed
+
+
+def set_exhaustion_level(character: Character, level: int) -> None:
+    """Clamps to [0, 6] and applies the one level-6 side effect this engine
+    models directly (SRD: a 6th level of exhaustion is death). Levels 1/2/3/5
+    are read live by condition_check_disadvantage/condition_attack_
+    disadvantage/condition_save_disadvantage/effective_speed rather than
+    mutating anything else here. Level 4's "hit point maximum is halved" is
+    deliberately not implemented in this pass - it would need a second,
+    original max_hp value preserved somewhere to undo cleanly when exhaustion
+    later drops back below 4, which is more bookkeeping than this function
+    should take on silently; flagged here as a documented gap, not a silent
+    one, same spirit as this project's other narrow-scope simplifications."""
+    character.exhaustion_level = max(0, min(6, level))
+    if character.exhaustion_level >= 6:
+        character.is_dead = True
