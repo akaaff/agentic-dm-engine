@@ -49,6 +49,14 @@ end_turn, not just modify rolls) is Phase 9B, not this one; exhaustion
 level 4's "hit point maximum is halved" is explicitly not implemented (see
 rules.set_exhaustion_level's docstring for why).
 
+Phase 9J (character leveling) adds Extra Attack: an eligible PC (see
+character_creation.is_eligible_for_extra_attack - level 5+ Fighter/
+Barbarian/Paladin/Ranger) resolves two attack rolls for a single `attack`
+action instead of one, via a small loop inside _resolve_attack - Phase 9F's
+Multiattack (monsters resolving several named sub-actions in one action)
+hadn't landed in this worktree yet when this was written, so there was no
+existing "resolve N attacks in one action" helper to reuse.
+
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
   params["path"], not just a destination - real pathfinding around
@@ -72,6 +80,7 @@ import re
 from dataclasses import dataclass
 
 from src.engine.actions import ParsedAction
+from src.engine.character_creation import is_eligible_for_extra_attack
 from src.engine.conditions import apply_condition, has_condition, remove_condition, tick_conditions
 from src.engine.dice import roll
 from src.engine.events import Event
@@ -284,54 +293,69 @@ def _resolve_attack(
         params.range_long_feet is not None and distance > params.range_normal_feet
     )
 
-    # Advantage from being helped (Day 13) is consumed by this roll whether
-    # or not it changes the outcome; disadvantage from the target dodging
-    # applies for as long as the target is dodging (until their own next
-    # turn) rather than being consumed - roll_d20 already cancels the two
-    # out together when both apply, per SRD rules. The attacker's own
-    # non-proficient armor, attacking beyond normal range, and SRD condition
-    # effects (Phase 9A - blinded/prone/restrained/invisible/etc. on either
-    # side) are further independent sources.
-    advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
-    actor.has_help_advantage = False
+    # Extra Attack (Phase 9J): an eligible PC makes two attack rolls for this
+    # one `attack` action instead of one - still a single action, no
+    # bonus-action/reaction machinery (Phase 9H) needed. Each iteration
+    # appends its own `attack_roll` event, exactly like a single attack
+    # already does; the loop stops early if the target dies partway through
+    # (attacking a corpse with the second roll would be meaningless).
+    num_attacks = 2 if is_eligible_for_extra_attack(actor) else 1
+    for _ in range(num_attacks):
+        # Advantage from being helped (Day 13) is consumed by this roll
+        # whether or not it changes the outcome - only the first of two
+        # Extra Attack rolls can ever benefit from it, matching the SRD
+        # (Help grants advantage on "the next attack roll," singular);
+        # disadvantage from the target dodging applies for as long as the
+        # target is dodging (until their own next turn) rather than being
+        # consumed - roll_d20 already cancels the two out together when both
+        # apply, per SRD rules. The attacker's own non-proficient armor,
+        # attacking beyond normal range, and SRD condition effects (Phase
+        # 9A - blinded/prone/restrained/invisible/etc. on either side) are
+        # further independent sources, unchanged across every attack roll
+        # this action makes.
+        advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
+        actor.has_help_advantage = False
 
-    result = resolve_attack(
-        defender_ac=target.ac,
-        attack_bonus=params.attack_bonus,
-        damage_dice_count=params.damage_dice_count,
-        damage_dice_sides=params.damage_dice_sides,
-        damage_bonus=params.damage_bonus,
-        damage_type=params.damage_type,
-        rng=rng,
-        advantage=advantage,
-        disadvantage=target.is_dodging
-        or has_non_proficient_armor(actor, srd)
-        or long_range_disadvantage
-        or condition_attack_disadvantage(actor, target, distance),
-    )
-
-    state.events.append(
-        Event(
-            round=state.round,
-            turn_index=state.current_turn,
-            actor=actor.id,
-            type="attack_roll",
-            payload={
-                "target": target.id,
-                "source": params.source_name,
-                "roll_total": result.attack_roll.total,
-                "natural": result.attack_roll.kept[0],
-                "target_ac": target.ac,
-                "hit": result.hit,
-                "critical": result.critical,
-            },
+        result = resolve_attack(
+            defender_ac=target.ac,
+            attack_bonus=params.attack_bonus,
+            damage_dice_count=params.damage_dice_count,
+            damage_dice_sides=params.damage_dice_sides,
+            damage_bonus=params.damage_bonus,
+            damage_type=params.damage_type,
+            rng=rng,
+            advantage=advantage,
+            disadvantage=target.is_dodging
+            or has_non_proficient_armor(actor, srd)
+            or long_range_disadvantage
+            or condition_attack_disadvantage(actor, target, distance),
         )
-    )
 
-    if not result.hit or result.damage is None:
-        return
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="attack_roll",
+                payload={
+                    "target": target.id,
+                    "source": params.source_name,
+                    "roll_total": result.attack_roll.total,
+                    "natural": result.attack_roll.kept[0],
+                    "target_ac": target.ac,
+                    "hit": result.hit,
+                    "critical": result.critical,
+                },
+            )
+        )
 
-    _apply_damage_and_handle_downing(state, actor, target, result.damage, params.damage_type)
+        if result.hit and result.damage is not None:
+            _apply_damage_and_handle_downing(
+                state, actor, target, result.damage, params.damage_type
+            )
+
+        if target.is_dead:
+            break
 
 
 def _apply_damage_and_handle_downing(
