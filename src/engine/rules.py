@@ -358,6 +358,65 @@ def effective_speed(character: Character) -> int:
     return character.speed
 
 
+# --- Multiattack sub-action parsing (Phase 9F) ----------------------------
+#
+# A monster's "Multiattack" action has no structured sub-attack data - only a
+# free-text `desc` naming which of the monster's other actions it rolls and
+# how many times (e.g. giant-badger: "The badger makes two attacks: one with
+# its bite and one with its claws."). Every curated low-CR monster with a
+# Multiattack action that names sub-actions this way uses the same "<count>
+# with its <name>" phrasing (checked directly against the vendored SRD JSON,
+# not assumed) - this is a narrow, explicitly-scoped parser for exactly that
+# shape, not a general English parser.
+
+_MULTIATTACK_COUNT_WORDS: dict[str, int] = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+}
+
+_MULTIATTACK_SUBACTION_RE = re.compile(
+    r"(?P<count>one|two|three|four|five|six|\d+)\s+with\s+its\s+"
+    r"(?P<name>[a-z][a-z\s]*?)(?=,|\.|and\b|$)",
+    re.IGNORECASE,
+)
+
+
+def multiattack_sub_actions(desc: str, action_names: list[str]) -> list[tuple[str, int]]:
+    """Parses a Multiattack action's `desc` text for "<count> with its
+    <name>" phrasing and matches each named noun phrase against the
+    monster's other real action names (case-insensitive substring match,
+    since the desc's noun phrase - "bite" - doesn't always exactly equal the
+    action's Title-Case name - "Bite"). Returns (action_name, count) pairs
+    in the order they appear in `desc`; a phrase that doesn't match any name
+    in `action_names` is silently skipped rather than raising, since a
+    monster's Multiattack desc can also mention things this engine has no
+    action for (e.g. "or two ranged attacks" as an alternative, not another
+    sub-action to add) - callers should treat an empty result as "couldn't
+    parse this one" and handle it explicitly."""
+    lookup = {name.lower(): name for name in action_names}
+    results: list[tuple[str, int]] = []
+    for match in _MULTIATTACK_SUBACTION_RE.finditer(desc):
+        count_raw = match.group("count").lower()
+        count = _MULTIATTACK_COUNT_WORDS.get(count_raw)
+        if count is None:
+            try:
+                count = int(count_raw)
+            except ValueError:
+                continue
+        candidate = match.group("name").strip().lower()
+        matched_name = next(
+            (orig for lower, orig in lookup.items() if lower in candidate or candidate in lower),
+            None,
+        )
+        if matched_name is not None:
+            results.append((matched_name, count))
+    return results
+
+
 def set_exhaustion_level(character: Character, level: int) -> None:
     """Clamps to [0, 6] and applies the one level-6 side effect this engine
     models directly (SRD: a 6th level of exhaustion is death). Levels 1/2/3/5

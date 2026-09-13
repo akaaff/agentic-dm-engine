@@ -49,6 +49,11 @@ end_turn, not just modify rolls) is Phase 9B, not this one; exhaustion
 level 4's "hit point maximum is halved" is explicitly not implemented (see
 rules.set_exhaustion_level's docstring for why).
 
+Phase 9F: a monster's "Multiattack" action (see _resolve_multiattack/
+rules.multiattack_sub_actions) now actually rolls each of its named
+sub-attacks as its own attack_roll event, rather than being unresolvable or
+mistakenly treated like any other single action.
+
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
   params["path"], not just a destination - real pathfinding around
@@ -88,6 +93,7 @@ from src.engine.rules import (
     has_non_proficient_armor,
     is_class_proficient_with,
     monster_action_range_feet,
+    multiattack_sub_actions,
     normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
@@ -198,23 +204,35 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
     )
 
 
-def _monster_attack_params(
-    actor: Character, action_name: str | None, srd: SrdIndex
-) -> AttackParams:
+def _monster_action(actor: Character, action_name: str | None, srd: SrdIndex) -> SrdEntry:
+    """Looks up the raw SRD action dict a monster's attack should use - the
+    named action if given, else the stat block's first action (every
+    curated monster lists its signature/most relevant action first, which
+    is why _monster_attack_params defaults to it too). Split out from
+    _monster_attack_params so _resolve_attack can inspect the chosen
+    action's name (to detect "Multiattack") before committing to building a
+    single-attack's damage params from it."""
     if actor.monster_index is None:
         raise TurnEngineError(f"{actor.id} is not a monster (no monster_index)")
     monster_data = srd.monsters[actor.monster_index]
-    actions = monster_data.get("actions") or []
+    actions: list[SrdEntry] = monster_data.get("actions") or []
     if not actions:
         raise TurnEngineError(f"{monster_data['name']} has no actions")
 
     if action_name:
-        action = next((a for a in actions if a["name"].lower() == action_name.lower()), None)
+        action: SrdEntry | None = next(
+            (a for a in actions if a["name"].lower() == action_name.lower()), None
+        )
         if action is None:
             raise TurnEngineError(f"{monster_data['name']} has no action named {action_name!r}")
-    else:
-        action = actions[0]
+        return action
+    return actions[0]
 
+
+def _monster_attack_params(
+    actor: Character, action_name: str | None, srd: SrdIndex
+) -> AttackParams:
+    action = _monster_action(actor, action_name, srd)
     damage_entry = action["damage"][0]
     dice_count, dice_sides, notation_bonus = parse_dice_notation(damage_entry["damage_dice"])
     range_normal_feet, range_long_feet = monster_action_range_feet(action)
@@ -251,22 +269,18 @@ def _validate_attack_target(actor: Character, target: Character) -> None:
         raise TurnEngineError(f"{actor.id} is charmed by {target.id} and cannot attack them")
 
 
-def _resolve_attack(
-    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+def _resolve_single_attack(
+    state: GameState,
+    actor: Character,
+    target: Character,
+    params: AttackParams,
+    rng: random.Random,
+    srd: SrdIndex,
 ) -> None:
-    if action.target is None:
-        raise TurnEngineError("attack action requires a target")
-    target = state.characters.get(action.target)
-    if target is None:
-        raise TurnEngineError(f"Unknown attack target: {action.target}")
-    _validate_attack_target(actor, target)
-
-    params = (
-        _monster_attack_params(actor, action.item_or_spell, srd)
-        if actor.monster_index
-        else _pc_attack_params(actor, action.item_or_spell, srd)
-    )
-
+    """One full attack roll (range check through hit/damage/downing) against
+    `target` - the body every single `attack` action resolves, and what a
+    Multiattack action (Phase 9F, see _resolve_multiattack) calls once per
+    named sub-attack within the same turn."""
     # Caught live: a combat grid can show attacker and target several
     # squares apart while a melee attack still resolved as a hit - this
     # engine never checked range at all. Beyond the weapon/action's max
@@ -332,6 +346,66 @@ def _resolve_attack(
         return
 
     _apply_damage_and_handle_downing(state, actor, target, result.damage, params.damage_type)
+
+
+def _resolve_multiattack(
+    state: GameState,
+    actor: Character,
+    target: Character,
+    multiattack_action: SrdEntry,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """Phase 9F: a monster's "Multiattack" action names (in free-text
+    `desc`) which of its other actions to actually roll, and how many times
+    each - e.g. giant-badger: "The badger makes two attacks: one with its
+    bite and one with its claws." Resolves each named sub-attack as its own
+    full attack roll (rules.multiattack_sub_actions does the desc parsing;
+    _resolve_single_attack is the same per-attack-roll logic a plain
+    single-action attack uses) within this one turn - still one `attack`
+    verb/action, multiple `attack_roll` events. Stops early if the target
+    dies partway through, since there's nothing left to attack."""
+    if actor.monster_index is None:
+        raise TurnEngineError(f"{actor.id} is not a monster (no monster_index)")
+    monster_data = srd.monsters[actor.monster_index]
+    other_action_names = [
+        a["name"] for a in (monster_data.get("actions") or []) if a.get("name") != "Multiattack"
+    ]
+    sub_actions = multiattack_sub_actions(
+        str(multiattack_action.get("desc", "")), other_action_names
+    )
+    if not sub_actions:
+        raise TurnEngineError(
+            f"Could not parse Multiattack sub-actions from {multiattack_action.get('desc', '')!r}"
+        )
+    for sub_action_name, count in sub_actions:
+        for _ in range(count):
+            if target.is_dead:
+                return
+            params = _monster_attack_params(actor, sub_action_name, srd)
+            _resolve_single_attack(state, actor, target, params, rng, srd)
+
+
+def _resolve_attack(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> None:
+    if action.target is None:
+        raise TurnEngineError("attack action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown attack target: {action.target}")
+    _validate_attack_target(actor, target)
+
+    if actor.monster_index is not None:
+        monster_action = _monster_action(actor, action.item_or_spell, srd)
+        if monster_action.get("name") == "Multiattack":
+            _resolve_multiattack(state, actor, target, monster_action, rng, srd)
+            return
+        params = _monster_attack_params(actor, action.item_or_spell, srd)
+    else:
+        params = _pc_attack_params(actor, action.item_or_spell, srd)
+
+    _resolve_single_attack(state, actor, target, params, rng, srd)
 
 
 def _apply_damage_and_handle_downing(

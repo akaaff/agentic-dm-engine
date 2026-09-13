@@ -12,6 +12,7 @@ from src.engine.rules import (
     has_non_proficient_armor,
     is_class_proficient_with,
     monster_action_range_feet,
+    multiattack_sub_actions,
     normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
@@ -268,6 +269,38 @@ def test_monster_action_range_feet_parses_melee_and_ranged() -> None:
 
 def test_monster_action_range_feet_falls_back_to_melee_for_unparseable_desc() -> None:
     assert monster_action_range_feet({"desc": "does something unusual"}) == (5, None)
+
+
+def test_multiattack_sub_actions_parses_named_count_each_phrasing() -> None:
+    # Real SRD text (giant-badger, CR 0.25 - a curated-roster-suitable low-CR
+    # monster with a Multiattack action): "The badger makes two attacks: one
+    # with its bite and one with its claws." Confirmed live against the
+    # vendored JSON, not assumed - checked via a throwaway script scanning
+    # srd.monsters.values() for a "Multiattack" action.
+    srd = load_srd()
+    actions = srd.monsters["giant-badger"]["actions"]
+    multiattack = next(a for a in actions if a["name"] == "Multiattack")
+    other_names = [a["name"] for a in actions if a["name"] != "Multiattack"]
+    assert multiattack_sub_actions(multiattack["desc"], other_names) == [
+        ("Bite", 1),
+        ("Claws", 1),
+    ]
+
+
+def test_multiattack_sub_actions_ignores_unmatched_phrases() -> None:
+    # A phrase naming something that isn't one of the monster's other real
+    # actions (a typo, or a monster whose Multiattack desc references an
+    # alternative like "two ranged attacks" rather than a named sub-action)
+    # is skipped rather than fabricating a match.
+    assert multiattack_sub_actions("makes two attacks: one with its stinger", ["Bite"]) == []
+
+
+def test_multiattack_sub_actions_matches_case_insensitively_and_orders_by_appearance() -> None:
+    desc = "The creature makes three attacks: two with its claws and one with its bite."
+    assert multiattack_sub_actions(desc, ["Bite", "Claws"]) == [
+        ("Claws", 2),
+        ("Bite", 1),
+    ]
 
 
 def test_spell_range_feet_parses_feet_and_falls_back_for_touch() -> None:
