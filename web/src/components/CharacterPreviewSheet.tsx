@@ -1,0 +1,133 @@
+import type { AbilityScore, ClassDetail, EquipmentSummary, RaceSummary } from '../api/client'
+import { portraitUrl } from '../utils/portraits'
+
+const ABILITIES: AbilityScore[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
+
+function skillLabel(skillIndex: string): string {
+  return skillIndex
+    .replace(/^skill-/, '')
+    .split('-')
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+/** Live-updating preview of the character being built, shown alongside the
+ * wizard throughout every step - "built dynamically while character
+ * creation" per the original feature request. Reads directly from
+ * CharacterCreator's own in-progress state rather than re-fetching
+ * anything, so it reflects each choice the instant it's made, including
+ * steps not yet reached (shown as placeholders). */
+export default function CharacterPreviewSheet({
+  name,
+  race,
+  gender,
+  hairColor,
+  classDetail,
+  classIndex,
+  className,
+  fightingStyle,
+  chosenSkills,
+  assignments,
+  raceBonus,
+  finalScore,
+  backgroundName,
+  chosenEquipment,
+  equipment,
+}: {
+  name: string
+  race: RaceSummary | undefined
+  gender: string
+  hairColor: string
+  classDetail: ClassDetail | null
+  classIndex: string
+  className: string | null
+  fightingStyle: string
+  chosenSkills: string[]
+  assignments: Record<AbilityScore, number | ''>
+  raceBonus: (ability: AbilityScore) => number
+  finalScore: (ability: AbilityScore) => number | null
+  backgroundName: string | null
+  chosenEquipment: string[]
+  equipment: EquipmentSummary[]
+}) {
+  const portrait = portraitUrl({
+    race_index: race?.index ?? null,
+    class_index: classIndex || null,
+    gender: gender || null,
+    hair_color: hairColor || null,
+  })
+  const equipmentNames = new Map(equipment.map((e) => [e.index, e.name]))
+
+  return (
+    <aside className="character-preview-sheet sheet">
+      <div className="preview-portrait">
+        {portrait ? (
+          <img
+            src={portrait}
+            alt={`${name || 'Character'} portrait`}
+            onError={(e) => {
+              e.currentTarget.style.display = 'none'
+            }}
+          />
+        ) : (
+          <div className="preview-portrait-placeholder">
+            {race && classIndex && (!gender || !hairColor)
+              ? 'Choose gender + hair color for a portrait'
+              : 'Portrait appears once race, class, gender & hair color are chosen'}
+          </div>
+        )}
+      </div>
+
+      <h2>{name || 'Unnamed hero'}</h2>
+      <p className="companion-meta">
+        {race?.name ?? 'No race chosen'} {className ?? ''}
+        {backgroundName ? ` - ${backgroundName}` : ''}
+      </p>
+
+      <table>
+        <tbody>
+          {ABILITIES.map((a) => {
+            const base = assignments[a]
+            const bonus = raceBonus(a)
+            return (
+              <tr key={a}>
+                <td>{a}</td>
+                <td>{base === '' ? '-' : base}</td>
+                <td>
+                  {bonus > 0 && finalScore(a) !== null && (
+                    <span className="race-bonus-badge">-&gt; {finalScore(a)}</span>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+
+      {fightingStyle && (
+        <p>
+          <strong>Fighting Style:</strong> {fightingStyle[0].toUpperCase() + fightingStyle.slice(1)}
+        </p>
+      )}
+
+      <p>
+        <strong>Skills:</strong>{' '}
+        {chosenSkills.length > 0 ? chosenSkills.map(skillLabel).join(', ') : 'none chosen yet'}
+      </p>
+
+      {classDetail && classDetail.cantrips.length > 0 && (
+        <p>
+          <strong>Cantrips available:</strong>{' '}
+          {classDetail.cantrips.map((c) => c.name).join(', ')}
+        </p>
+      )}
+
+      <p>
+        <strong>Extra gear:</strong>{' '}
+        {chosenEquipment.length > 0
+          ? chosenEquipment.map((i) => equipmentNames.get(i) ?? i).join(', ')
+          : 'none chosen yet'}
+      </p>
+    </aside>
+  )
+}

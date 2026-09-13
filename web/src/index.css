@@ -12,10 +12,55 @@ body {
   color: #f0eef5;
 }
 
+.character-creator-layout {
+  width: 100%;
+  max-width: 1000px;
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
 .wizard {
   width: 100%;
   max-width: 640px;
   padding: 2rem 1.5rem 4rem;
+}
+
+.character-preview-sheet {
+  position: sticky;
+  top: 1.5rem;
+  width: 280px;
+  flex-shrink: 0;
+  margin-top: 2rem;
+}
+
+.character-preview-sheet h2 {
+  font-size: 1.1rem;
+  margin: 0.75rem 0 0.15rem;
+}
+
+.preview-portrait {
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #14121a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.preview-portrait-placeholder {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: #766c87;
+  text-align: center;
+  padding: 1rem;
 }
 
 .wizard h1 {

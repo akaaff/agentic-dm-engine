@@ -11,6 +11,26 @@ import {
   type RaceSummary,
   type SkillSummary,
 } from '../api/client'
+import CharacterPreviewSheet from '../components/CharacterPreviewSheet'
+
+// Mirrors character_creation.VALID_GENDERS/VALID_HAIR_COLORS - portrait-
+// selection only, no mechanical weight (see that module's docstring).
+const GENDERS = ['male', 'female'] as const
+const HAIR_COLORS = ['black', 'red', 'blond'] as const
+
+// Mirrors character_creation.VALID_FIGHTING_STYLES/FIGHTING_STYLE_CLASSES -
+// not exposed via any endpoint (a small enough fixed set that hardcoding it
+// here matches this wizard's existing CLASS_HINTS/ABILITY_HINTS precedent).
+const FIGHTING_STYLE_CLASSES = new Set(['fighter', 'ranger', 'paladin'])
+const FIGHTING_STYLES: { value: string; label: string; hint: string }[] = [
+  { value: 'archery', label: 'Archery', hint: '+2 to attack rolls with ranged weapons.' },
+  { value: 'defense', label: 'Defense', hint: '+1 AC while wearing armor.' },
+  {
+    value: 'dueling',
+    label: 'Dueling',
+    hint: '+2 damage with a one-handed melee weapon and no other weapon equipped.',
+  },
+]
 
 const ABILITIES: AbilityScore[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 const STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
@@ -113,8 +133,11 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
 
   const [name, setName] = useState('')
   const [raceIndex, setRaceIndex] = useState('')
+  const [gender, setGender] = useState('')
+  const [hairColor, setHairColor] = useState('')
   const [classIndex, setClassIndex] = useState('')
   const [classDetail, setClassDetail] = useState<ClassDetail | null>(null)
+  const [fightingStyle, setFightingStyle] = useState('')
   const [chosenSkills, setChosenSkills] = useState<string[]>([])
   const [assignments, setAssignments] = useState<Record<AbilityScore, number | ''>>({
     STR: '',
@@ -157,6 +180,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     }
     setChosenSkills([])
     setChosenEquipment([])
+    setFightingStyle('')
     api
       .getClass(classIndex)
       .then(setClassDetail)
@@ -242,6 +266,9 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         base_ability_scores,
         chosen_skills: chosenSkills,
         chosen_equipment: chosenEquipment,
+        gender: gender || undefined,
+        hair_color: hairColor || undefined,
+        fighting_style: fightingStyle || undefined,
       })
       setCreated(character)
       setStep(5)
@@ -314,8 +341,11 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               setStep(0)
               setName('')
               setRaceIndex('')
+              setGender('')
+              setHairColor('')
               setAssignments({ STR: '', DEX: '', CON: '', INT: '', WIS: '', CHA: '' })
               setClassIndex('')
+              setFightingStyle('')
               setChosenSkills([])
               setChosenEquipment([])
             }}
@@ -331,241 +361,305 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   }
 
   return (
-    <div className="wizard">
-      <h1>Create a Character</h1>
-      <ol className="steps">
-        {['Basics', 'Class & Skills', 'Ability Scores', 'Background', 'Equipment'].map(
-          (label, i) => (
-            <li key={label} className={i === step ? 'active' : i < step ? 'done' : ''}>
-              {label}
-            </li>
-          ),
-        )}
-      </ol>
-
-      {step === 0 && (
-        <section>
-          <label>
-            Name
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Thorin" />
-          </label>
-          <label>
-            Race
-            <select value={raceIndex} onChange={(e) => setRaceIndex(e.target.value)}>
-              <option value="">Choose a race...</option>
-              {races.map((r) => (
-                <option key={r.index} value={r.index}>
-                  {r.name} (speed {r.speed} ft)
-                </option>
-              ))}
-            </select>
-          </label>
-          {selectedRace && Object.keys(selectedRace.ability_bonuses).length > 0 && (
-            <div className="race-bonus-row">
-              {ABILITIES.filter((a) => raceBonus(a) > 0).map((a) => (
-                <span key={a} className="race-bonus-badge">
-                  +{raceBonus(a)} {a}
-                </span>
-              ))}
-            </div>
+    <div className="character-creator-layout">
+      <div className="wizard">
+        <h1>Create a Character</h1>
+        <ol className="steps">
+          {['Basics', 'Class & Skills', 'Ability Scores', 'Background', 'Equipment'].map(
+            (label, i) => (
+              <li key={label} className={i === step ? 'active' : i < step ? 'done' : ''}>
+                {label}
+              </li>
+            ),
           )}
-          {selectedRace && selectedRace.traits.length > 0 && (
-            <div className="race-trait-row">
-              {selectedRace.traits.map((trait) => (
-                <span key={trait.index} className="trait-chip">
-                  {trait.name}
-                  <InfoTip text={trait.desc} />
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="wizard-nav">
-            <button type="button" disabled={!canProceedFromBasics} onClick={() => setStep(1)}>
-              Next
-            </button>
-          </div>
-        </section>
-      )}
+        </ol>
 
-      {step === 1 && (
-        <section>
-          <label>
-            Class
-            <span className="select-row">
-              <select value={classIndex} onChange={(e) => setClassIndex(e.target.value)}>
-                <option value="">Choose a class...</option>
-                {classes.map((c) => (
-                  <option key={c.index} value={c.index}>
-                    {c.name} (d{c.hit_die} hit die)
-                  </option>
-                ))}
-              </select>
-              {classIndex && CLASS_HINTS[classIndex] && <InfoTip text={CLASS_HINTS[classIndex]} />}
-            </span>
-          </label>
-          {classDetail && (
-            <fieldset>
-              <legend>
-                Choose {classDetail.skill_choose} skill
-                {classDetail.skill_choose === 1 ? '' : 's'} ({chosenSkills.length}/
-                {classDetail.skill_choose} selected)
-              </legend>
-              {classDetail.skill_options.map((skill) => (
-                <label key={skill} className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={chosenSkills.includes(skill)}
-                    onChange={() => toggleSkill(skill)}
-                  />
-                  {skillLabel(skill)}
-                  {skillDesc.has(skill) && <InfoTip text={skillDesc.get(skill) as string} />}
-                </label>
-              ))}
-            </fieldset>
-          )}
-          <div className="wizard-nav">
-            <button type="button" onClick={() => setStep(0)}>
-              Back
-            </button>
-            <button type="button" disabled={!canProceedFromClass} onClick={() => setStep(2)}>
-              Next
-            </button>
-          </div>
-        </section>
-      )}
-
-      {step === 2 && (
-        <section>
-          <p>Assign the standard array ({STANDARD_ARRAY.join(', ')}) to your abilities.</p>
-
-          <div className="recommend-row">
-            <button type="button" className="secondary" onClick={fillRecommended}>
-              Fill recommended for {classes.find((c) => c.index === classIndex)?.name ?? 'your class'}
-            </button>
-          </div>
-
-          {ABILITIES.map((ability) => (
-            <label key={ability} className="ability-row">
-              {ability}
-              <InfoTip text={ABILITY_HINTS[ability]} />
-              {raceBonus(ability) > 0 && (
-                <span className="race-bonus-badge" title={`${selectedRace?.name} racial bonus`}>
-                  +{raceBonus(ability)}
-                </span>
-              )}
-              <select
-                value={assignments[ability]}
-                onChange={(e) =>
-                  setAssignments((prev) => ({
-                    ...prev,
-                    [ability]: e.target.value === '' ? '' : Number(e.target.value),
-                  }))
-                }
-              >
-                <option value="">-</option>
-                {(assignments[ability] === ''
-                  ? remainingValues
-                  : [assignments[ability] as number, ...remainingValues]
-                ).map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-              {finalScore(ability) !== null && raceBonus(ability) > 0 && (
-                <span className="final-score">-&gt; {finalScore(ability)} total</span>
-              )}
+        {step === 0 && (
+          <section>
+            <label>
+              Name
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Thorin" />
             </label>
-          ))}
-          <div className="wizard-nav">
-            <button type="button" onClick={() => setStep(1)}>
-              Back
-            </button>
-            <button type="button" disabled={!canProceedFromAbilities} onClick={() => setStep(3)}>
-              Next
-            </button>
-          </div>
-        </section>
-      )}
-
-      {step === 3 && (
-        <section>
-          <label>
-            Background
-            <select value={backgroundIndex} onChange={(e) => setBackgroundIndex(e.target.value)}>
-              <option value="">Choose a background...</option>
-              {backgrounds.map((b) => (
-                <option key={b.index} value={b.index}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="wizard-nav">
-            <button type="button" onClick={() => setStep(2)}>
-              Back
-            </button>
-            <button type="button" disabled={backgroundIndex === ''} onClick={() => setStep(4)}>
-              Next
-            </button>
-          </div>
-        </section>
-      )}
-
-      {step === 4 && (
-        <section>
-          <p>
-            Optional extra gear, beyond your class/background's starting kit - restricted to what{' '}
-            {classes.find((c) => c.index === classIndex)?.name ?? 'your class'} is actually
-            proficient with.
-          </p>
-          <fieldset>
-            <legend>Weapons</legend>
-            {proficientEquipment.filter((e) => e.category === 'weapon').length === 0 && (
-              <p className="companion-meta">No weapon proficiencies for this class.</p>
+            <label>
+              Race
+              <select value={raceIndex} onChange={(e) => setRaceIndex(e.target.value)}>
+                <option value="">Choose a race...</option>
+                {races.map((r) => (
+                  <option key={r.index} value={r.index}>
+                    {r.name} (speed {r.speed} ft)
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="select-row">
+              <label>
+                Gender
+                <select value={gender} onChange={(e) => setGender(e.target.value)}>
+                  <option value="">Choose...</option>
+                  {GENDERS.map((g) => (
+                    <option key={g} value={g}>
+                      {g[0].toUpperCase() + g.slice(1)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Hair color
+                <select value={hairColor} onChange={(e) => setHairColor(e.target.value)}>
+                  <option value="">Choose...</option>
+                  {HAIR_COLORS.map((h) => (
+                    <option key={h} value={h}>
+                      {h[0].toUpperCase() + h.slice(1)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <p className="companion-meta">
+              Portrait-selection only, no mechanical effect - used to pick your character's
+              generated portrait once race, class, gender and hair color are all chosen.
+            </p>
+            {selectedRace && Object.keys(selectedRace.ability_bonuses).length > 0 && (
+              <div className="race-bonus-row">
+                {ABILITIES.filter((a) => raceBonus(a) > 0).map((a) => (
+                  <span key={a} className="race-bonus-badge">
+                    +{raceBonus(a)} {a}
+                  </span>
+                ))}
+              </div>
             )}
-            {proficientEquipment
-              .filter((e) => e.category === 'weapon')
-              .map((item) => (
-                <label key={item.index} className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={chosenEquipment.includes(item.index)}
-                    onChange={() => toggleEquipment(item.index)}
-                  />
-                  {item.name}
-                </label>
-              ))}
-          </fieldset>
-          <fieldset>
-            <legend>Armor</legend>
-            {proficientEquipment.filter((e) => e.category === 'armor').length === 0 && (
-              <p className="companion-meta">No armor proficiencies for this class.</p>
+            {selectedRace && selectedRace.traits.length > 0 && (
+              <div className="race-trait-row">
+                {selectedRace.traits.map((trait) => (
+                  <span key={trait.index} className="trait-chip">
+                    {trait.name}
+                    <InfoTip text={trait.desc} />
+                  </span>
+                ))}
+              </div>
             )}
-            {proficientEquipment
-              .filter((e) => e.category === 'armor')
-              .map((item) => (
-                <label key={item.index} className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={chosenEquipment.includes(item.index)}
-                    onChange={() => toggleEquipment(item.index)}
-                  />
-                  {item.name}
-                </label>
-              ))}
-          </fieldset>
-          <div className="wizard-nav">
-            <button type="button" onClick={() => setStep(3)}>
-              Back
-            </button>
-            <button type="button" disabled={!canSubmit || submitting} onClick={handleSubmit}>
-              {submitting ? 'Creating...' : 'Create Character'}
-            </button>
-          </div>
-          {submitError && <p className="wizard-error">{submitError}</p>}
-        </section>
-      )}
+            <div className="wizard-nav">
+              <button type="button" disabled={!canProceedFromBasics} onClick={() => setStep(1)}>
+                Next
+              </button>
+            </div>
+          </section>
+        )}
+
+        {step === 1 && (
+          <section>
+            <label>
+              Class
+              <span className="select-row">
+                <select value={classIndex} onChange={(e) => setClassIndex(e.target.value)}>
+                  <option value="">Choose a class...</option>
+                  {classes.map((c) => (
+                    <option key={c.index} value={c.index}>
+                      {c.name} (d{c.hit_die} hit die)
+                    </option>
+                  ))}
+                </select>
+                {classIndex && CLASS_HINTS[classIndex] && <InfoTip text={CLASS_HINTS[classIndex]} />}
+              </span>
+            </label>
+            {classIndex && FIGHTING_STYLE_CLASSES.has(classIndex) && (
+              <fieldset>
+                <legend>Fighting Style</legend>
+                {FIGHTING_STYLES.map((style) => (
+                  <label key={style.value} className="checkbox-row">
+                    <input
+                      type="radio"
+                      name="fighting-style"
+                      checked={fightingStyle === style.value}
+                      onChange={() => setFightingStyle(style.value)}
+                    />
+                    {style.label}
+                    <InfoTip text={style.hint} />
+                  </label>
+                ))}
+              </fieldset>
+            )}
+            {classDetail && (
+              <fieldset>
+                <legend>
+                  Choose {classDetail.skill_choose} skill
+                  {classDetail.skill_choose === 1 ? '' : 's'} ({chosenSkills.length}/
+                  {classDetail.skill_choose} selected)
+                </legend>
+                {classDetail.skill_options.map((skill) => (
+                  <label key={skill} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={chosenSkills.includes(skill)}
+                      onChange={() => toggleSkill(skill)}
+                    />
+                    {skillLabel(skill)}
+                    {skillDesc.has(skill) && <InfoTip text={skillDesc.get(skill) as string} />}
+                  </label>
+                ))}
+              </fieldset>
+            )}
+            <div className="wizard-nav">
+              <button type="button" onClick={() => setStep(0)}>
+                Back
+              </button>
+              <button type="button" disabled={!canProceedFromClass} onClick={() => setStep(2)}>
+                Next
+              </button>
+            </div>
+          </section>
+        )}
+
+        {step === 2 && (
+          <section>
+            <p>Assign the standard array ({STANDARD_ARRAY.join(', ')}) to your abilities.</p>
+
+            <div className="recommend-row">
+              <button type="button" className="secondary" onClick={fillRecommended}>
+                Fill recommended for {classes.find((c) => c.index === classIndex)?.name ?? 'your class'}
+              </button>
+            </div>
+
+            {ABILITIES.map((ability) => (
+              <label key={ability} className="ability-row">
+                {ability}
+                <InfoTip text={ABILITY_HINTS[ability]} />
+                {raceBonus(ability) > 0 && (
+                  <span className="race-bonus-badge" title={`${selectedRace?.name} racial bonus`}>
+                    +{raceBonus(ability)}
+                  </span>
+                )}
+                <select
+                  value={assignments[ability]}
+                  onChange={(e) =>
+                    setAssignments((prev) => ({
+                      ...prev,
+                      [ability]: e.target.value === '' ? '' : Number(e.target.value),
+                    }))
+                  }
+                >
+                  <option value="">-</option>
+                  {(assignments[ability] === ''
+                    ? remainingValues
+                    : [assignments[ability] as number, ...remainingValues]
+                  ).map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+                {finalScore(ability) !== null && raceBonus(ability) > 0 && (
+                  <span className="final-score">-&gt; {finalScore(ability)} total</span>
+                )}
+              </label>
+            ))}
+            <div className="wizard-nav">
+              <button type="button" onClick={() => setStep(1)}>
+                Back
+              </button>
+              <button type="button" disabled={!canProceedFromAbilities} onClick={() => setStep(3)}>
+                Next
+              </button>
+            </div>
+          </section>
+        )}
+
+        {step === 3 && (
+          <section>
+            <label>
+              Background
+              <select value={backgroundIndex} onChange={(e) => setBackgroundIndex(e.target.value)}>
+                <option value="">Choose a background...</option>
+                {backgrounds.map((b) => (
+                  <option key={b.index} value={b.index}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="wizard-nav">
+              <button type="button" onClick={() => setStep(2)}>
+                Back
+              </button>
+              <button type="button" disabled={backgroundIndex === ''} onClick={() => setStep(4)}>
+                Next
+              </button>
+            </div>
+          </section>
+        )}
+
+        {step === 4 && (
+          <section>
+            <p>
+              Optional extra gear, beyond your class/background's starting kit - restricted to what{' '}
+              {classes.find((c) => c.index === classIndex)?.name ?? 'your class'} is actually
+              proficient with.
+            </p>
+            <fieldset>
+              <legend>Weapons</legend>
+              {proficientEquipment.filter((e) => e.category === 'weapon').length === 0 && (
+                <p className="companion-meta">No weapon proficiencies for this class.</p>
+              )}
+              {proficientEquipment
+                .filter((e) => e.category === 'weapon')
+                .map((item) => (
+                  <label key={item.index} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={chosenEquipment.includes(item.index)}
+                      onChange={() => toggleEquipment(item.index)}
+                    />
+                    {item.name}
+                  </label>
+                ))}
+            </fieldset>
+            <fieldset>
+              <legend>Armor</legend>
+              {proficientEquipment.filter((e) => e.category === 'armor').length === 0 && (
+                <p className="companion-meta">No armor proficiencies for this class.</p>
+              )}
+              {proficientEquipment
+                .filter((e) => e.category === 'armor')
+                .map((item) => (
+                  <label key={item.index} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={chosenEquipment.includes(item.index)}
+                      onChange={() => toggleEquipment(item.index)}
+                    />
+                    {item.name}
+                  </label>
+                ))}
+            </fieldset>
+            <div className="wizard-nav">
+              <button type="button" onClick={() => setStep(3)}>
+                Back
+              </button>
+              <button type="button" disabled={!canSubmit || submitting} onClick={handleSubmit}>
+                {submitting ? 'Creating...' : 'Create Character'}
+              </button>
+            </div>
+            {submitError && <p className="wizard-error">{submitError}</p>}
+          </section>
+        )}
+      </div>
+      <CharacterPreviewSheet
+        name={name}
+        race={selectedRace}
+        gender={gender}
+        hairColor={hairColor}
+        classDetail={classDetail}
+        classIndex={classIndex}
+        className={classes.find((c) => c.index === classIndex)?.name ?? null}
+        fightingStyle={fightingStyle}
+        chosenSkills={chosenSkills}
+        assignments={assignments}
+        raceBonus={raceBonus}
+        finalScore={finalScore}
+        backgroundName={backgrounds.find((b) => b.index === backgroundIndex)?.name ?? null}
+        chosenEquipment={chosenEquipment}
+        equipment={equipment}
+      />
     </div>
   )
 }
