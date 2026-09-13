@@ -97,7 +97,7 @@ from src.engine.rules import (
     weapon_range_feet,
 )
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
-from src.engine.state import AbilityScore, Character, Condition, GameState
+from src.engine.state import AbilityScore, Character, Condition, ConditionName, GameState
 from src.engine.turn_order import next_turn
 
 _DICE_NOTATION_RE = re.compile(r"(\d+)d(\d+)([+-]\d+)?")
@@ -768,6 +768,35 @@ def _check_victory_defeat(state: GameState) -> None:
         state.status = "defeat"
 
 
+_INCAPACITATING_CONDITIONS: tuple[ConditionName, ...] = (
+    "incapacitated",
+    "paralyzed",
+    "petrified",
+    "stunned",
+    "unconscious",
+)
+
+
+def _is_incapacitated(character: Character) -> bool:
+    """True if the character has a condition that stops them from taking a
+    normal action on their turn at all (Phase 9B - the "can this actor act"
+    side of these conditions, as opposed to Phase 9A's "how well does their
+    roll go" side already wired into _resolve_attack/_resolve_cast_spell/
+    _resolve_skill_check/_resolve_move).
+
+    "unconscious" is included here too, but doesn't need special-casing
+    against the death-save flow: a PC at 0 HP is unconscious and
+    resolve_action's own hp<=0 guard already either forces death_save
+    through (verb == "death_save", which the caller of this helper excludes)
+    or rejects any other verb outright before this helper is ever reached -
+    so this function only ever gets to force an end_turn for an unconscious
+    actor in the hypothetical case of unconsciousness from a source other
+    than 0 HP (not reachable today - no verb/spell/monster action grants it
+    - but handled correctly here for free, with no extra branch needed, since
+    such an actor would have no death-save context to prompt for anyway)."""
+    return any(has_condition(character, name) for name in _INCAPACITATING_CONDITIONS)
+
+
 def _skip_this_turn(character: Character) -> bool:
     """Dead characters never act again. An unconscious-but-not-yet-stable
     character DOES need a turn (to attempt a death save) - only skip once
@@ -813,6 +842,15 @@ def resolve_action(
         raise TurnEngineError(f"{actor.id} is dead and cannot act")
     if actor.hp <= 0 and action.verb != "death_save":
         raise TurnEngineError(f"{actor.id} is unconscious and can only attempt a death save")
+
+    # Phase 9B: an actor who is paralyzed/petrified/stunned/incapacitated/
+    # unconscious can't act at all, but that's not a mistake on their part
+    # (same philosophy as the "invalid" verb below) - so it's a forced
+    # end_turn, not a raised error. death_save is excluded so the hp<=0
+    # unconscious-PC flow above (and player_agent's forced death_save
+    # declaration) keeps working exactly as before.
+    if action.verb != "death_save" and _is_incapacitated(actor):
+        action = action.model_copy(update={"verb": "end_turn"})
 
     # Dodging protects "until the start of your next turn" - that window
     # ends right now, since this actor's next turn is the one being

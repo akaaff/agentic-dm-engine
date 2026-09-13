@@ -115,6 +115,47 @@ def test_charmed_actor_cannot_attack_their_charmer() -> None:
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
+def test_stunned_actor_attack_is_forced_to_end_turn() -> None:
+    """Phase 9B: a stunned actor's declared attack never reaches the attack
+    roll at all - it's silently converted to end_turn (not an error, matching
+    the "invalid" verb's philosophy: the actor isn't doing anything wrong by
+    having a condition applied to them). Turn order is
+    thorin(0)/elrond(1)/goblin_1(2)/goblin_2(3) - confirm the turn actually
+    advances to elrond, not just that no exception was raised."""
+    state = _build_demo_state(_INITIATIVE)
+    state.characters["goblin_1"].position = state.characters["thorin"].position
+    apply_condition(state.characters["thorin"], Condition(name="stunned"))
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="longsword",
+        raw_text="I attack the goblin",
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert not any(e.type == "attack_roll" for e in state.events)
+    assert state.turn_order[state.current_turn] == "elrond"
+
+
+@pytest.mark.parametrize("condition_name", ["paralyzed", "petrified", "incapacitated"])
+def test_other_incapacitating_conditions_are_forced_to_end_turn(condition_name: str) -> None:
+    state = _build_demo_state(_INITIATIVE)
+    state.characters["goblin_1"].position = state.characters["thorin"].position
+    apply_condition(state.characters["thorin"], Condition(name=condition_name))  # type: ignore[arg-type]
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="longsword",
+        raw_text="I attack the goblin",
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert not any(e.type == "attack_roll" for e in state.events)
+    assert state.turn_order[state.current_turn] == "elrond"
+
+
 def test_grappled_actor_cannot_move() -> None:
     state = _build_demo_state(_INITIATIVE)
     apply_condition(state.characters["thorin"], Condition(name="grappled"))
