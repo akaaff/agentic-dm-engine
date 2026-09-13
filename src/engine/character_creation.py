@@ -192,6 +192,7 @@ def create_character(
         skill_proficiencies=skill_proficiencies,
         saving_throw_proficiencies=saving_throw_proficiencies,
         class_index=class_index,
+        hit_die_sides=cls["hit_die"],
     )
 
 
