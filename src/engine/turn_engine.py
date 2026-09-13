@@ -67,14 +67,26 @@ matching the caltrops-like "littered with bones" flavor of the one hazard
 square this project has authored so far (data/campaigns/encounters/
 wolf_den.yaml).
 
+Phase 9H adds a narrow slice of real action economy on top of the
+one-action-per-turn model above: a bonus-action spell (SRD casting_time "1
+bonus action", e.g. Healing Word - see _is_bonus_action_spell) doesn't end
+the turn, so the actor still gets their main action afterward, gated by a
+new Character.bonus_action_used so only one such cast is allowed per turn.
+"disengage" finally has a real effect too (Character.disengaged_this_turn),
+checked by the one reaction this engine models: an opportunity attack,
+triggered in _resolve_move when a character moves out of a hostile's 5ft
+reach without having disengaged, capped at one reaction per reactor per
+round (Character.reaction_used_this_round) per SRD. General reactions
+(Shield, Counterspell, a readied action) remain out of scope - resolving
+one on someone else's turn mid-resolution is a bigger structural change
+than this pass takes on.
+
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
   params["path"], not just a destination - real pathfinding around
   obstacles is a future concern, not what this engine validates.
 - Skill checks (Day 13) use a single default DC (no per-scene DC data
   exists yet - that's campaign/scene content, not engine scope).
-- "disengage" (Day 13) has no mechanical effect - this engine has no
-  opportunity-attack mechanic yet for it to interact with.
 - "cast_spell" (Day 14: attack-roll spells only; Phase 9D added save-based,
   heal, multi-target, and concentration) now resolves attack-roll spells
   (SRD `attack_type`), save-based spells (`dc`, full/half/no damage per
@@ -712,7 +724,61 @@ def _apply_hazard_damage(state: GameState, actor: Character, position: Position)
     )
 
 
-def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> None:
+def _hostiles_leaving_reach(
+    state: GameState, mover: Character, origin: Position, destination: Position
+) -> list[Character]:
+    """Living hostile creatures (opposite `is_pc`) within 5ft of `origin`
+    but no longer within 5ft of `destination` - Phase 9H's opportunity-
+    attack trigger. Only origin/destination are checked, not squares passed
+    through mid-path, matching this function's existing "only the
+    destination matters" stance for occupancy/hazard checks above."""
+    return [
+        other
+        for other in state.characters.values()
+        if other.id != mover.id
+        and not other.is_dead
+        and other.is_pc != mover.is_pc
+        and distance_feet(origin, other.position) <= 5
+        and distance_feet(destination, other.position) > 5
+    ]
+
+
+def _resolve_opportunity_attacks(
+    state: GameState,
+    mover: Character,
+    origin: Position,
+    destination: Position,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """Phase 9H's one modeled reaction: each hostile `mover` was adjacent to
+    at `origin` but won't be at `destination` gets one free attack, unless
+    `mover` disengaged this turn or the reactor has already used their one
+    reaction this round (SRD: one reaction per round, not per creature
+    moved away from). Resolved with `mover` still AT `origin` (this is
+    called before actor.position is updated) so _resolve_single_attack's
+    own range check sees them as still adjacent - an opportunity attack is
+    a free swing at the exact moment of leaving reach, not at the
+    already-moved-away final position. Stops early if `mover` dies."""
+    if mover.disengaged_this_turn:
+        return
+    for reactor in _hostiles_leaving_reach(state, mover, origin, destination):
+        if reactor.reaction_used_this_round or _is_incapacitated(reactor):
+            continue
+        reactor.reaction_used_this_round = True
+        params = (
+            _monster_attack_params(reactor, None, srd)
+            if reactor.monster_index is not None
+            else _pc_attack_params(reactor, None, srd)
+        )
+        _resolve_single_attack(state, reactor, mover, params, rng, srd)
+        if mover.is_dead:
+            return
+
+
+def _resolve_move(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> None:
     if state.battle_map is None:
         raise TurnEngineError("Cannot resolve movement without a battle_map on GameState")
     raw_path = action.params.get("path")
@@ -752,7 +818,19 @@ def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> N
         )
 
     origin = actor.position
-    actor.position = steps[-1]
+    _resolve_opportunity_attacks(state, actor, origin, destination, rng, srd)
+    # Consumed here, not reset alongside is_dodging/bonus_action_used at the
+    # start of a turn (see Character.disengaged_this_turn's docstring) -
+    # this engine's one-verb-per-turn model means disengage and the move it
+    # protects can only ever happen on two of this character's separate
+    # real turns, so the flag has to survive every other actor's turns in
+    # between and is spent the next time THIS character actually moves,
+    # whether or not a hostile was even adjacent to make it matter.
+    actor.disengaged_this_turn = False
+    if actor.is_dead:
+        return
+
+    actor.position = destination
     state.events.append(
         Event(
             round=state.round,
@@ -831,6 +909,11 @@ def _resolve_dodge(state: GameState, actor: Character) -> None:
 
 
 def _resolve_disengage(state: GameState, actor: Character) -> None:
+    # Phase 9H: finally gives this verb a real mechanical effect - see
+    # Character.disengaged_this_turn's docstring for the simplification
+    # around exactly how long it protects, and _resolve_move for how it's
+    # actually checked against opportunity attacks.
+    actor.disengaged_this_turn = True
     state.events.append(
         Event(round=state.round, turn_index=state.current_turn, actor=actor.id, type="disengage")
     )
@@ -1329,15 +1412,34 @@ def _cast_heal_spell_at_target(
     )
 
 
+def _is_bonus_action_spell(spell: SrdEntry) -> bool:
+    """Phase 9H: SRD's `casting_time` is a plain string ("1 action", "1
+    bonus action", "1 reaction", "1 minute", ...) - Healing Word is the
+    project-relevant example. Reactions ("1 reaction", e.g. Shield) aren't
+    modeled as castable at all yet - only the action-vs-bonus-action
+    distinction matters for turn-advancement purposes here."""
+    return str(spell.get("casting_time", "")) == "1 bonus action"
+
+
 def _resolve_cast_spell(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
-) -> None:
+) -> bool:
+    """Returns whether this action ends the actor's turn - True for an
+    ordinary (action) spell, False for a bonus-action spell that resolved
+    successfully (the actor still has their main action left this turn)."""
     if not action.item_or_spell:
         raise TurnEngineError("cast_spell action requires item_or_spell (the spell name)")
     normalized = action.item_or_spell.strip().lower().replace(" ", "-")
     spell = srd.spells.get(normalized)
     if spell is None:
         raise TurnEngineError(f"Unknown spell: {action.item_or_spell!r}")
+
+    is_bonus_action = _is_bonus_action_spell(spell)
+    if is_bonus_action and actor.bonus_action_used:
+        raise TurnEngineError(
+            f"{actor.id} has already used their bonus action this turn - "
+            f"cannot also cast {spell['name']}"
+        )
 
     # Multi-target (Phase 9D): action.targets (a list of character ids)
     # takes priority when present; falling back to a single-element
@@ -1396,6 +1498,11 @@ def _resolve_cast_spell(
         heal_params = _spell_heal_params(actor, spell, spell_level, srd)
         for target in targets:
             _cast_heal_spell_at_target(state, actor, target, heal_params, rng)
+
+    if is_bonus_action:
+        actor.bonus_action_used = True
+        return False
+    return True
 
 
 def _is_healing_potion(item_name: str) -> bool:
@@ -1649,9 +1756,21 @@ def _advance_turn_skipping_dead(state: GameState) -> None:
         if next_round != state.round:
             for character in state.characters.values():
                 tick_conditions(character)
+                # Phase 9H: a reaction (opportunity attacks, the only one
+                # this engine models) is a per-round resource, not per-turn.
+                character.reaction_used_this_round = False
         state.current_turn = next_index
         state.round = next_round
-        if not _skip_this_turn(state.characters[state.turn_order[state.current_turn]]):
+        next_actor = state.characters[state.turn_order[state.current_turn]]
+        if not _skip_this_turn(next_actor):
+            # Phase 9H: bonus_action_used resets here, when a turn actually
+            # advances TO this character, rather than at the top of every
+            # resolve_action call - a bonus-action spell doesn't advance the
+            # turn (see resolve_action's ends_turn), so this same actor's
+            # very next resolve_action call (their main action, still the
+            # same real turn) must NOT see this reset again, or a second
+            # bonus-action cast that same turn would be wrongly allowed.
+            next_actor.bonus_action_used = False
             return
 
 
@@ -1688,7 +1807,13 @@ def resolve_action(
     # Dodging protects "until the start of your next turn" - that window
     # ends right now, since this actor's next turn is the one being
     # resolved. Cleared before dispatch so a fresh "dodge" this turn (which
-    # re-sets it to True) isn't immediately undone.
+    # re-sets it to True) isn't immediately undone. Safe to reset
+    # unconditionally on every call, unlike bonus_action_used (Phase 9H,
+    # reset in _advance_turn_skipping_dead instead - see its comment for
+    # why this generic per-call reset would break it) - is_dodging being
+    # cleared an extra time when a bonus-action spell precedes this actor's
+    # own main action in the same turn is harmless, since it wasn't going
+    # to read True again this turn anyway.
     actor.is_dodging = False
 
     if action.verb == "invalid":
@@ -1710,10 +1835,18 @@ def resolve_action(
         )
         return state
 
+    # Phase 9H: every verb ends the turn except a bonus-action spell cast
+    # (SRD casting_time "1 bonus action", e.g. Healing Word) that
+    # successfully resolves - _resolve_cast_spell reports back whether it
+    # was one via this flag, so the actor gets to act again (their main
+    # action, or another bonus action attempt, which _resolve_cast_spell
+    # itself rejects via actor.bonus_action_used).
+    ends_turn = True
+
     if action.verb == "attack":
         _resolve_attack(state, actor, action, rng, srd)
     elif action.verb in ("move", "dash"):
-        _resolve_move(state, actor, action)
+        _resolve_move(state, actor, action, rng, srd)
     elif action.verb == "skill_check":
         _resolve_skill_check(state, actor, action, rng, srd)
     elif action.verb == "dodge":
@@ -1727,7 +1860,7 @@ def resolve_action(
     elif action.verb == "shove":
         _resolve_shove(state, actor, action, rng)
     elif action.verb == "cast_spell":
-        _resolve_cast_spell(state, actor, action, rng, srd)
+        ends_turn = _resolve_cast_spell(state, actor, action, rng, srd)
     elif action.verb == "use_item":
         _resolve_use_item(state, actor, action, rng)
     elif action.verb == "death_save":
@@ -1741,7 +1874,7 @@ def resolve_action(
 
     _check_victory_defeat(state)
 
-    if state.status == "in_progress":
+    if state.status == "in_progress" and ends_turn:
         _advance_turn_skipping_dead(state)
 
     return state

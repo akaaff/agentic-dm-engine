@@ -87,6 +87,33 @@ class Character(BaseModel):
     """Set by another character resolving "help" targeting this one;
     consumed (cleared) by this character's next attack or skill check,
     whichever comes first."""
+    bonus_action_used: bool = False
+    """Phase 9H: True once this character has cast a bonus-action spell
+    (SRD casting_time "1 bonus action", e.g. Healing Word) this turn.
+    Reset in turn_engine._advance_turn_skipping_dead when a turn actually
+    advances TO this character - NOT at the top of every resolve_action
+    call like is_dodging, since a bonus-action spell doesn't end the turn
+    (see resolve_action's ends_turn): this same actor's very next
+    resolve_action call (their main action, still the same real turn) must
+    still see this as True, or a second bonus-action cast that turn would
+    be wrongly allowed. A second attempt while still True is rejected."""
+    disengaged_this_turn: bool = False
+    """Phase 9H: True after resolving "disengage" - gives that verb the
+    real mechanical effect it lacked since Day 13 (its own module docstring
+    used to note "no opportunity-attack mechanic yet for it to interact
+    with"). Checked (and consumed/cleared) by turn_engine._resolve_move's
+    opportunity-attack trigger, not reset alongside is_dodging/
+    bonus_action_used - this engine's one-action-per-turn model has no way
+    for a character to disengage and then also move within the literal
+    same game-turn, so this flag has to survive every other actor's turns
+    in between and is only spent the next time this character actually
+    moves (whether or not a hostile was even adjacent for it to matter) -
+    a documented simplification of SRD's "only protects this turn" rule."""
+    reaction_used_this_round: bool = False
+    """Phase 9H: at most one opportunity attack (the only reaction this
+    engine models) per character per round, per SRD - reset for every
+    character when the round number advances, not per-turn like the two
+    flags above (a reaction's economy is round-scoped, not turn-scoped)."""
     class_index: str | None = None
     """Set only for PCs/companions (mirrors monster_index) - lets the turn
     engine re-look-up the SRD class's spellcasting ability for cast_spell."""
