@@ -16,6 +16,11 @@ no benefit. Skill-challenge narration is authored per-scene (success_text/
 failure_text on SkillChallengeDef), not LLM-generated, for the same reason
 narrative_intro is authored text: only in-combat turn narration goes through
 the narrator LLM node.
+
+Phase 9G adds short_rest/long_rest scenes to the same walk, same shape as
+skill_challenge: authored narrative_intro plus a deterministic mechanical
+resolution (src/engine/resting.py) and a short supplementary narration line -
+no LLM call, matching everything else in this module.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from __future__ import annotations
 import random
 
 from src.engine.campaign import Campaign, Scene, SkillChallengeDef
+from src.engine.resting import apply_long_rest, apply_short_rest
 from src.engine.rules import (
     ability_check_modifier,
     normalize_skill_name,
@@ -31,6 +37,14 @@ from src.engine.rules import (
 )
 from src.engine.srd_loader import SrdIndex
 from src.engine.state import Character
+
+_SHORT_REST_NARRATION = (
+    "The party spends the respite tending wounds and catching their breath before pressing on."
+)
+_LONG_REST_NARRATION = (
+    "The party settles in for the night; by morning, wounds are closed, "
+    "spent strength is renewed, and weary bodies feel steadier."
+)
 
 
 def resolve_skill_challenge(
@@ -96,6 +110,12 @@ def advance_to_next_encounter(
                 current.skill_challenge_def, party, srd, rng
             )
             narration.append(outcome_text)
+        elif current.type == "short_rest":
+            apply_short_rest(party, rng)
+            narration.append(_SHORT_REST_NARRATION)
+        elif current.type == "long_rest":
+            apply_long_rest(party)
+            narration.append(_LONG_REST_NARRATION)
         # narrative_beat / roleplay: narrative_intro alone is the scene's
         # content, already appended above - no mechanics to resolve.
         current = campaign.next_scene(current)

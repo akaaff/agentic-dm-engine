@@ -90,6 +90,16 @@ class Character(BaseModel):
     class_index: str | None = None
     """Set only for PCs/companions (mirrors monster_index) - lets the turn
     engine re-look-up the SRD class's spellcasting ability for cast_spell."""
+    hit_die_sides: int = 8
+    """The class's hit die size (e.g. 8 for a d8 class) - set at creation
+    from the SRD class's `hit_die` (character_creation.create_character).
+    Default of 8 is an arbitrary placeholder for characters that never go
+    through that path (monsters never rest - a fresh encounter respawns
+    them, not this mechanic) - see src/engine/resting.py."""
+    hit_dice_remaining: int = 1
+    """Level-1-only project (Phase 9J adds real leveling): exactly one hit
+    die per character, spent on a short rest (src/engine/resting.py) and
+    restored to 1 on a long rest."""
     death_save_successes: int = 0
     death_save_failures: int = 0
     is_dead: bool = False

@@ -8,7 +8,12 @@ from __future__ import annotations
 import pytest
 
 from src.engine.campaign import Campaign, Scene, SkillChallengeDef, load_campaign
-from src.engine.campaign_runner import advance_to_next_encounter, resolve_skill_challenge
+from src.engine.campaign_runner import (
+    _LONG_REST_NARRATION,
+    _SHORT_REST_NARRATION,
+    advance_to_next_encounter,
+    resolve_skill_challenge,
+)
 from src.engine.character_creation import create_character
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character
@@ -175,3 +180,77 @@ def test_advance_to_next_encounter_raises_for_skill_challenge_missing_def() -> N
             srd,
             _FixedRandom([]),  # type: ignore[arg-type]
         )
+
+
+def test_advance_to_next_encounter_applies_short_rest_when_walking_through_scene() -> None:
+    campaign = Campaign(
+        id="rest_test_short",
+        title="Rest Test",
+        size="one_shot",
+        description="",
+        scenes=[
+            Scene(
+                id="s1",
+                type="short_rest",
+                narrative_intro="Camp is made.",
+                next_scene_id=None,
+            ),
+        ],
+    )
+    srd = load_srd()
+    thorin, elrond = _two_person_party()
+    thorin.hp = 1
+    elrond.hit_dice_remaining = 0  # isolate the fixed roll to Thorin alone
+
+    result_scene, narration = advance_to_next_encounter(
+        campaign,
+        campaign.first_scene(),
+        [thorin, elrond],
+        srd,
+        _FixedRandom([6]),  # type: ignore[arg-type]
+    )
+
+    assert result_scene is None
+    assert narration == ["Camp is made.", _SHORT_REST_NARRATION]
+    # Thorin (fighter, d10 hit die; base CON 13 + human's +1-to-all racial
+    # bonus = 14 -> mod +2): roll 6 + 2 = 8 healed; 1 + 8 = 9.
+    assert thorin.hp == 9
+    assert thorin.hit_dice_remaining == 0
+
+
+def test_advance_to_next_encounter_applies_long_rest_when_walking_through_scene() -> None:
+    campaign = Campaign(
+        id="rest_test_long",
+        title="Rest Test",
+        size="one_shot",
+        description="",
+        scenes=[
+            Scene(
+                id="s1",
+                type="long_rest",
+                narrative_intro="Night falls.",
+                next_scene_id=None,
+            ),
+        ],
+    )
+    srd = load_srd()
+    thorin, elrond = _two_person_party()
+    thorin.hp = 1
+    elrond.hp = 1
+    elrond.spell_slots = {1: 0}
+    elrond.exhaustion_level = 2
+
+    result_scene, narration = advance_to_next_encounter(
+        campaign,
+        campaign.first_scene(),
+        [thorin, elrond],
+        srd,
+        _FixedRandom([]),  # type: ignore[arg-type]  # a long rest rolls no dice
+    )
+
+    assert result_scene is None
+    assert narration == ["Night falls.", _LONG_REST_NARRATION]
+    assert thorin.hp == thorin.max_hp
+    assert elrond.hp == elrond.max_hp
+    assert elrond.spell_slots == {1: 2}
+    assert elrond.exhaustion_level == 1

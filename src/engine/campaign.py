@@ -18,7 +18,14 @@ from pydantic import BaseModel
 DEFAULT_CAMPAIGNS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "campaigns"
 
 CampaignSize = Literal["one_shot", "short_arc", "full"]
-SceneType = Literal["narrative_beat", "combat", "skill_challenge", "roleplay"]
+SceneType = Literal[
+    "narrative_beat", "combat", "skill_challenge", "roleplay", "short_rest", "long_rest"
+]
+"""short_rest/long_rest (Phase 9G) are two distinct scene types rather than
+one "rest" type with a sub-field, matching how narrative_beat/skill_challenge
+are already distinguished by type rather than a shared "beat" type plus a
+flag - the campaign author's intent (which kind of rest) is baked into the
+scene chain itself, same as everywhere else in this schema."""
 
 
 class SkillChallengeDef(BaseModel):
