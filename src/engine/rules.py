@@ -115,6 +115,46 @@ def saving_throw_bonus(character: Character, ability: AbilityScore) -> int:
     return mod
 
 
+_MONSTER_ABILITY_FIELDS: dict[AbilityScore, str] = {
+    "STR": "strength",
+    "DEX": "dexterity",
+    "CON": "constitution",
+    "INT": "intelligence",
+    "WIS": "wisdom",
+    "CHA": "charisma",
+}
+"""Monster stat blocks spell ability scores out as full words
+(`strength`/`dexterity`/...), not the STR/DEX/... abbreviations
+Character.stats and AbilityScore use everywhere else - needed to look up a
+monster's raw score for monster_saving_throw_bonus's no-proficiency
+fallback."""
+
+
+def monster_saving_throw_bonus(monster_data: SrdEntry, ability: AbilityScore) -> int:
+    """A monster's own saving throw bonus (Phase 9D) - e.g. for resisting a
+    PC's save-based spell. Deliberately NOT saving_throw_bonus above:
+    monsters have no `class_index`/`saving_throw_proficiencies` (they save
+    via their own stat block, never the class-based path), and - confirmed
+    by actually inspecting the vendored monster JSON via load_srd(), not
+    assumed - a monster stat block's top-level `saving_throws` field is
+    always null for every one of the ~300 vendored monsters. The real data
+    lives in `proficiencies`, keyed "saving-throw-<ability>" (e.g.
+    "saving-throw-con"), and - unlike a PC's proficiency, which is just a
+    yes/no flag combined with a modifier computed elsewhere - each entry's
+    `value` is already the full precomputed bonus (ability modifier +
+    proficiency bonus baked in together): confirmed against the vendored
+    Adult Black Dragon, whose "saving-throw-dex" value of 7 exactly equals
+    its DEX modifier (2) plus its proficiency_bonus (5). Falls back to a raw
+    ability modifier (no proficiency) when the monster has no entry for this
+    ability - the same "no class means no proficiency" fallback pattern as
+    is_class_proficient_with."""
+    ability_key = f"saving-throw-{ability.lower()}"
+    for prof in monster_data.get("proficiencies") or []:
+        if prof.get("proficiency", {}).get("index") == ability_key:
+            return int(prof["value"])
+    return ability_modifier(monster_data[_MONSTER_ABILITY_FIELDS[ability]])
+
+
 def normalize_skill_name(raw: str) -> str:
     """ "Perception", "skill-perception", "Sleight of Hand" -> "perception",
     "sleight-of-hand" (srd.skills' bare-index form)."""

@@ -102,6 +102,17 @@ class Character(BaseModel):
     """3 successful death saves: stops rolling, but stays unconscious (at 0
     HP) until healed - distinct from "still needs to roll" so the turn
     engine knows not to prompt for another death save."""
+    concentrating_on: str | None = None
+    """The name of the concentration spell this character is currently
+    sustaining (e.g. "Hold Person"), or None. Set by turn_engine._resolve_cast_spell
+    when a spell with the SRD's `concentration: true` field is cast (clearing
+    whatever was set before - casting a new concentration spell always drops
+    the old one, per SRD); cleared either there or when a CON save forced by
+    taking damage while concentrating (Phase 9D) fails. This engine doesn't
+    yet model an actual ongoing effect for any concentration spell (no
+    buff/debuff-over-time mechanic exists to remove) - this field only
+    tracks *that* a character is concentrating and *on what*, not what
+    removing it would undo."""
 
 
 class GameState(BaseModel):

@@ -57,10 +57,19 @@ Deliberate simplifications (documented, not silent):
   exists yet - that's campaign/scene content, not engine scope).
 - "disengage" (Day 13) has no mechanical effect - this engine has no
   opportunity-attack mechanic yet for it to interact with.
-- "cast_spell" (Day 14) only resolves single-target attack-roll spells (the
-  SRD's `attack_type` field present) - save-based spells (a `dc` field
-  instead) and no-roll spells like Magic Missile (neither field) raise a
-  clear error rather than being silently mishandled.
+- "cast_spell" (Day 14: attack-roll spells only; Phase 9D added save-based,
+  heal, multi-target, and concentration) now resolves attack-roll spells
+  (SRD `attack_type`), save-based spells (`dc`, full/half/no damage per
+  `dc_success`), and heal spells (`heal_at_slot_level`, e.g. Cure Wounds) -
+  each independently across every id in `ParsedAction.targets` when present.
+  A save-based spell with no damage at all (e.g. Hold Person) rolls the save
+  and stops there - Phase 9D doesn't apply the spell's actual condition on a
+  failure, since no verb/spell grants one yet. A genuinely no-roll,
+  non-heal spell like Magic Missile (none of the three fields) still raises
+  a clear error. Concentration (`Character.concentrating_on`) is tracked
+  and can break from a failed CON save on taking damage, but this engine
+  still doesn't model removing an ongoing effect - no concentration spell
+  applies one yet for that to matter.
 - "use_item" (Day 14) only resolves a single hardcoded item
   (potion-of-healing) - any other item name raises a clear error.
 """
@@ -84,14 +93,17 @@ from src.engine.rules import (
     condition_attack_advantage,
     condition_attack_disadvantage,
     condition_check_disadvantage,
+    condition_save_disadvantage,
     effective_speed,
     has_non_proficient_armor,
     is_class_proficient_with,
     monster_action_range_feet,
+    monster_saving_throw_bonus,
     normalize_skill_name,
     resolve_attack,
     resolve_saving_throw,
     resolve_skill_check,
+    saving_throw_bonus,
     skill_ability,
     spell_range_feet,
     weapon_range_feet,
@@ -331,15 +343,73 @@ def _resolve_attack(
     if not result.hit or result.damage is None:
         return
 
-    _apply_damage_and_handle_downing(state, actor, target, result.damage, params.damage_type)
+    _apply_damage_and_handle_downing(
+        state, actor, target, result.damage, params.damage_type, rng, srd
+    )
+
+
+def _target_saving_throw_bonus(target: Character, ability: AbilityScore, srd: SrdIndex) -> int:
+    """The one saving-throw lookup every Phase 9D call site needs (a
+    target's own save, whether resisting a spell or resisting concentration
+    break): a monster (has monster_index) saves via its stat block
+    (rules.monster_saving_throw_bonus), everyone else (PCs/companions) via
+    their class proficiencies (rules.saving_throw_bonus) - same branch
+    turn_engine already uses for attack params (_pc_attack_params vs
+    _monster_attack_params)."""
+    if target.monster_index is not None:
+        return monster_saving_throw_bonus(srd.monsters[target.monster_index], ability)
+    return saving_throw_bonus(target, ability)
+
+
+def _check_concentration_break(
+    state: GameState, character: Character, damage: int, rng: random.Random, srd: SrdIndex
+) -> None:
+    """Phase 9D: a character concentrating on a spell who takes damage must
+    make a CON save (DC = max(10, damage // 2), per SRD) or lose
+    concentration. `damage` is the amount actually dealt (before HP
+    clamping), matching the SRD rule ("half the damage you take"), not the
+    possibly-smaller actual_loss apply_damage returns for an overkill hit.
+    This engine doesn't yet model removing an ongoing effect on a failed
+    save - no concentration spell applies one yet (Phase 9D scope; see
+    Character.concentrating_on's docstring) - so a failure here only clears
+    the tracking field."""
+    if character.concentrating_on is None or damage <= 0:
+        return
+    dc = max(10, damage // 2)
+    save_bonus = _target_saving_throw_bonus(character, "CON", srd)
+    result, success = resolve_saving_throw(save_bonus=save_bonus, dc=dc, rng=rng)
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=character.id,
+            type="saving_throw",
+            payload={
+                "kind": "concentration",
+                "spell": character.concentrating_on,
+                "dc": dc,
+                "roll_total": result.total,
+                "success": success,
+            },
+        )
+    )
+    if not success:
+        character.concentrating_on = None
 
 
 def _apply_damage_and_handle_downing(
-    state: GameState, attacker: Character, target: Character, damage: int, damage_type: str
+    state: GameState,
+    attacker: Character,
+    target: Character,
+    damage: int,
+    damage_type: str,
+    rng: random.Random,
+    srd: SrdIndex,
 ) -> None:
-    """Shared by attack and cast_spell (Day 14) - both can reduce a
-    character to 0 HP and need the same monster-dies-outright-vs-
-    PC-goes-unconscious handling."""
+    """Shared by attack and cast_spell (Day 14; Phase 9D added the rng/srd
+    params for the concentration check below) - both can reduce a character
+    to 0 HP and need the same monster-dies-outright-vs-PC-goes-unconscious
+    handling."""
     actual_loss = apply_damage(target, damage)
     state.events.append(
         Event(
@@ -355,6 +425,7 @@ def _apply_damage_and_handle_downing(
             },
         )
     )
+    _check_concentration_break(state, target, damage, rng, srd)
     if target.hp > 0 or target.is_dead:
         return
 
@@ -522,21 +593,11 @@ def _resolve_help(state: GameState, actor: Character, action: ParsedAction) -> N
     )
 
 
-def _spell_attack_params(
-    actor: Character, spell_name: str, srd: SrdIndex
-) -> tuple[AttackParams, int]:
-    """Returns (attack params, spell level - 0 for a cantrip). Only
-    single-target attack-roll spells are supported (Day 14 scope) - the
-    SRD's `attack_type` field is present only for those."""
-    normalized = spell_name.strip().lower().replace(" ", "-")
-    spell = srd.spells.get(normalized)
-    if spell is None:
-        raise TurnEngineError(f"Unknown spell: {spell_name!r}")
-    if not spell.get("attack_type"):
-        raise TurnEngineError(
-            f"{spell['name']} is not supported - cast_spell only resolves single-target "
-            "attack-roll spells (Day 14 scope); save-based and no-roll spells aren't implemented"
-        )
+def _spellcasting_ability_mod(actor: Character, srd: SrdIndex) -> tuple[AbilityScore, int]:
+    """(spellcasting ability, its modifier) for `actor`'s class - shared by
+    all three cast_spell mechanics (Phase 9D: attack/save/heal all need it),
+    previously computed inline only for the attack-roll path (Day 14, the
+    only mechanic that existed then)."""
     if actor.class_index is None:
         raise TurnEngineError(
             f"{actor.id} has no class_index - cannot determine spellcasting ability"
@@ -546,9 +607,39 @@ def _spell_attack_params(
     if not spellcasting:
         raise TurnEngineError(f"{actor.class_} has no spellcasting ability")
     ability: AbilityScore = spellcasting["spellcasting_ability"]["index"].upper()
-    ability_mod = ability_modifier(actor.stats[ability])
+    return ability, ability_modifier(actor.stats[ability])
 
-    spell_level = spell["level"]
+
+def _spell_mechanic(spell: SrdEntry) -> str:
+    """Classifies a spell into one of the three mechanics cast_spell
+    resolves (Phase 9D): "attack" (SRD `attack_type` present - e.g. Fire
+    Bolt, Guiding Bolt), "save" (`dc` present - e.g. Fireball, Hold Person),
+    or "heal" (`heal_at_slot_level` present - e.g. Cure Wounds). Checked in
+    this order since a real SRD spell only ever has one of the three shapes
+    (confirmed by inspecting several of each directly via load_srd()).
+    Anything else - a no-roll, non-heal effect like Magic Missile's
+    automatic-hit force damage, or a pure buff/utility spell with none of
+    these fields - is still out of scope and raises the same clear rejection
+    Day 14 always has for an unsupported spell."""
+    if spell.get("attack_type"):
+        return "attack"
+    if spell.get("dc"):
+        return "save"
+    if spell.get("heal_at_slot_level"):
+        return "heal"
+    raise TurnEngineError(
+        f"{spell['name']} is not supported - cast_spell resolves attack-roll, save-based, "
+        "and heal spells (Phase 9D); other no-roll effects (e.g. Magic Missile's automatic "
+        "hits) aren't implemented"
+    )
+
+
+def _spell_attack_params(
+    actor: Character, spell: SrdEntry, spell_level: int, srd: SrdIndex
+) -> AttackParams:
+    """Attack-roll spell parameters (e.g. Fire Bolt, Guiding Bolt) - `spell`
+    is already looked up and classified by the caller (_resolve_cast_spell)."""
+    _, ability_mod = _spellcasting_ability_mod(actor, srd)
     damage_info = spell["damage"]
     notation = (
         damage_info["damage_at_character_level"]["1"]
@@ -557,51 +648,35 @@ def _spell_attack_params(
     )
     dice_count, dice_sides, notation_bonus = parse_dice_notation(notation)
 
-    params = AttackParams(
+    return AttackParams(
         attack_bonus=ability_mod + actor.proficiency_bonus,
         damage_dice_count=dice_count,
         damage_dice_sides=dice_sides,
         # 5e spell damage doesn't add the spellcasting ability modifier
         # (unlike weapon damage) - only whatever bonus is in the notation
         # itself (e.g. Magic Missile's embedded "+3", not applicable here
-        # since it's a no-roll spell excluded above; attack-roll spells in
-        # the SRD generally have none).
+        # since it's a no-roll spell excluded by _spell_mechanic; attack-roll
+        # spells in the SRD generally have none).
         damage_bonus=notation_bonus,
         damage_type=damage_info["damage_type"]["index"],
         source_name=spell["name"],
         range_normal_feet=spell_range_feet(str(spell.get("range", ""))),
         range_long_feet=None,  # spells have no "beyond normal" disadvantage tier
     )
-    return params, spell_level
 
 
-def _resolve_cast_spell(
-    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+def _cast_attack_spell_at_target(
+    state: GameState,
+    actor: Character,
+    target: Character,
+    params: AttackParams,
+    spell_level: int,
+    rng: random.Random,
+    srd: SrdIndex,
 ) -> None:
-    if not action.item_or_spell:
-        raise TurnEngineError("cast_spell action requires item_or_spell (the spell name)")
-    if action.target is None:
-        raise TurnEngineError("cast_spell action requires a target")
-    target = state.characters.get(action.target)
-    if target is None:
-        raise TurnEngineError(f"Unknown spell target: {action.target}")
-    _validate_attack_target(actor, target)
-
-    params, spell_level = _spell_attack_params(actor, action.item_or_spell, srd)
-
+    """One target's independent attack roll (Phase 9D multi-target: called
+    once per id in action.targets, or once for the single legacy `target`)."""
     distance = distance_feet(actor.position, target.position)
-    if distance > params.range_normal_feet:
-        raise TurnEngineError(
-            f"{target.id} is {distance}ft away - out of range for {params.source_name} "
-            f"(max {params.range_normal_feet}ft)"
-        )
-
-    if spell_level > 0:
-        remaining = actor.spell_slots.get(spell_level, 0)
-        if remaining <= 0:
-            raise TurnEngineError(f"{actor.id} has no level-{spell_level} spell slots remaining")
-        actor.spell_slots[spell_level] = remaining - 1
-
     advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
     actor.has_help_advantage = False
 
@@ -636,7 +711,274 @@ def _resolve_cast_spell(
 
     if not result.hit or result.damage is None:
         return
-    _apply_damage_and_handle_downing(state, actor, target, result.damage, params.damage_type)
+    _apply_damage_and_handle_downing(
+        state, actor, target, result.damage, params.damage_type, rng, srd
+    )
+
+
+@dataclass(frozen=True)
+class SaveSpellParams:
+    dc: int
+    dc_ability: AbilityScore
+    dc_success: str
+    """"half" or "none", from the SRD's `dc_success` field: a failed save
+    always takes full damage; "half" halves it (rounded down, plain integer
+    division) on a success, "none" means a success avoids the effect
+    entirely (used by no-damage control spells like Hold Person, where
+    `damage_type` below is None)."""
+    damage_dice_count: int
+    damage_dice_sides: int
+    damage_bonus: int
+    damage_type: str | None
+    """None for a no-damage save spell (e.g. Hold Person, which only
+    restrains on a failed save - no HP loss at all). Phase 9D resolves the
+    save roll itself for these but doesn't apply the spell's actual
+    condition on a failure - no verb/spell grants restrained/paralyzed/etc.
+    yet for that to hook into (same documented boundary as
+    Character.concentrating_on not modeling an ongoing effect to remove)."""
+    source_name: str
+
+
+def _spell_save_params(
+    actor: Character, spell: SrdEntry, spell_level: int, srd: SrdIndex
+) -> SaveSpellParams:
+    """Save-based spell parameters (e.g. Fireball, Hold Person)."""
+    dc_info = spell["dc"]
+    dc_ability: AbilityScore = dc_info["dc_type"]["index"].upper()
+    _, ability_mod = _spellcasting_ability_mod(actor, srd)
+    # Spell save DC = 8 + proficiency bonus + spellcasting ability modifier -
+    # a fixed PHB rule (confirmed against the SRD Wizard class's own
+    # spellcasting description text), not a vendored data field like a
+    # weapon's or monster action's numbers are.
+    dc = 8 + actor.proficiency_bonus + ability_mod
+
+    damage_info = spell.get("damage")
+    if damage_info:
+        notation = (
+            damage_info["damage_at_character_level"]["1"]
+            if spell_level == 0
+            else damage_info["damage_at_slot_level"][str(spell_level)]
+        )
+        dice_count, dice_sides, notation_bonus = parse_dice_notation(notation)
+        damage_type: str | None = damage_info["damage_type"]["index"]
+    else:
+        dice_count = dice_sides = notation_bonus = 0
+        damage_type = None
+
+    return SaveSpellParams(
+        dc=dc,
+        dc_ability=dc_ability,
+        dc_success=dc_info["dc_success"],
+        damage_dice_count=dice_count,
+        damage_dice_sides=dice_sides,
+        damage_bonus=notation_bonus,
+        damage_type=damage_type,
+        source_name=spell["name"],
+    )
+
+
+def _cast_save_spell_at_target(
+    state: GameState,
+    actor: Character,
+    target: Character,
+    params: SaveSpellParams,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """One target's independent saving throw (Phase 9D multi-target - e.g.
+    Fireball hitting 3 targets rolls 3 separate saves)."""
+    save_bonus = _target_saving_throw_bonus(target, params.dc_ability, srd)
+    result, success = resolve_saving_throw(
+        save_bonus=save_bonus,
+        dc=params.dc,
+        rng=rng,
+        # Phase 9A's condition_save_disadvantage (exhaustion 3+) had no real
+        # call site until now - the only saving throw previously rolled
+        # (death saves) is deliberately flat/unmodified per SRD.
+        disadvantage=condition_save_disadvantage(target),
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="saving_throw",
+            payload={
+                "kind": "spell_save",
+                "spell": params.source_name,
+                "target": target.id,
+                "ability": params.dc_ability,
+                "dc": params.dc,
+                "roll_total": result.total,
+                "success": success,
+            },
+        )
+    )
+
+    if params.damage_type is None:
+        return  # no-damage control spell - Phase 9D only resolves the save
+
+    damage_roll = roll(
+        params.damage_dice_count, params.damage_dice_sides, modifier=params.damage_bonus, rng=rng
+    )
+    damage = max(0, damage_roll.total)
+    if success:
+        if params.dc_success == "none":
+            return
+        damage //= 2  # SRD: half damage on a successful save, rounded down
+
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={
+                "spell": params.source_name,
+                "target": target.id,
+                "save_success": success,
+                "damage": damage,
+            },
+        )
+    )
+    _apply_damage_and_handle_downing(state, actor, target, damage, params.damage_type, rng, srd)
+
+
+_HEAL_NOTATION_RE = re.compile(r"(\d+)d(\d+)\s*\+\s*MOD", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class HealSpellParams:
+    dice_count: int
+    dice_sides: int
+    ability_mod: int
+    source_name: str
+
+
+def _spell_heal_params(
+    actor: Character, spell: SrdEntry, spell_level: int, srd: SrdIndex
+) -> HealSpellParams:
+    """Heal spell parameters (Cure Wounds and its kin). Unlike Day 14's
+    healing potion - which needed a hardcoded HEALING_POTION_DICE constant
+    because the vendored Magic Items data has no mechanical fields at all -
+    the SRD's `heal_at_slot_level` field really is machine-readable: each
+    slot level maps to a dice notation like "1d8 + MOD" (confirmed against
+    the real vendored Cure Wounds entry via load_srd()). "MOD" is literal
+    text meaning "the caster's spellcasting ability modifier" - parsed here
+    rather than via parse_dice_notation, whose regex only understands
+    numeric +N bonuses, not that word."""
+    heal_table = spell["heal_at_slot_level"]
+    notation = heal_table[str(spell_level)]
+    match = _HEAL_NOTATION_RE.fullmatch(notation.strip())
+    if not match:
+        raise TurnEngineError(f"Unrecognized heal notation for {spell['name']!r}: {notation!r}")
+    _, ability_mod = _spellcasting_ability_mod(actor, srd)
+    return HealSpellParams(
+        dice_count=int(match.group(1)),
+        dice_sides=int(match.group(2)),
+        ability_mod=ability_mod,
+        source_name=spell["name"],
+    )
+
+
+def _cast_heal_spell_at_target(
+    state: GameState,
+    actor: Character,
+    target: Character,
+    params: HealSpellParams,
+    rng: random.Random,
+) -> None:
+    """One target's heal - no roll to hit, just dice for the amount (Day
+    14's use_item healing potion is the existing precedent for this
+    clamp-at-max_hp shape)."""
+    healed = min(
+        roll(params.dice_count, params.dice_sides, modifier=params.ability_mod, rng=rng).total,
+        target.max_hp - target.hp,
+    )
+    target.hp += healed
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="hp_change",
+            payload={
+                "amount": healed,
+                "source": params.source_name,
+                "target": target.id,
+                "hp_remaining": target.hp,
+            },
+        )
+    )
+
+
+def _resolve_cast_spell(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> None:
+    if not action.item_or_spell:
+        raise TurnEngineError("cast_spell action requires item_or_spell (the spell name)")
+    normalized = action.item_or_spell.strip().lower().replace(" ", "-")
+    spell = srd.spells.get(normalized)
+    if spell is None:
+        raise TurnEngineError(f"Unknown spell: {action.item_or_spell!r}")
+
+    # Multi-target (Phase 9D): action.targets (a list of character ids)
+    # takes priority when present; falling back to a single-element
+    # [action.target] list keeps every pre-existing single-target action
+    # (and test) resolving identically to before.
+    target_ids = action.targets if action.targets else ([action.target] if action.target else None)
+    if not target_ids:
+        raise TurnEngineError("cast_spell action requires a target")
+
+    mechanic = _spell_mechanic(spell)
+
+    targets: list[Character] = []
+    for target_id in target_ids:
+        target = state.characters.get(target_id)
+        if target is None:
+            raise TurnEngineError(f"Unknown spell target: {target_id}")
+        # A heal spell targets an ally by design - only the two offensive
+        # mechanics need the friendly-fire/charmed guard.
+        if mechanic != "heal":
+            _validate_attack_target(actor, target)
+        targets.append(target)
+
+    range_normal_feet = spell_range_feet(str(spell.get("range", "")))
+    for target in targets:
+        distance = distance_feet(actor.position, target.position)
+        if distance > range_normal_feet:
+            raise TurnEngineError(
+                f"{target.id} is {distance}ft away - out of range for {spell['name']} "
+                f"(max {range_normal_feet}ft)"
+            )
+
+    spell_level = spell["level"]
+    if spell_level > 0:
+        remaining = actor.spell_slots.get(spell_level, 0)
+        if remaining <= 0:
+            raise TurnEngineError(f"{actor.id} has no level-{spell_level} spell slots remaining")
+        actor.spell_slots[spell_level] = remaining - 1
+
+    # Concentration (Phase 9D): starting a new concentration spell always
+    # drops whatever the caster was concentrating on before, per SRD - plain
+    # reassignment does that for free. A spell without `concentration`
+    # (every attack-roll spell in the SRD, and some save/heal ones) leaves
+    # any prior concentration untouched.
+    if spell.get("concentration"):
+        actor.concentrating_on = spell["name"]
+
+    if mechanic == "attack":
+        attack_params = _spell_attack_params(actor, spell, spell_level, srd)
+        for target in targets:
+            _cast_attack_spell_at_target(state, actor, target, attack_params, spell_level, rng, srd)
+    elif mechanic == "save":
+        save_params = _spell_save_params(actor, spell, spell_level, srd)
+        for target in targets:
+            _cast_save_spell_at_target(state, actor, target, save_params, rng, srd)
+    else:  # heal
+        heal_params = _spell_heal_params(actor, spell, spell_level, srd)
+        for target in targets:
+            _cast_heal_spell_at_target(state, actor, target, heal_params, rng)
 
 
 def _is_healing_potion(item_name: str) -> bool:
