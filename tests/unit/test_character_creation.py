@@ -180,3 +180,107 @@ def test_unknown_race_rejected() -> None:
             base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
             chosen_skills=["skill-athletics", "skill-perception"],
         )
+
+
+# --- Phase 9I: Fighting Style (creation-time effects) -----------------------
+
+
+def test_defense_fighting_style_adds_one_ac_only_while_wearing_armor() -> None:
+    # Same Human Fighter fixture as test_create_human_fighter_end_to_end
+    # (AC 18 with chain-mail+shield, no Fighting Style) - Defense adds
+    # exactly +1 on top, per SRD ("while wearing armor").
+    character = create_character(
+        character_id="thorin",
+        name="Thorin",
+        race_index="human",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+        chosen_equipment=["chain-mail", "shield"],
+        fighting_style="defense",
+    )
+    assert character.ac == 19  # 18 + 1
+    assert character.fighting_style == "defense"
+
+
+def test_defense_fighting_style_grants_nothing_with_no_armor_worn() -> None:
+    character = create_character(
+        character_id="thorin",
+        name="Thorin",
+        race_index="human",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+        chosen_equipment=["longsword"],
+        fighting_style="defense",
+    )
+    # No armor -> 10 + DEX mod(2), no Defense bonus (a shield alone doesn't
+    # count per SRD's literal "while wearing armor" text).
+    assert character.ac == 12
+
+
+def test_fighting_style_rejected_for_a_class_that_does_not_choose_one() -> None:
+    with pytest.raises(CharacterCreationError, match="doesn't choose a Fighting Style"):
+        create_character(
+            character_id="elrond",
+            name="Elrond",
+            race_index="elf",
+            class_index="wizard",
+            background_index="acolyte",
+            base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
+            chosen_skills=["skill-arcana", "skill-history"],
+            fighting_style="defense",
+        )
+
+
+def test_unimplemented_fighting_style_rejected() -> None:
+    with pytest.raises(CharacterCreationError, match="Unknown or unimplemented fighting style"):
+        create_character(
+            character_id="thorin",
+            name="Thorin",
+            race_index="human",
+            class_index="fighter",
+            background_index="acolyte",
+            base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+            chosen_skills=["skill-athletics", "skill-perception"],
+            fighting_style="great-weapon-fighting",  # real SRD style, just not implemented here
+        )
+
+
+def test_barbarian_gets_rage_uses_and_fighter_gets_second_wind_use() -> None:
+    fighter = create_character(
+        character_id="thorin",
+        name="Thorin",
+        race_index="human",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+    )
+    assert fighter.class_resources == {"second_wind": 1}
+
+    barbarian = create_character(
+        character_id="grom",
+        name="Grom",
+        race_index="dwarf",
+        class_index="barbarian",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-intimidation"],
+    )
+    assert barbarian.class_resources == {"rage": 2}
+
+    # A class with no Phase 9I resource (e.g. Wizard) gets an empty dict,
+    # not a missing key or an error.
+    elrond = create_character(
+        character_id="elrond",
+        name="Elrond",
+        race_index="elf",
+        class_index="wizard",
+        background_index="acolyte",
+        base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
+        chosen_skills=["skill-arcana", "skill-history"],
+    )
+    assert elrond.class_resources == {}

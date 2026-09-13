@@ -23,10 +23,15 @@ from __future__ import annotations
 
 import random
 
-from src.engine.character_creation import LEVEL_1_SPELL_SLOTS
+from src.engine.character_creation import CLASS_RESOURCES_AT_LEVEL_1, LEVEL_1_SPELL_SLOTS
 from src.engine.dice import roll
 from src.engine.rules import ability_modifier, set_exhaustion_level
 from src.engine.state import Character
+
+_SHORT_REST_RESOURCES = {"second_wind"}
+"""Phase 9I: class_resources keys that recover on a short rest, per SRD
+(Second Wind). Everything else in CLASS_RESOURCES_AT_LEVEL_1 (currently
+just "rage") recovers on a long rest instead - see apply_long_rest."""
 
 
 def apply_short_rest(party: list[Character], rng: random.Random) -> None:
@@ -38,12 +43,19 @@ def apply_short_rest(party: list[Character], rng: random.Random) -> None:
     SRD math doesn't rule out), clamped at max_hp. `hit_dice_remaining` is
     left at 0 afterward for anyone who rested.
 
-    Class-specific short-rest resources (e.g. a Warlock's pact-magic slots)
-    don't exist in this engine yet (Phase 9I) - nothing else to recover here.
+    Also restores any Phase 9I class_resources that recover on a short rest
+    (Second Wind) to their level-1 max - real leveling (Phase 9J) doesn't
+    scale these resources yet, so "level-1 max" is the only max there is.
     A character with no hit dice remaining (already spent this long-rest
-    cycle) is skipped entirely, not an error.
+    cycle) still gets their short-rest class resources restored - those are
+    two independent SRD mechanics, not the same budget.
     """
     for character in party:
+        for resource in _SHORT_REST_RESOURCES:
+            max_uses = CLASS_RESOURCES_AT_LEVEL_1.get(character.class_index or "", {}).get(resource)
+            if max_uses is not None:
+                character.class_resources[resource] = max_uses
+
         if character.hit_dice_remaining <= 0:
             continue
         con_mod = ability_modifier(character.stats["CON"])
@@ -56,10 +68,19 @@ def apply_short_rest(party: list[Character], rng: random.Random) -> None:
 def apply_long_rest(party: list[Character]) -> None:
     """Full HP, full spell slots (per class_index via LEVEL_1_SPELL_SLOTS,
     empty for non-casters/monsters), hit dice reset to 1 (level 1 = 1 hit
-    die), and exhaustion reduced by one level (rules.set_exhaustion_level
-    already floors at 0)."""
+    die), exhaustion reduced by one level (rules.set_exhaustion_level
+    already floors at 0), every class_resource restored to its level-1 max
+    (short-rest ones like Second Wind recover here too - a long rest is a
+    superset of a short rest's benefits, per SRD), and Rage ends
+    (Character.is_raging - this engine doesn't model rage's real mid-combat
+    duration/maintenance conditions, so "clears on any rest" is the
+    documented substitute, not a silent omission)."""
     for character in party:
         character.hp = character.max_hp
         character.spell_slots = dict(LEVEL_1_SPELL_SLOTS.get(character.class_index or "", {}))
         character.hit_dice_remaining = 1
         set_exhaustion_level(character, character.exhaustion_level - 1)
+        character.class_resources = dict(
+            CLASS_RESOURCES_AT_LEVEL_1.get(character.class_index or "", {})
+        )
+        character.is_raging = False

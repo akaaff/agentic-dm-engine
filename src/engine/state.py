@@ -127,6 +127,34 @@ class Character(BaseModel):
     """Level-1-only project (Phase 9J adds real leveling): exactly one hit
     die per character, spent on a short rest (src/engine/resting.py) and
     restored to 1 on a long rest."""
+    class_resources: dict[str, int] = {}
+    """Phase 9I: uses remaining for a class feature keyed by a short name
+    (e.g. {"rage": 2}, {"second_wind": 1}) - populated at creation from
+    character_creation.CLASS_RESOURCES_AT_LEVEL_1, spent by that feature's
+    verb, restored by short/long rest (src/engine/resting.py) per whichever
+    rest type the specific resource recovers on."""
+    fighting_style: str | None = None
+    """Phase 9I: one of character_creation.VALID_FIGHTING_STYLES, chosen at
+    creation for a class in FIGHTING_STYLE_CLASSES (Fighter/Ranger/
+    Paladin) - a static bonus applied in turn_engine._pc_attack_params
+    (Archery, Dueling) or baked into `ac` directly at creation (Defense,
+    since this engine computes AC once rather than deriving it per-attack)."""
+    is_raging: bool = False
+    """Phase 9I: True while raging (Barbarian) - grants resistance to
+    bludgeoning/piercing/slashing damage (turn_engine._apply_damage_and_
+    handle_downing) and a flat melee-STR damage bonus (_pc_attack_params).
+    Unlike is_dodging, this engine doesn't model rage's real duration/
+    maintenance conditions (1 minute, ends early if you don't attack or
+    take damage) - a documented simplification, not silent - it persists
+    until explicitly cleared by a rest (src/engine/resting.py)."""
+    sneak_attack_used_this_turn: bool = False
+    """Phase 9I: True once this character's Sneak Attack (Rogue) has
+    triggered this turn - SRD allows it once per turn, only on an actual
+    hit. Reset at the top of resolve_action like is_dodging (safe here,
+    unlike bonus_action_used/disengaged_this_turn: a plain `attack` action
+    only ever produces one resolve_action call per real turn - this engine
+    has no two-weapon-fighting bonus-action offhand attack yet for a Rogue
+    to trigger a second attack roll within the same turn)."""
     death_save_successes: int = 0
     death_save_failures: int = 0
     is_dead: bool = False

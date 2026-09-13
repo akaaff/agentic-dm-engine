@@ -152,6 +152,29 @@ ABILITY_SCORE_IMPROVEMENT_LEVELS = {4}
 pass is scoped to roughly levels 1-5 (see CLAUDE.md Phase 9J), so only level
 4 is modeled; the later levels are out of scope, not silently wrong."""
 
+CLASS_RESOURCES_AT_LEVEL_1: dict[str, dict[str, int]] = {
+    "fighter": {"second_wind": 1},
+    "barbarian": {"rage": 2},
+}
+"""Phase 9I, tier 1 - uses/day for the two class features that need a
+limited resource (Second Wind, Rage), at level 1. Not in the vendored SRD
+JSON any more than LEVEL_1_SPELL_SLOTS is (level tables live behind a
+separate API endpoint) - hardcoded SRD 5.1 facts, same precedent. Fixed at
+their level-1 value through level_up (Phase 9J) rather than scaling with
+level - a documented simplification for this tier-1 pass, not silently
+wrong; real Rage uses do scale (2 at 1-2, 3 at 3-5)."""
+
+VALID_FIGHTING_STYLES = {"archery", "defense", "dueling"}
+"""Phase 9I only implements the mechanical effect of these three SRD
+fighting styles (Character.fighting_style, applied in turn_engine.
+_pc_attack_params for Archery/Dueling and in _compute_ac below for
+Defense) - Great Weapon Fighting/Protection/Two-Weapon Fighting exist in
+the SRD but aren't modeled, so they're deliberately not accepted here
+rather than silently accepted and then doing nothing."""
+
+FIGHTING_STYLE_CLASSES = {"fighter", "ranger", "paladin"}
+"""The three base SRD classes that choose a Fighting Style at level 1."""
+
 
 class CharacterCreationError(ValueError):
     pass
@@ -164,7 +187,12 @@ def validate_standard_array(scores: Mapping[AbilityScore, int]) -> None:
         )
 
 
-def _compute_ac(inventory: list[str], equipment: dict[str, SrdEntry], dex_mod: int) -> int:
+def _compute_ac(
+    inventory: list[str],
+    equipment: dict[str, SrdEntry],
+    dex_mod: int,
+    fighting_style: str | None = None,
+) -> int:
     armor_item: SrdEntry | None = None
     shield_bonus = 0
     for idx in inventory:
@@ -179,8 +207,12 @@ def _compute_ac(inventory: list[str], equipment: dict[str, SrdEntry], dex_mod: i
         else:
             armor_item = item  # multiple non-shield armor pieces: last wins, not a real scenario
 
+    # Defense fighting style (Phase 9I): "+1 AC while wearing armor" - a
+    # shield alone doesn't count, matching the SRD text precisely.
+    defense_bonus = 1 if fighting_style == "defense" and armor_item is not None else 0
+
     if armor_item is None:
-        return 10 + dex_mod + shield_bonus
+        return 10 + dex_mod + shield_bonus + defense_bonus
 
     ac_info = armor_item["armor_class"]
     base: int = ac_info["base"]
@@ -189,7 +221,7 @@ def _compute_ac(inventory: list[str], equipment: dict[str, SrdEntry], dex_mod: i
         if "max_bonus" in ac_info:
             bonus = min(bonus, ac_info["max_bonus"])
         base += bonus
-    return base + shield_bonus
+    return base + shield_bonus + defense_bonus
 
 
 def create_character(
@@ -206,10 +238,23 @@ def create_character(
     persona: str | None = None,
     position: Position | None = None,
     srd: SrdIndex | None = None,
+    fighting_style: str | None = None,
 ) -> Character:
     srd = srd or load_srd()
     chosen_equipment = chosen_equipment or []
     position = position or Position(x=0, y=0)
+
+    if fighting_style is not None:
+        if class_index not in FIGHTING_STYLE_CLASSES:
+            raise CharacterCreationError(
+                f"{class_index} doesn't choose a Fighting Style (only "
+                f"{sorted(FIGHTING_STYLE_CLASSES)} do)"
+            )
+        if fighting_style not in VALID_FIGHTING_STYLES:
+            raise CharacterCreationError(
+                f"Unknown or unimplemented fighting style: {fighting_style!r} "
+                f"(implemented: {sorted(VALID_FIGHTING_STYLES)})"
+            )
 
     race = srd.races.get(race_index)
     if race is None:
@@ -255,7 +300,7 @@ def create_character(
     con_mod = ability_modifier(final_scores["CON"])
     dex_mod = ability_modifier(final_scores["DEX"])
     hp = max(1, cls["hit_die"] + con_mod)
-    ac = _compute_ac(inventory, srd.equipment, dex_mod)
+    ac = _compute_ac(inventory, srd.equipment, dex_mod, fighting_style)
 
     # chosen_skills can include non-skill proficiencies (e.g. Bard's musical
     # instruments - see CLAUDE.md); only "skill-*" entries count here.
@@ -301,6 +346,8 @@ def create_character(
         saving_throw_proficiencies=saving_throw_proficiencies,
         class_index=class_index,
         hit_die_sides=cls["hit_die"],
+        class_resources=dict(CLASS_RESOURCES_AT_LEVEL_1.get(class_index, {})),
+        fighting_style=fighting_style,
     )
 
 

@@ -81,6 +81,19 @@ round (Character.reaction_used_this_round) per SRD. General reactions
 one on someone else's turn mid-resolution is a bigger structural change
 than this pass takes on.
 
+Phase 9I adds four representative level-1 class features, each gated on
+Character.class_index so they only ever apply to the class that grants
+them: Fighting Style (Archery/Defense/Dueling - a static bonus chosen at
+creation, applied in _pc_attack_params or baked into `ac` directly for
+Defense), Second Wind and Rage (both new bonus-action verbs sharing 9H's
+ends_turn=False mechanism, each spending a Character.class_resources use
+restored by a short or long rest respectively - see resting.py), and
+Sneak Attack (Rogue, automatic on a qualifying hit rather than its own
+verb - see _resolve_single_attack). Rage's resistance/damage-bonus and
+Sneak Attack's dice are the only Phase 9I mechanics that touch the shared
+attack-resolution path; Fighting Style and the two new verbs are otherwise
+self-contained.
+
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
   params["path"], not just a destination - real pathfinding around
@@ -108,7 +121,7 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from src.engine.actions import ParsedAction
 from src.engine.character_creation import is_eligible_for_extra_attack
@@ -173,6 +186,20 @@ authoring format carries a save DC yet) - entering a hazard square always
 deals this flat, undodgeable amount, a deliberate simplification of the
 full caltrops rule, not a different game fact."""
 
+_RAGE_RESISTANT_DAMAGE_TYPES = {"bludgeoning", "piercing", "slashing"}
+"""Phase 9I: Rage grants resistance to these three damage types per SRD -
+checked in _apply_damage_and_handle_downing against a raging target."""
+
+SECOND_WIND_DICE = "1d10"
+"""SRD 5.1: Second Wind (Fighter) heals 1d10 + fighter level - the die size
+is a fixed game fact, not derivable from anything else on Character."""
+
+RAGE_DAMAGE_BONUS = 2
+"""SRD 5.1: Rage's flat melee-STR damage bonus at low levels (+2 through
+character level 8; it increases at higher levels, out of this pass's
+roughly-1-5 scope, same boundary as PROFICIENCY_BONUS_BY_LEVEL/
+SPELL_SLOTS_BY_LEVEL in character_creation.py)."""
+
 
 class TurnEngineError(ValueError):
     pass
@@ -200,6 +227,15 @@ class AttackParams:
     range_long_feet: int | None
     """None for melee (no "beyond normal range" concept) - see
     rules.weapon_range_feet/monster_action_range_feet."""
+    is_finesse_or_ranged: bool = False
+    """Phase 9I: only ever True from _pc_attack_params, when the weapon has
+    the SRD "finesse" property or is a ranged weapon - Sneak Attack's
+    (Rogue) weapon-type requirement. Always False for monster/spell attack
+    params, which Sneak Attack never applies to."""
+    is_melee_str_weapon: bool = False
+    """Phase 9I: only ever True from _pc_attack_params, when the weapon is
+    melee and STR governs its attack roll (not finesse-as-DEX) - Rage's
+    flat melee damage bonus applies only to these, per SRD."""
 
 
 def _match_weapon_by_name(weapon_name: str, srd: SrdIndex) -> SrdEntry | None:
@@ -241,6 +277,9 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
 
     str_mod = ability_modifier(actor.stats["STR"])
     dex_mod = ability_modifier(actor.stats["DEX"])
+    # Rage (Phase 9I): a flat melee-STR damage bonus, per SRD - applies to
+    # an unarmed strike too (it's a melee attack using Strength).
+    rage_bonus = RAGE_DAMAGE_BONUS if actor.is_raging else 0
 
     if weapon is None:
         # Unarmed strike (PHB): 1 bludgeoning damage + STR mod, no damage die,
@@ -249,20 +288,48 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
             attack_bonus=str_mod + actor.proficiency_bonus,
             damage_dice_count=0,
             damage_dice_sides=4,
-            damage_bonus=str_mod + 1,
+            damage_bonus=str_mod + 1 + rage_bonus,
             damage_type="bludgeoning",
             source_name="unarmed strike",
             range_normal_feet=5,
             range_long_feet=None,
+            is_melee_str_weapon=True,
         )
 
     properties = {p["index"] for p in (weapon.get("properties") or [])}
-    if "finesse" in properties:
+    is_finesse = "finesse" in properties
+    is_ranged = weapon.get("weapon_range") == "Ranged"
+    if is_finesse:
         ability_mod = max(str_mod, dex_mod)
-    elif weapon.get("weapon_range") == "Ranged":
+    elif is_ranged:
         ability_mod = dex_mod
     else:
         ability_mod = str_mod
+    # A plain (non-finesse) melee weapon is the only case Rage's flat melee
+    # damage bonus and Sneak Attack's weapon-type check need to tell apart -
+    # a finesse weapon numerically using STR (rare - DEX ties or loses) is
+    # still finesse, not "melee-STR", so this checks the property directly
+    # rather than which ability_mod branch fired above.
+    is_melee_str_weapon = not is_finesse and not is_ranged
+
+    # Fighting Style (Phase 9I): Archery (+2 ranged attack rolls) and
+    # Dueling (+2 damage, one-handed melee weapon with no other weapon
+    # carried - this engine has no worn-vs-carried distinction, so "no
+    # other weapon" means no other weapon-category item anywhere in
+    # inventory, matching how has_non_proficient_armor already treats
+    # inventory as "currently equipped") apply here; Defense's +1 AC is
+    # baked into Character.ac at creation instead (see character_creation.
+    # _compute_ac), since this engine computes AC once, not per-attack.
+    archery_bonus = 2 if actor.fighting_style == "archery" and is_ranged else 0
+    other_weapons = sum(
+        1
+        for idx in actor.inventory
+        if (item := srd.equipment.get(idx)) and item.get("weapon_category")
+    )
+    dueling_bonus = (
+        2 if actor.fighting_style == "dueling" and not is_ranged and other_weapons <= 1 else 0
+    )
+    rage_bonus = RAGE_DAMAGE_BONUS if actor.is_raging and is_melee_str_weapon else 0
 
     proficient = is_class_proficient_with(actor, weapon["index"], srd)
     prof_bonus = actor.proficiency_bonus if proficient else 0
@@ -270,14 +337,16 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
 
     dice_count, dice_sides, notation_bonus = parse_dice_notation(weapon["damage"]["damage_dice"])
     return AttackParams(
-        attack_bonus=ability_mod + prof_bonus,
+        attack_bonus=ability_mod + prof_bonus + archery_bonus,
         damage_dice_count=dice_count,
         damage_dice_sides=dice_sides,
-        damage_bonus=ability_mod + notation_bonus,
+        damage_bonus=ability_mod + notation_bonus + dueling_bonus + rage_bonus,
         damage_type=weapon["damage"]["damage_type"]["index"],
         source_name=weapon["name"],
         range_normal_feet=range_normal_feet,
         range_long_feet=range_long_feet,
+        is_finesse_or_ranged=is_finesse or is_ranged,
+        is_melee_str_weapon=is_melee_str_weapon,
     )
 
 
@@ -355,6 +424,20 @@ def _has_adjacent_hostile(state: GameState, actor: Character) -> bool:
         and not other.is_dead
         and other.is_pc != actor.is_pc
         and distance_feet(actor.position, other.position) <= 5
+        for other in state.characters.values()
+    )
+
+
+def _ally_adjacent_to(state: GameState, attacker: Character, target: Character) -> bool:
+    """True if any living ally of `attacker` (same `is_pc`, excluding
+    `attacker` and `target` themselves) is within 5ft of `target` - Sneak
+    Attack's (Phase 9I, Rogue) alternate trigger alongside advantage."""
+    return any(
+        other.id != attacker.id
+        and other.id != target.id
+        and not other.is_dead
+        and other.is_pc == attacker.is_pc
+        and distance_feet(target.position, other.position) <= 5
         for other in state.characters.values()
     )
 
@@ -451,6 +534,25 @@ def _resolve_single_attack(
             },
         )
     )
+
+    # Sneak Attack (Phase 9I, Rogue): once per turn, on a hit with a
+    # finesse/ranged weapon, when this roll had advantage or an ally is
+    # adjacent to the target - bonus damage rolled separately (not folded
+    # into AttackParams, since its dice size (d6) generally differs from
+    # the weapon's own) and doubled on a crit exactly like resolve_attack
+    # already doubles the weapon's own dice.
+    if (
+        result.hit
+        and actor.class_index == "rogue"
+        and params.is_finesse_or_ranged
+        and not actor.sneak_attack_used_this_turn
+        and (advantage or _ally_adjacent_to(state, actor, target))
+    ):
+        actor.sneak_attack_used_this_turn = True
+        sneak_dice = 2 if result.critical else 1
+        sneak_damage = roll(sneak_dice, 6, modifier=0, rng=rng).total
+        result = replace(result, damage=(result.damage or 0) + sneak_damage)
+        state.events[-1].payload["sneak_attack_damage"] = sneak_damage
 
     if result.hit and result.damage is not None:
         _apply_damage_and_handle_downing(
@@ -626,6 +728,12 @@ def _apply_damage_and_handle_downing(
     params for the concentration check below) - both can reduce a character
     to 0 HP and need the same monster-dies-outright-vs-PC-goes-unconscious
     handling."""
+    # Rage (Phase 9I): resistance halves bludgeoning/piercing/slashing
+    # damage (rounded down, plain integer division) before anything else
+    # sees it - the concentration check below uses "half the damage you
+    # take" per SRD, meaning the post-resistance amount, not the raw hit.
+    if target.is_raging and damage_type in _RAGE_RESISTANT_DAMAGE_TYPES:
+        damage //= 2
     actual_loss = apply_damage(target, damage)
     state.events.append(
         Event(
@@ -941,6 +1049,73 @@ def _resolve_disengage(state: GameState, actor: Character) -> None:
     state.events.append(
         Event(round=state.round, turn_index=state.current_turn, actor=actor.id, type="disengage")
     )
+
+
+def _use_class_resource(actor: Character, resource: str) -> None:
+    """Consumes one use of a Character.class_resources entry (Phase 9I),
+    raising a clear error if none remain - shared by Second Wind and Rage
+    so the "out of uses" message stays worded consistently."""
+    remaining = actor.class_resources.get(resource, 0)
+    if remaining <= 0:
+        raise TurnEngineError(f"{actor.id} has no {resource.replace('_', ' ')} uses remaining")
+    actor.class_resources[resource] = remaining - 1
+
+
+def _resolve_second_wind(state: GameState, actor: Character, rng: random.Random) -> bool:
+    """Phase 9I (Fighter): a bonus-action self-heal, 1d10 + level, per SRD.
+    Returns False (doesn't end the turn) like a bonus-action spell -
+    resolve_action's ends_turn flag treats it identically."""
+    if actor.bonus_action_used:
+        raise TurnEngineError(
+            f"{actor.id} has already used their bonus action this turn - cannot use Second Wind"
+        )
+    _use_class_resource(actor, "second_wind")
+    dice_count, dice_sides, _ = parse_dice_notation(SECOND_WIND_DICE)
+    healed = min(
+        roll(dice_count, dice_sides, modifier=actor.level, rng=rng).total,
+        actor.max_hp - actor.hp,
+    )
+    actor.hp += healed
+    actor.bonus_action_used = True
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="hp_change",
+            payload={
+                "amount": healed,
+                "source": "Second Wind",
+                "target": actor.id,
+                "hp_remaining": actor.hp,
+            },
+        )
+    )
+    return False
+
+
+def _resolve_rage(state: GameState, actor: Character, rng: random.Random) -> bool:
+    """Phase 9I (Barbarian): a bonus-action that activates a transient
+    is_raging flag (resistance to bludgeoning/piercing/slashing damage,
+    plus a flat melee-STR damage bonus - see _pc_attack_params/
+    _apply_damage_and_handle_downing). Returns False (doesn't end the turn)
+    like Second Wind/a bonus-action spell. No dice to roll - `rng` is
+    accepted only so this resolver's signature matches its siblings and
+    resolve_action's dispatch doesn't need a special case."""
+    del rng
+    if actor.bonus_action_used:
+        raise TurnEngineError(
+            f"{actor.id} has already used their bonus action this turn - cannot Rage"
+        )
+    if actor.is_raging:
+        raise TurnEngineError(f"{actor.id} is already raging")
+    _use_class_resource(actor, "rage")
+    actor.is_raging = True
+    actor.bonus_action_used = True
+    state.events.append(
+        Event(round=state.round, turn_index=state.current_turn, actor=actor.id, type="rage")
+    )
+    return False
 
 
 def _resolve_help(state: GameState, actor: Character, action: ParsedAction) -> None:
@@ -1837,8 +2012,13 @@ def resolve_action(
     # why this generic per-call reset would break it) - is_dodging being
     # cleared an extra time when a bonus-action spell precedes this actor's
     # own main action in the same turn is harmless, since it wasn't going
-    # to read True again this turn anyway.
+    # to read True again this turn anyway. sneak_attack_used_this_turn
+    # (Phase 9I) resets the same safe way - a Rogue's plain `attack` never
+    # produces more than one resolve_action call per real turn under this
+    # engine (no Extra Attack, no two-weapon-fighting bonus-action offhand
+    # attack), so there's no equivalent risk to bonus_action_used's.
     actor.is_dodging = False
+    actor.sneak_attack_used_this_turn = False
 
     if action.verb == "invalid":
         # The DM didn't understand the action - not a system error. No
@@ -1885,6 +2065,10 @@ def resolve_action(
         _resolve_shove(state, actor, action, rng)
     elif action.verb == "cast_spell":
         ends_turn = _resolve_cast_spell(state, actor, action, rng, srd)
+    elif action.verb == "second_wind":
+        ends_turn = _resolve_second_wind(state, actor, rng)
+    elif action.verb == "rage":
+        ends_turn = _resolve_rage(state, actor, rng)
     elif action.verb == "use_item":
         _resolve_use_item(state, actor, action, rng)
     elif action.verb == "death_save":
