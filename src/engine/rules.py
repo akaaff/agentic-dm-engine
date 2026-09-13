@@ -37,9 +37,19 @@ def resolve_attack(
     rng: random.Random,
     advantage: bool = False,
     disadvantage: bool = False,
+    force_critical: bool = False,
 ) -> AttackResult:
     """A natural 1 always misses, a natural 20 always hits and doubles the
-    damage dice (not the flat bonus), per SRD rules."""
+    damage dice (not the flat bonus), per SRD rules.
+
+    `force_critical` (Phase 9C) is for the SRD rule that any hit against an
+    unconscious creature is a critical hit - it only affects whether a hit's
+    damage dice double, not whether the attack hits at all: a natural 1
+    still always misses, and a non-natural-20 roll that doesn't reach
+    defender_ac is still a miss even with force_critical set. Callers decide
+    when it applies (turn_engine checks the target's `unconscious` condition
+    before calling this); this module has no Condition/GameState coupling of
+    its own to make that check itself."""
     attack_roll = roll_d20(
         modifier=attack_bonus, rng=rng, advantage=advantage, disadvantage=disadvantage
     )
@@ -48,11 +58,12 @@ def resolve_attack(
     if natural == 1:
         return AttackResult(attack_roll, hit=False, critical=False, damage=None, damage_type=None)
 
-    critical = natural == 20
-    hit = critical or attack_roll.total >= defender_ac
+    natural_twenty = natural == 20
+    hit = natural_twenty or attack_roll.total >= defender_ac
     if not hit:
         return AttackResult(attack_roll, hit=False, critical=False, damage=None, damage_type=None)
 
+    critical = natural_twenty or force_critical
     dice_count = damage_dice_count * 2 if critical else damage_dice_count
     damage_roll = roll(dice_count, damage_dice_sides, modifier=damage_bonus, rng=rng)
     damage = max(0, damage_roll.total)

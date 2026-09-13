@@ -295,6 +295,15 @@ def _resolve_attack(
     advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
     actor.has_help_advantage = False
 
+    # Phase 9C: per SRD, any hit against an unconscious creature is a
+    # critical hit - checked before resolve_attack runs (not after) since it
+    # must reflect whether the target was ALREADY down before this attack,
+    # not whether this very hit is the one that drops them (a still-standing
+    # target doesn't get the helpless treatment on the hit that first knocks
+    # them out). Reused below to apply the SRD's other unconscious-hit
+    # consequence, 2 automatic death-save failures, once damage resolves.
+    already_unconscious = has_condition(target, "unconscious")
+
     result = resolve_attack(
         defender_ac=target.ac,
         attack_bonus=params.attack_bonus,
@@ -308,6 +317,7 @@ def _resolve_attack(
         or has_non_proficient_armor(actor, srd)
         or long_range_disadvantage
         or condition_attack_disadvantage(actor, target, distance),
+        force_critical=already_unconscious,
     )
 
     state.events.append(
@@ -332,6 +342,43 @@ def _resolve_attack(
         return
 
     _apply_damage_and_handle_downing(state, actor, target, result.damage, params.damage_type)
+
+    # Separate from normal damage (per SRD): a hit against an already-
+    # unconscious PC also inflicts 2 automatic death-save failures, on top
+    # of whatever damage did (which is usually nothing further, since the
+    # target is already clamped at 0 HP). Skipped once already dead - either
+    # this same hit's damage handling somehow killed them outright (it
+    # can't, PCs never get is_dead=True from damage alone) or a previous
+    # failure already did; either way there's nothing left to fail.
+    if already_unconscious and target.is_pc and not target.is_dead:
+        _apply_unconscious_hit_death_save_failures(state, target)
+
+
+def _apply_unconscious_hit_death_save_failures(state: GameState, target: Character) -> None:
+    """The other half of the Phase 9C unconscious-hit rule (see
+    _resolve_attack's force_critical call) - 2 automatic death-save failures,
+    inflicted directly on the target's own death-save fields rather than
+    requiring them to roll anything. Shares _check_death_save_failure_
+    threshold with _resolve_death_save so a hit pushing failures to 3 kills
+    exactly like 3 self-rolled failures would, not a second, drifting copy
+    of that threshold check."""
+    target.death_save_failures += 2
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=target.id,
+            type="saving_throw",
+            payload={
+                "kind": "death_save",
+                "natural": None,
+                "cause": "hit_while_unconscious",
+                "successes": target.death_save_successes,
+                "failures": target.death_save_failures,
+            },
+        )
+    )
+    _check_death_save_failure_threshold(state, target)
 
 
 def _apply_damage_and_handle_downing(
@@ -371,7 +418,21 @@ def _apply_damage_and_handle_downing(
         )
         return
 
-    # PC at 0 HP: unconscious, not dead - death_save (below) decides its fate.
+    if has_condition(target, "unconscious"):
+        # Already down before this hit landed (Phase 9C: a hit against an
+        # already-unconscious PC) - do NOT re-run the "just went unconscious"
+        # setup below, which would reset death_save_successes/failures/
+        # is_stable to a fresh start every single time. That reset is only
+        # correct the *first* time a PC drops to 0 HP; before this check
+        # existed, every subsequent hit against an already-downed PC would
+        # have silently wiped whatever death-save progress they'd
+        # accumulated, which would also wipe the 2 automatic failures
+        # _resolve_attack applies right after this function returns. Still
+        # at 0 HP, still unconscious - nothing new to narrate here.
+        return
+
+    # PC at 0 HP for the first time this hit: unconscious, not dead -
+    # death_save (below) decides its fate.
     apply_condition(target, Condition(name="unconscious", source="0 HP"))
     target.death_save_successes = 0
     target.death_save_failures = 0
@@ -825,6 +886,28 @@ def _resolve_use_item(
     )
 
 
+def _check_death_save_failure_threshold(state: GameState, actor: Character) -> None:
+    """3 total death_save_failures kills, per SRD - factored out so
+    _resolve_death_save's own 3-failures case (a real roll, or a natural 1's
+    2 automatic ones) and _apply_unconscious_hit_death_save_failures'
+    (Phase 9C: 2 automatic failures from a hit while already unconscious)
+    can't drift apart on this one threshold. Only handles the failure side -
+    the 3-successes-stabilizes case has no equivalent outside a real death
+    save roll, so it stays in _resolve_death_save."""
+    if actor.death_save_failures >= 3:
+        actor.is_dead = True
+        remove_condition(actor, "unconscious")
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="death",
+                payload={"cause": "failed death saves"},
+            )
+        )
+
+
 def _resolve_death_save(state: GameState, actor: Character, rng: random.Random) -> None:
     if not has_condition(actor, "unconscious"):
         raise TurnEngineError(f"{actor.id} is not unconscious - no death save needed")
@@ -873,19 +956,8 @@ def _resolve_death_save(state: GameState, actor: Character, rng: random.Random) 
         )
     )
 
-    if actor.death_save_failures >= 3:
-        actor.is_dead = True
-        remove_condition(actor, "unconscious")
-        state.events.append(
-            Event(
-                round=state.round,
-                turn_index=state.current_turn,
-                actor=actor.id,
-                type="death",
-                payload={"cause": "failed death saves"},
-            )
-        )
-    elif actor.death_save_successes >= 3:
+    _check_death_save_failure_threshold(state, actor)
+    if not actor.is_dead and actor.death_save_successes >= 3:
         actor.is_stable = True
         state.events.append(
             Event(
@@ -896,6 +968,69 @@ def _resolve_death_save(state: GameState, actor: Character, rng: random.Random) 
                 payload={"condition": "stable"},
             )
         )
+
+
+def _resolve_stabilize(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> None:
+    """New Phase 9C verb: a DC 10 Medicine check (SRD "stabilizing a
+    creature"), rolled with the ACTOR's own stats/proficiency, not the dying
+    target's - the target rolls nothing, matching how a real death save's 3
+    successes already sets `is_stable` without any further roll needed. Lets
+    an ally proactively stop a downed party member's death-save clock
+    instead of just hoping their own rolls go well."""
+    if action.target is None:
+        raise TurnEngineError("stabilize action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown stabilize target: {action.target}")
+    if target.is_dead or target.is_stable or not has_condition(target, "unconscious"):
+        raise TurnEngineError(
+            f"{target.id} is not a valid stabilize target - must be unconscious, "
+            "not already stable, and not dead"
+        )
+
+    skill = "medicine"
+    ability = skill_ability(skill, srd)  # WIS, per SRD
+    proficient = f"skill-{normalize_skill_name(skill)}" in actor.skill_proficiencies
+    modifier = ability_check_modifier(actor, ability, proficient=proficient)
+
+    advantage = actor.has_help_advantage
+    actor.has_help_advantage = False
+    disadvantage = condition_check_disadvantage(actor)
+
+    result, success = resolve_skill_check(
+        modifier=modifier, dc=10, rng=rng, advantage=advantage, disadvantage=disadvantage
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="skill_check",
+            payload={
+                "skill": skill,
+                "ability": ability,
+                "dc": 10,
+                "roll_total": result.total,
+                "success": success,
+                "target": target.id,
+            },
+        )
+    )
+    if not success:
+        return
+
+    target.is_stable = True
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=target.id,
+            type="condition_applied",
+            payload={"condition": "stable"},
+        )
+    )
 
 
 def _check_victory_defeat(state: GameState) -> None:
@@ -1043,6 +1178,8 @@ def resolve_action(
         _resolve_use_item(state, actor, action, rng)
     elif action.verb == "death_save":
         _resolve_death_save(state, actor, rng)
+    elif action.verb == "stabilize":
+        _resolve_stabilize(state, actor, action, rng, srd)
     elif action.verb == "end_turn":
         pass
     else:
