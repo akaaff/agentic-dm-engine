@@ -24,3 +24,7 @@ data/generated_images/
 
 # wandb local run cache (Day 26 fine-tune logging) - the run itself lives on wandb.ai
 wandb/
+
+# parallel-agent worktrees (Phase 9 initiative) - each is its own git checkout,
+# not part of this repo's own tree
+.claude/worktrees/
