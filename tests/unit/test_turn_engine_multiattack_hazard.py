@@ -1,7 +1,8 @@
 """Phase 9F: Multiattack (a monster's Multiattack action rolls each of its
-named sub-attacks as its own attack_roll event) and ranged-while-engaged
+named sub-attacks as its own attack_roll event), ranged-while-engaged
 disadvantage (a ranged attack rolls with disadvantage while a hostile is
-within 5ft of the attacker).
+within 5ft of the attacker), and hazard terrain (a "hazard" square, previously
+mechanically inert, now deals a small fixed amount of damage on entry).
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from src.engine.encounter import build_encounter_state, monster_to_character
 from src.engine.position import BattleMap, Position
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
-from src.engine.turn_engine import resolve_action
+from src.engine.turn_engine import HAZARD_DAMAGE, HAZARD_DAMAGE_TYPE, resolve_action
 
 
 class _FixedRandom:
@@ -204,3 +205,68 @@ def test_melee_attack_is_unaffected_by_the_engaged_disadvantage_check() -> None:
 
     attack_event = next(e for e in state.events if e.type == "attack_roll")
     assert attack_event.payload["natural"] == 15
+
+
+# --- Hazard terrain ----------------------------------------------------------
+
+
+def _build_move_state(terrain: list[list[str]]) -> GameState:
+    fighter = create_character(
+        character_id="thorin",
+        name="Thorin",
+        race_index="human",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+        chosen_equipment=["longsword"],
+        position=Position(x=0, y=0),
+    )
+    battle_map = BattleMap(width=2, height=1, terrain=terrain, spawn_points={})  # type: ignore[arg-type]
+    return GameState(
+        encounter_id="hazard_test",
+        characters={fighter.id: fighter},
+        turn_order=[fighter.id],
+        current_turn=0,
+        round=1,
+        battle_map=battle_map,
+    )
+
+
+def test_move_into_hazard_square_deals_damage_and_appends_event() -> None:
+    state = _build_move_state([["floor", "hazard"]])
+    starting_hp = state.characters["thorin"].hp
+    action = ParsedAction(
+        actor="thorin",
+        verb="move",
+        raw_text="I step onto the bone-littered ground",
+        params={"path": [{"x": 1, "y": 0}]},
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert state.characters["thorin"].hp == starting_hp - HAZARD_DAMAGE
+    hazard_events = [e for e in state.events if e.type == "hazard_damage"]
+    assert len(hazard_events) == 1
+    assert hazard_events[0].payload == {
+        "amount": HAZARD_DAMAGE,
+        "damage_type": HAZARD_DAMAGE_TYPE,
+        "position": {"x": 1, "y": 0},
+        "hp_remaining": starting_hp - HAZARD_DAMAGE,
+    }
+
+
+def test_move_into_non_hazard_square_deals_no_damage() -> None:
+    # Regression guard: an ordinary floor square must not trigger the new
+    # hazard-damage path at all.
+    state = _build_move_state([["floor", "floor"]])
+    starting_hp = state.characters["thorin"].hp
+    action = ParsedAction(
+        actor="thorin",
+        verb="move",
+        raw_text="I step onto plain ground",
+        params={"path": [{"x": 1, "y": 0}]},
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert state.characters["thorin"].hp == starting_hp
+    assert not any(e.type == "hazard_damage" for e in state.events)

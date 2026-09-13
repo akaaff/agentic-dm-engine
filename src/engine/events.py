@@ -28,6 +28,7 @@ EventType = Literal[
     "dodge",
     "disengage",
     "help",
+    "hazard_damage",
 ]
 
 

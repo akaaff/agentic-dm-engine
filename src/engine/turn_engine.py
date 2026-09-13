@@ -55,7 +55,11 @@ sub-attacks as its own attack_roll event, rather than being unresolvable or
 mistakenly treated like any other single action. A ranged attack while a
 hostile is within 5ft of the attacker also now rolls with disadvantage
 (_has_adjacent_hostile), per SRD's "Ranged Attacks in Close Combat" - not
-previously enforced at all.
+previously enforced at all. Moving onto a "hazard" terrain square
+(previously declared in TerrainType but with zero mechanical effect - see
+_resolve_move) now deals a small fixed amount of damage, matching the
+caltrops-like "littered with bones" flavor of the one hazard square this
+project has authored so far (data/campaigns/encounters/wolf_den.yaml).
 
 Deliberate simplifications (documented, not silent):
 - Movement takes an explicit path (list of intermediate squares) in
@@ -122,6 +126,21 @@ HEALING_POTION_DICE = "2d4+2"
 for why (the Magic Items endpoint isn't vendored, and its entries don't carry
 machine-readable mechanical data anyway - this amount is straight from the
 SRD 5.1 text)."""
+
+HAZARD_DAMAGE = 1
+HAZARD_DAMAGE_TYPE = "piercing"
+"""Phase 9F: "hazard" terrain (TerrainType, position.py) had zero mechanical
+effect until now - confirmed via `grep -rn '"hazard"' src/` finding only the
+type declaration. The one hazard square this project has authored so far
+(data/campaigns/encounters/wolf_den.yaml, in a den described as "littered
+with bones") is functionally a bed of sharp bone/rock shards underfoot -
+close enough to the SRD's own Caltrops item (vendored in
+data/srd/5e-SRD-Equipment.json) to reuse its exact numbers rather than
+invent new ones: "Any creature that enters the area... take[s] 1 piercing
+damage." This engine doesn't model the caltrops' DC 15 DEX save (no hazard
+authoring format carries a save DC yet) - entering a hazard square always
+deals this flat, undodgeable amount, a deliberate simplification of the
+full caltrops rule, not a different game fact."""
 
 
 class TurnEngineError(ValueError):
@@ -485,6 +504,60 @@ def _apply_damage_and_handle_downing(
     )
 
 
+def _apply_hazard_damage(state: GameState, actor: Character, position: Position) -> None:
+    """A character that moves onto a "hazard" square takes HAZARD_DAMAGE
+    immediately - see that constant's docstring for the SRD-adjacent amount
+    and flavor. A distinct event type ("hazard_damage", not "damage_dealt")
+    since there's no attacking character here, just terrain; mirrors
+    _apply_damage_and_handle_downing's monster-dies/PC-goes-unconscious
+    handling for the (unlikely, at 1 flat damage) case this finishes off an
+    already-critical character."""
+    actual_loss = apply_damage(actor, HAZARD_DAMAGE)
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="hazard_damage",
+            payload={
+                "amount": actual_loss,
+                "damage_type": HAZARD_DAMAGE_TYPE,
+                "position": {"x": position.x, "y": position.y},
+                "hp_remaining": actor.hp,
+            },
+        )
+    )
+    if actor.hp > 0 or actor.is_dead:
+        return
+
+    if not actor.is_pc:
+        actor.is_dead = True
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="death",
+                payload={"killed_by": "hazard"},
+            )
+        )
+        return
+
+    apply_condition(actor, Condition(name="unconscious", source="hazard"))
+    actor.death_save_successes = 0
+    actor.death_save_failures = 0
+    actor.is_stable = False
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="condition_applied",
+            payload={"condition": "unconscious"},
+        )
+    )
+
+
 def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> None:
     if state.battle_map is None:
         raise TurnEngineError("Cannot resolve movement without a battle_map on GameState")
@@ -539,6 +612,14 @@ def _resolve_move(state: GameState, actor: Character, action: ParsedAction) -> N
             },
         )
     )
+
+    # Phase 9F: "hazard" terrain previously had zero mechanical effect - see
+    # HAZARD_DAMAGE's docstring for the amount/flavor reasoning. Only the
+    # final destination is checked, matching this function's pre-existing
+    # "only the destination matters, not squares passed through" stance for
+    # occupancy above.
+    if state.battle_map.terrain[destination.y][destination.x] == "hazard":
+        _apply_hazard_damage(state, actor, destination)
 
 
 def _resolve_skill_check(
