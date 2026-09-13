@@ -63,6 +63,50 @@ body {
   padding: 1rem;
 }
 
+.live-play-detail {
+  display: flex;
+  flex-direction: column;
+}
+
+.character-detail-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.character-detail-sheet h2 {
+  font-size: 1.05rem;
+  margin: 0.5rem 0 0;
+}
+
+.detail-portrait {
+  width: 100%;
+}
+
+.detail-stats-table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.detail-stats-table td {
+  padding: 0.1rem 0.6rem 0.1rem 0;
+}
+
+.detail-action-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.3rem 0 0;
+  font-size: 0.82rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.detail-action-unavailable {
+  color: #766c87;
+  text-decoration: line-through;
+}
+
 .wizard h1 {
   font-size: 1.5rem;
 }
@@ -333,6 +377,24 @@ button.secondary {
   color: #9d94ad;
 }
 
+.companion-thumbnail {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.companion-thumbnail-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #3a3448;
+  color: #cfc6de;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
 .companion-persona {
   font-size: 0.85rem;
   margin: 0.35rem 0 0;
@@ -362,10 +424,10 @@ button.secondary {
 
 .live-play {
   width: 100%;
-  max-width: 1200px;
+  max-width: 1480px;
   padding: 1.5rem;
   display: grid;
-  grid-template-columns: 1fr 280px;
+  grid-template-columns: 1fr 280px 280px;
   gap: 1.5rem;
 }
 

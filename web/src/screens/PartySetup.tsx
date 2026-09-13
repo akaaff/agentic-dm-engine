@@ -1,7 +1,37 @@
 import { useEffect, useState } from 'react'
 import { api, type Character } from '../api/client'
+import { portraitUrl } from '../utils/portraits'
 
 const MAX_COMPANIONS = 4
+
+function initials(name: string): string {
+  return name
+    .split(/[\s_]+/)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+}
+
+/** Small thumbnail portrait, falling back to initials on a 404 (the batch
+ * job may not have generated this companion's combination yet) - same
+ * onError-driven fallback CombatGrid's tokens use. */
+function CompanionThumbnail({ companion }: { companion: Character }) {
+  const [imageFailed, setImageFailed] = useState(false)
+  const url = portraitUrl(companion)
+
+  if (url && !imageFailed) {
+    return (
+      <img
+        className="companion-thumbnail"
+        src={url}
+        alt=""
+        onError={() => setImageFailed(true)}
+      />
+    )
+  }
+  return <div className="companion-thumbnail companion-thumbnail-fallback">{initials(companion.name)}</div>
+}
 
 export default function PartySetup({
   onNext,
@@ -51,6 +81,7 @@ export default function PartySetup({
               checked={selected.includes(c.id)}
               onChange={() => toggle(c.id)}
             />
+            <CompanionThumbnail companion={c} />
             <div>
               <strong>{c.name}</strong>
               <div className="companion-meta">

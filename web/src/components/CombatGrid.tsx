@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import type { LiveBattleMap, LiveCharacter, TerrainType } from '../ws/sessionClient'
+import { portraitUrl } from '../utils/portraits'
 
 const CELL_SIZE = 40
+const TOKEN_RADIUS = CELL_SIZE / 2 - 4
 
 const TERRAIN_FILL: Record<TerrainType, string> = {
   floor: '#1c1924',
@@ -22,6 +25,48 @@ function initials(name: string): string {
     .slice(0, 2)
     .join('')
     .toUpperCase()
+}
+
+/** One combat-grid token, at local (0,0) - the caller wraps it in a
+ * translate(cx,cy) group. Renders the character's portrait clipped to the
+ * shared circular clipPath, falling back to the original colored-circle +
+ * initials rendering (via React state, not just CSS) whenever portraitUrl
+ * returns null - not yet enough data to pick one - or the <image> itself
+ * fails to load, which is the expected/common case until the portrait
+ * batch job has generated that particular combination. */
+function TokenFace({ character, stroke, strokeWidth }: {
+  character: LiveCharacter
+  stroke: string
+  strokeWidth: number
+}) {
+  const [imageFailed, setImageFailed] = useState(false)
+  const url = portraitUrl(character)
+
+  if (url && !imageFailed) {
+    return (
+      <>
+        <image
+          href={url}
+          x={-TOKEN_RADIUS}
+          y={-TOKEN_RADIUS}
+          width={TOKEN_RADIUS * 2}
+          height={TOKEN_RADIUS * 2}
+          clipPath="url(#token-clip)"
+          onError={() => setImageFailed(true)}
+        />
+        <circle cx={0} cy={0} r={TOKEN_RADIUS} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+      </>
+    )
+  }
+
+  return (
+    <>
+      <circle cx={0} cy={0} r={TOKEN_RADIUS} fill={tokenColor(character)} stroke={stroke} strokeWidth={strokeWidth} />
+      <text x={0} y={4} textAnchor="middle" fontSize={11} fill="#0d0b12">
+        {initials(character.name)}
+      </text>
+    </>
+  )
 }
 
 export default function CombatGrid({
@@ -55,6 +100,11 @@ export default function CombatGrid({
       role="img"
       aria-label="Combat grid"
     >
+      <defs>
+        <clipPath id="token-clip">
+          <circle cx={0} cy={0} r={TOKEN_RADIUS} />
+        </clipPath>
+      </defs>
       {battleMap.terrain.map((row, y) =>
         row.map((terrain, x) => (
           <rect
@@ -76,28 +126,22 @@ export default function CombatGrid({
         const cy = character.position.y * CELL_SIZE + CELL_SIZE / 2
         const isActing = character.id === currentActorId
         return (
-          <g key={character.id} className="grid-token-group">
-            <circle
-              cx={cx}
-              cy={cy}
-              r={CELL_SIZE / 2 - 4}
-              fill={tokenColor(character)}
+          <g key={character.id} className="grid-token-group" transform={`translate(${cx},${cy})`}>
+            <TokenFace
+              character={character}
               stroke={isActing ? '#ffd166' : character.id === myCharacterId ? '#ffffff' : 'none'}
               strokeWidth={isActing ? 3 : 2}
             />
-            <text x={cx} y={cy + 4} textAnchor="middle" fontSize={11} fill="#0d0b12">
-              {initials(character.name)}
-            </text>
             <rect
-              x={cx - CELL_SIZE / 2 + 3}
-              y={cy + CELL_SIZE / 2 - 10}
+              x={-CELL_SIZE / 2 + 3}
+              y={CELL_SIZE / 2 - 10}
               width={CELL_SIZE - 6}
               height={4}
               fill="#3a3448"
             />
             <rect
-              x={cx - CELL_SIZE / 2 + 3}
-              y={cy + CELL_SIZE / 2 - 10}
+              x={-CELL_SIZE / 2 + 3}
+              y={CELL_SIZE / 2 - 10}
               width={Math.max(0, ((CELL_SIZE - 6) * character.hp) / Math.max(1, character.max_hp))}
               height={4}
               fill="#4caf50"

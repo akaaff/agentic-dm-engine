@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import CharacterDetailSheet from '../components/CharacterDetailSheet'
 import CharacterSheet from '../components/CharacterSheet'
 import CombatGrid from '../components/CombatGrid'
 import NarrationFeed from '../components/NarrationFeed'
@@ -93,6 +94,11 @@ export default function LivePlay({
             )
           })}
       </div>
+      {gameState?.characters[myCharacterId] && (
+        <div className="live-play-detail">
+          <CharacterDetailSheet character={gameState.characters[myCharacterId]} />
+        </div>
+      )}
     </div>
   )
 }
