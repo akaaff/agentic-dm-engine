@@ -52,6 +52,8 @@ def test_create_human_fighter_end_to_end() -> None:
     assert sorted(character.skill_proficiencies) == sorted(
         ["skill-athletics", "skill-perception", "skill-insight", "skill-religion"]
     )
+    # Fighter's SRD saving throws (Phase 9A)
+    assert sorted(character.saving_throw_proficiencies) == ["CON", "STR"]
 
 
 def test_create_elf_wizard_end_to_end() -> None:

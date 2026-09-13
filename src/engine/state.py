@@ -27,8 +27,10 @@ ConditionName = Literal[
     "restrained",
     "stunned",
     "unconscious",
-    "exhaustion",
 ]
+"""Exhaustion isn't in this list - SRD exhaustion is a leveled (0-6) effect
+with per-level rules, not an on/off tag like these - see
+Character.exhaustion_level and rules.set_exhaustion_level."""
 
 AbilityScore = Literal["STR", "DEX", "CON", "INT", "WIS", "CHA"]
 
@@ -69,6 +71,13 @@ class Character(BaseModel):
     """"skill-x" indices (same format as chosen_skills), populated by
     character_creation.py from chosen class skills + the background's fixed
     proficiencies - previously derived at creation time but never stored."""
+    saving_throw_proficiencies: list[AbilityScore] = []
+    """Populated by character_creation.py from the SRD class's `saving_throws`
+    (e.g. Fighter: STR, CON) - see rules.saving_throw_bonus. Empty for
+    monsters (they attack/save via their own stat block, not this path)."""
+    exhaustion_level: int = 0
+    """0-6, per SRD's escalating exhaustion table - see
+    rules.set_exhaustion_level/effective_speed/condition_check_disadvantage."""
     is_dodging: bool = False
     """True from resolving a "dodge" action until the start of this
     character's own next turn (cleared there, not by a fixed round count -

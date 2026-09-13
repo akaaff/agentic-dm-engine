@@ -166,6 +166,10 @@ def create_character(
         )
     )
 
+    saving_throw_proficiencies: list[AbilityScore] = [
+        s["index"].upper() for s in cls.get("saving_throws", [])
+    ]
+
     return Character(
         id=character_id,
         name=name,
@@ -186,6 +190,7 @@ def create_character(
         class_=cls["name"],
         background=background["name"],
         skill_proficiencies=skill_proficiencies,
+        saving_throw_proficiencies=saving_throw_proficiencies,
         class_index=class_index,
     )
 
