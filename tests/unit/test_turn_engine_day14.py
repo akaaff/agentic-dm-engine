@@ -168,15 +168,20 @@ def test_cast_spell_with_no_slots_remaining_errors_clearly() -> None:
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
-def test_cast_spell_rejects_save_based_spells() -> None:
+def test_cast_spell_rejects_still_unsupported_no_roll_spells() -> None:
+    # Phase 9D added save-based (see test_turn_engine_spells.py) and heal
+    # spells, so sacred flame (dc-based) is no longer a valid case for this
+    # regression - Magic Missile (no attack_type, no dc, no
+    # heal_at_slot_level - an automatic-hit, no-roll damage spell) is the
+    # spell shape still genuinely out of scope.
     state = _build_demo_state(_INITIATIVE)
     _end_turn(state, "thorin")
     action = ParsedAction(
         actor="elrond",
         verb="cast_spell",
         target="goblin_1",
-        item_or_spell="sacred flame",
-        raw_text="I cast sacred flame",
+        item_or_spell="magic missile",
+        raw_text="I cast magic missile",
     )
     with pytest.raises(TurnEngineError, match="not supported"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
