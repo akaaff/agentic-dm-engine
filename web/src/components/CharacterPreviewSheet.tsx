@@ -21,7 +21,6 @@ export default function CharacterPreviewSheet({
   name,
   race,
   gender,
-  hairColor,
   classDetail,
   classIndex,
   className,
@@ -37,7 +36,6 @@ export default function CharacterPreviewSheet({
   name: string
   race: RaceSummary | undefined
   gender: string
-  hairColor: string
   classDetail: ClassDetail | null
   classIndex: string
   className: string | null
@@ -54,7 +52,6 @@ export default function CharacterPreviewSheet({
     race_index: race?.index ?? null,
     class_index: classIndex || null,
     gender: gender || null,
-    hair_color: hairColor || null,
   })
   const equipmentNames = new Map(equipment.map((e) => [e.index, e.name]))
 
@@ -71,9 +68,9 @@ export default function CharacterPreviewSheet({
           />
         ) : (
           <div className="preview-portrait-placeholder">
-            {race && classIndex && (!gender || !hairColor)
-              ? 'Choose gender + hair color for a portrait'
-              : 'Portrait appears once race, class, gender & hair color are chosen'}
+            {race && classIndex && !gender
+              ? 'Choose a gender for a portrait'
+              : 'Portrait appears once race, class & gender are chosen'}
           </div>
         )}
       </div>

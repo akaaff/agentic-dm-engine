@@ -13,10 +13,9 @@ import {
 } from '../api/client'
 import CharacterPreviewSheet from '../components/CharacterPreviewSheet'
 
-// Mirrors character_creation.VALID_GENDERS/VALID_HAIR_COLORS - portrait-
-// selection only, no mechanical weight (see that module's docstring).
+// Mirrors character_creation.VALID_GENDERS - portrait-selection only, no
+// mechanical weight (see that module's docstring).
 const GENDERS = ['male', 'female'] as const
-const HAIR_COLORS = ['black', 'red', 'blond'] as const
 
 // Mirrors character_creation.VALID_FIGHTING_STYLES/FIGHTING_STYLE_CLASSES -
 // not exposed via any endpoint (a small enough fixed set that hardcoding it
@@ -134,7 +133,6 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   const [name, setName] = useState('')
   const [raceIndex, setRaceIndex] = useState('')
   const [gender, setGender] = useState('')
-  const [hairColor, setHairColor] = useState('')
   const [classIndex, setClassIndex] = useState('')
   const [classDetail, setClassDetail] = useState<ClassDetail | null>(null)
   const [fightingStyle, setFightingStyle] = useState('')
@@ -267,7 +265,6 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         chosen_skills: chosenSkills,
         chosen_equipment: chosenEquipment,
         gender: gender || undefined,
-        hair_color: hairColor || undefined,
         fighting_style: fightingStyle || undefined,
       })
       setCreated(character)
@@ -342,7 +339,6 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               setName('')
               setRaceIndex('')
               setGender('')
-              setHairColor('')
               setAssignments({ STR: '', DEX: '', CON: '', INT: '', WIS: '', CHA: '' })
               setClassIndex('')
               setFightingStyle('')
@@ -391,33 +387,20 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 ))}
               </select>
             </label>
-            <div className="select-row">
-              <label>
-                Gender
-                <select value={gender} onChange={(e) => setGender(e.target.value)}>
-                  <option value="">Choose...</option>
-                  {GENDERS.map((g) => (
-                    <option key={g} value={g}>
-                      {g[0].toUpperCase() + g.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Hair color
-                <select value={hairColor} onChange={(e) => setHairColor(e.target.value)}>
-                  <option value="">Choose...</option>
-                  {HAIR_COLORS.map((h) => (
-                    <option key={h} value={h}>
-                      {h[0].toUpperCase() + h.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <label>
+              Gender
+              <select value={gender} onChange={(e) => setGender(e.target.value)}>
+                <option value="">Choose...</option>
+                {GENDERS.map((g) => (
+                  <option key={g} value={g}>
+                    {g[0].toUpperCase() + g.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <p className="companion-meta">
               Portrait-selection only, no mechanical effect - used to pick your character's
-              generated portrait once race, class, gender and hair color are all chosen.
+              generated portrait once race, class and gender are all chosen.
             </p>
             {selectedRace && Object.keys(selectedRace.ability_bonuses).length > 0 && (
               <div className="race-bonus-row">
@@ -647,7 +630,6 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         name={name}
         race={selectedRace}
         gender={gender}
-        hairColor={hairColor}
         classDetail={classDetail}
         classIndex={classIndex}
         className={classes.find((c) => c.index === classIndex)?.name ?? null}

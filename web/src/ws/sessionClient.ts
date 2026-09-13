@@ -58,7 +58,6 @@ export interface LiveCharacter {
   // only, null for monsters and for anything created before this feature.
   race_index: string | null
   gender: string | null
-  hair_color: string | null
 }
 
 export type TerrainType = 'floor' | 'wall' | 'difficult' | 'hazard'

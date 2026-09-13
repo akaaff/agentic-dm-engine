@@ -88,7 +88,6 @@ export interface CreateCharacterRequest {
   chosen_skills: string[]
   chosen_equipment: string[]
   gender?: string
-  hair_color?: string
   fighting_style?: string
 }
 
@@ -126,7 +125,6 @@ export interface Character {
   // New for the character-sheet + portrait feature (Phase 2).
   race_index: string | null
   gender: string | null
-  hair_color: string | null
 }
 
 export type CampaignSize = 'one_shot' | 'short_arc' | 'full'

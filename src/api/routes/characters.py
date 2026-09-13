@@ -112,7 +112,6 @@ class CreateCharacterRequest(BaseModel):
     chosen_skills: list[str]
     chosen_equipment: list[str] = []
     gender: str | None = None
-    hair_color: str | None = None
     fighting_style: str | None = None
     """create_character has accepted fighting_style since Phase 9I, but this
     request model never exposed it - a pre-existing gap, closed here while
@@ -255,7 +254,6 @@ def create_character_endpoint(body: CreateCharacterRequest, db: DbSession) -> Ch
             chosen_skills=body.chosen_skills,
             chosen_equipment=body.chosen_equipment,
             gender=body.gender,
-            hair_color=body.hair_color,
             fighting_style=body.fighting_style,
         )
     except CharacterCreationError as exc:
@@ -297,7 +295,6 @@ def _character_to_record(character: Character) -> CharacterRecord:
         conditions=[c.model_dump() for c in character.conditions],
         race_index=character.race_index,
         gender=character.gender,
-        hair_color=character.hair_color,
     )
 
 
@@ -325,5 +322,4 @@ def _record_to_character(record: CharacterRecord) -> Character:
         conditions=[Condition.model_validate(c) for c in record.conditions],
         race_index=record.race_index,
         gender=record.gender,
-        hair_color=record.hair_color,
     )

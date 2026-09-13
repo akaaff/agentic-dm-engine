@@ -20,6 +20,7 @@ dependencies = [
     "peft>=0.20.0",
     "trl>=0.20",
     "wandb>=0.29.0",
+    "gguf>=0.19.0",
 ]
 
 [dependency-groups]

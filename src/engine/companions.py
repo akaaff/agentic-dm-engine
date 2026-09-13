@@ -28,11 +28,10 @@ class CompanionSpec(BaseModel):
     chosen_skills: list[str]
     chosen_equipment: list[str] = []
     gender: str
-    hair_color: str
-    """Required, not optional, unlike create_character's own params -
+    """Required, not optional, unlike create_character's own gender param -
     every companion needs a real portrait, so every companion YAML must
-    author these two (character_creation.VALID_GENDERS/VALID_HAIR_COLORS)
-    explicitly rather than leaving them to default to None."""
+    author this (one of character_creation.VALID_GENDERS) explicitly rather
+    than leaving it to default to None."""
 
 
 def load_companion_spec(
@@ -85,5 +84,4 @@ def build_companion(spec: CompanionSpec, srd: SrdIndex | None = None) -> Charact
         persona=spec.persona,
         srd=srd,
         gender=spec.gender,
-        hair_color=spec.hair_color,
     )

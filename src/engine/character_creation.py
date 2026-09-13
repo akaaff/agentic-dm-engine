@@ -183,14 +183,14 @@ weight anywhere in the rules engine. Shared with src/cli/generate_portraits.py
 so the wizard's choices and the pre-generated portrait library's filenames
 can never drift apart."""
 
-VALID_HAIR_COLORS = {"black", "red", "blond"}
-"""Portrait-selection only, same reasoning as VALID_GENDERS."""
-
 PORTRAIT_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "portraits"
 """Root of the pre-generated portrait library (src/cli/generate_portraits.py
 writes here; src/api/main.py mounts it as /media/portraits). Two
-subdirectories: pc/ (race_class_gender_haircolor.png) and monsters/
-(monster_index.png) - see generate_portraits.py for the exact naming."""
+subdirectories: pc/ (race_class_gender.png) and monsters/ (monster_index.png)
+- see generate_portraits.py for the exact naming. Keyed on race x class x
+gender only (no hair color) - dropped from an earlier draft of this feature
+to cut the PC/companion portrait count 3x (648 -> 216), a deliberate
+cost/detail tradeoff, not an oversight."""
 
 
 class CharacterCreationError(ValueError):
@@ -257,7 +257,6 @@ def create_character(
     srd: SrdIndex | None = None,
     fighting_style: str | None = None,
     gender: str | None = None,
-    hair_color: str | None = None,
 ) -> Character:
     srd = srd or load_srd()
     chosen_equipment = chosen_equipment or []
@@ -277,10 +276,6 @@ def create_character(
 
     if gender is not None and gender not in VALID_GENDERS:
         raise CharacterCreationError(f"Unknown gender: {gender!r} (valid: {sorted(VALID_GENDERS)})")
-    if hair_color is not None and hair_color not in VALID_HAIR_COLORS:
-        raise CharacterCreationError(
-            f"Unknown hair color: {hair_color!r} (valid: {sorted(VALID_HAIR_COLORS)})"
-        )
 
     race = srd.races.get(race_index)
     if race is None:
@@ -376,7 +371,6 @@ def create_character(
         class_resources=dict(CLASS_RESOURCES_AT_LEVEL_1.get(class_index, {})),
         fighting_style=fighting_style,
         gender=gender,
-        hair_color=hair_color,
     )
 
 
