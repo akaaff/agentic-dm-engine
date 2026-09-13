@@ -54,6 +54,12 @@ class ClassSummary(BaseModel):
     hit_die: int
 
 
+class SpellSummary(BaseModel):
+    index: str
+    name: str
+    desc: str
+
+
 class ClassDetail(ClassSummary):
     skill_choose: int
     skill_options: list[str]
@@ -65,6 +71,12 @@ class ClassDetail(ClassSummary):
     the same set create_character's chosen_equipment validation enforces
     server-side, exposed so the wizard's optional-gear step only offers
     legal choices instead of erroring after submission."""
+    cantrips: list[SpellSummary]
+    """Level-0 SRD spells this class's `classes` list includes it in - empty
+    for non-casters (e.g. Fighter). The character sheet's "what can I cast"
+    list reads this directly rather than the engine tracking known spells
+    per character - see character_creation.py's module docstring for why
+    this project doesn't otherwise restrict cast_spell to a known-spell list."""
 
 
 class SkillSummary(BaseModel):
@@ -99,6 +111,12 @@ class CreateCharacterRequest(BaseModel):
     base_ability_scores: dict[AbilityScore, int]
     chosen_skills: list[str]
     chosen_equipment: list[str] = []
+    gender: str | None = None
+    hair_color: str | None = None
+    fighting_style: str | None = None
+    """create_character has accepted fighting_style since Phase 9I, but this
+    request model never exposed it - a pre-existing gap, closed here while
+    the wizard is being touched anyway for the portrait-selection fields."""
 
 
 def _race_ability_bonuses(race: dict[str, Any]) -> dict[str, int]:
@@ -159,6 +177,17 @@ def get_class(class_index: str) -> ClassDetail:
     # reference list - see that function's docstring for the full story).
     skill_choose, skill_options = class_skill_choice_pool(cls)
 
+    cantrips = [
+        SpellSummary(
+            index=spell["index"],
+            name=spell["name"],
+            desc=" ".join(spell["desc"]) if isinstance(spell["desc"], list) else spell["desc"],
+        )
+        for spell in srd.spells.values()
+        if spell.get("level") == 0
+        and any(c["index"] == class_index for c in spell.get("classes", []))
+    ]
+
     return ClassDetail(
         index=cls["index"],
         name=cls["name"],
@@ -166,6 +195,7 @@ def get_class(class_index: str) -> ClassDetail:
         skill_choose=skill_choose,
         skill_options=sorted(skill_options),
         equipment_options=class_equipment_options(cls, srd),
+        cantrips=sorted(cantrips, key=lambda s: s.name),
     )
 
 
@@ -224,6 +254,9 @@ def create_character_endpoint(body: CreateCharacterRequest, db: DbSession) -> Ch
             base_ability_scores=body.base_ability_scores,
             chosen_skills=body.chosen_skills,
             chosen_equipment=body.chosen_equipment,
+            gender=body.gender,
+            hair_color=body.hair_color,
+            fighting_style=body.fighting_style,
         )
     except CharacterCreationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -262,6 +295,9 @@ def _character_to_record(character: Character) -> CharacterRecord:
         skill_proficiencies=list(character.skill_proficiencies),
         spell_slots={str(level): count for level, count in character.spell_slots.items()},
         conditions=[c.model_dump() for c in character.conditions],
+        race_index=character.race_index,
+        gender=character.gender,
+        hair_color=character.hair_color,
     )
 
 
@@ -287,4 +323,7 @@ def _record_to_character(record: CharacterRecord) -> Character:
         skill_proficiencies=record.skill_proficiencies,
         spell_slots={int(level): count for level, count in record.spell_slots.items()},
         conditions=[Condition.model_validate(c) for c in record.conditions],
+        race_index=record.race_index,
+        gender=record.gender,
+        hair_color=record.hair_color,
     )

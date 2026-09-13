@@ -10,3 +10,5 @@ base_ability_scores: { STR: 8, DEX: 15, CON: 13, INT: 12, WIS: 10, CHA: 14 }
 chosen_skills:
   [skill-stealth, skill-sleight-of-hand, skill-deception, skill-perception]
 chosen_equipment: [shortsword]
+gender: male
+hair_color: black

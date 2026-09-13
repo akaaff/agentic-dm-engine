@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.routes import campaigns, characters, companions, sessions
 from src.api.ws import session as ws_session
+from src.engine.character_creation import PORTRAIT_DIR
 from src.imagegen.service import DEFAULT_OUTPUT_DIR, MEDIA_URL_PREFIX
 
 app = FastAPI(title="agentic-dm-engine")
@@ -34,6 +35,15 @@ app.include_router(ws_session.router)
 # never generated an image yet would otherwise fail app startup.
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 app.mount(MEDIA_URL_PREFIX, StaticFiles(directory=DEFAULT_OUTPUT_DIR), name="scene-images")
+
+# Same reasoning as scene-images above - a fresh checkout that hasn't run
+# generate_portraits.py yet still needs the mount directory to exist at
+# startup. pc/ and monsters/ subdirs are created too so the frontend's
+# onError-fallback-to-circle path (Phase 3+) has real 404s to fall back
+# from, not a mount-level 404 for the whole prefix.
+(PORTRAIT_DIR / "pc").mkdir(parents=True, exist_ok=True)
+(PORTRAIT_DIR / "monsters").mkdir(parents=True, exist_ok=True)
+app.mount("/media/portraits", StaticFiles(directory=PORTRAIT_DIR), name="portraits")
 
 
 @app.get("/health")

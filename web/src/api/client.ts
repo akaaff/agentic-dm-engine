@@ -45,10 +45,17 @@ export interface ClassSummary {
   hit_die: number
 }
 
+export interface SpellSummary {
+  index: string
+  name: string
+  desc: string
+}
+
 export interface ClassDetail extends ClassSummary {
   skill_choose: number
   skill_options: string[]
   equipment_options: string[]
+  cantrips: SpellSummary[]
 }
 
 export interface SkillSummary {
@@ -80,11 +87,15 @@ export interface CreateCharacterRequest {
   base_ability_scores: Record<AbilityScore, number>
   chosen_skills: string[]
   chosen_equipment: string[]
+  gender?: string
+  hair_color?: string
+  fighting_style?: string
 }
 
 export interface Character {
   id: string
   name: string
+  is_pc: boolean
   race: string
   class_: string
   background: string
@@ -96,8 +107,26 @@ export interface Character {
   stats: Record<AbilityScore, number>
   inventory: string[]
   skill_proficiencies: string[]
+  saving_throw_proficiencies: string[]
   is_companion: boolean
   persona: string | null
+  monster_index: string | null
+  exhaustion_level: number
+  class_index: string | null
+  spell_slots: Record<string, number>
+  hit_die_sides: number
+  hit_dice_remaining: number
+  class_resources: Record<string, number>
+  fighting_style: string | null
+  is_raging: boolean
+  level: number
+  concentrating_on: string | null
+  is_dead: boolean
+  is_stable: boolean
+  // New for the character-sheet + portrait feature (Phase 2).
+  race_index: string | null
+  gender: string | null
+  hair_color: string | null
 }
 
 export type CampaignSize = 'one_shot' | 'short_arc' | 'full'

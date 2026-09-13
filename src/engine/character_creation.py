@@ -24,6 +24,7 @@ already hardcodes, for the same reason.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
 from src.engine.position import Position
 from src.engine.rules import ability_modifier, class_equipment_options
@@ -175,6 +176,22 @@ rather than silently accepted and then doing nothing."""
 FIGHTING_STYLE_CLASSES = {"fighter", "ranger", "paladin"}
 """The three base SRD classes that choose a Fighting Style at level 1."""
 
+VALID_GENDERS = {"male", "female"}
+"""Portrait-selection only - SRD races have no gender concept at all
+(confirmed against the vendored race JSON), so this carries zero mechanical
+weight anywhere in the rules engine. Shared with src/cli/generate_portraits.py
+so the wizard's choices and the pre-generated portrait library's filenames
+can never drift apart."""
+
+VALID_HAIR_COLORS = {"black", "red", "blond"}
+"""Portrait-selection only, same reasoning as VALID_GENDERS."""
+
+PORTRAIT_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "portraits"
+"""Root of the pre-generated portrait library (src/cli/generate_portraits.py
+writes here; src/api/main.py mounts it as /media/portraits). Two
+subdirectories: pc/ (race_class_gender_haircolor.png) and monsters/
+(monster_index.png) - see generate_portraits.py for the exact naming."""
+
 
 class CharacterCreationError(ValueError):
     pass
@@ -239,6 +256,8 @@ def create_character(
     position: Position | None = None,
     srd: SrdIndex | None = None,
     fighting_style: str | None = None,
+    gender: str | None = None,
+    hair_color: str | None = None,
 ) -> Character:
     srd = srd or load_srd()
     chosen_equipment = chosen_equipment or []
@@ -255,6 +274,13 @@ def create_character(
                 f"Unknown or unimplemented fighting style: {fighting_style!r} "
                 f"(implemented: {sorted(VALID_FIGHTING_STYLES)})"
             )
+
+    if gender is not None and gender not in VALID_GENDERS:
+        raise CharacterCreationError(f"Unknown gender: {gender!r} (valid: {sorted(VALID_GENDERS)})")
+    if hair_color is not None and hair_color not in VALID_HAIR_COLORS:
+        raise CharacterCreationError(
+            f"Unknown hair color: {hair_color!r} (valid: {sorted(VALID_HAIR_COLORS)})"
+        )
 
     race = srd.races.get(race_index)
     if race is None:
@@ -345,9 +371,12 @@ def create_character(
         skill_proficiencies=skill_proficiencies,
         saving_throw_proficiencies=saving_throw_proficiencies,
         class_index=class_index,
+        race_index=race_index,
         hit_die_sides=cls["hit_die"],
         class_resources=dict(CLASS_RESOURCES_AT_LEVEL_1.get(class_index, {})),
         fighting_style=fighting_style,
+        gender=gender,
+        hair_color=hair_color,
     )
 
 

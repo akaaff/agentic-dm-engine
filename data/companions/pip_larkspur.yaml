@@ -14,3 +14,5 @@ base_ability_scores: { STR: 8, DEX: 14, CON: 12, INT: 10, WIS: 13, CHA: 15 }
 chosen_skills:
   [skill-performance, skill-persuasion, skill-insight, lute, flute, lyre]
 chosen_equipment: []
+gender: female
+hair_color: red

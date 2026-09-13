@@ -23,6 +23,42 @@ export interface LiveCharacter {
   is_stable: boolean
   race: string
   class_: string
+  // Everything below was already reaching the browser via state_update's
+  // verbatim Character.model_dump() - this interface just never declared
+  // it, so it silently didn't render. See CLAUDE.md's character-sheet
+  // feature writeup for the "data already on the wire" finding.
+  stats: Record<'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA', number>
+  proficiency_bonus: number
+  speed: number
+  background: string
+  persona: string | null
+  monster_index: string | null
+  skill_proficiencies: string[]
+  saving_throw_proficiencies: string[]
+  exhaustion_level: number
+  is_dodging: boolean
+  has_help_advantage: boolean
+  bonus_action_used: boolean
+  disengaged_this_turn: boolean
+  reaction_used_this_round: boolean
+  class_index: string | null
+  inventory: string[]
+  spell_slots: Record<string, number>
+  hit_die_sides: number
+  hit_dice_remaining: number
+  class_resources: Record<string, number>
+  fighting_style: string | null
+  is_raging: boolean
+  sneak_attack_used_this_turn: boolean
+  death_save_successes: number
+  death_save_failures: number
+  level: number
+  concentrating_on: string | null
+  // New for the character-sheet + portrait feature (Phase 2) - PCs/companions
+  // only, null for monsters and for anything created before this feature.
+  race_index: string | null
+  gender: string | null
+  hair_color: string | null
 }
 
 export type TerrainType = 'floor' | 'wall' | 'difficult' | 'hazard'

@@ -117,6 +117,21 @@ class Character(BaseModel):
     class_index: str | None = None
     """Set only for PCs/companions (mirrors monster_index) - lets the turn
     engine re-look-up the SRD class's spellcasting ability for cast_spell."""
+    race_index: str | None = None
+    """Set only for PCs/companions - mirrors class_index's pattern, added
+    for the portrait feature: `race` stores the SRD display name ("Human"),
+    not the lowercase index ("human") a portrait filename needs, and
+    there's no reliable string transform from one to the other for every
+    vendored race (e.g. "Half-Elf" -> "half-elf" happens to work, but
+    guessing is fragile where a stored index isn't)."""
+    gender: str | None = None
+    """Set only for PCs/companions - one of character_creation.
+    VALID_GENDERS. Purely a portrait-selection field: SRD races have no
+    gender concept at all (confirmed against the vendored race JSON), so
+    this carries no mechanical weight anywhere in the rules engine."""
+    hair_color: str | None = None
+    """Set only for PCs/companions - one of character_creation.
+    VALID_HAIR_COLORS. Purely a portrait-selection field, same as gender."""
     hit_die_sides: int = 8
     """The class's hit die size (e.g. 8 for a d8 class) - set at creation
     from the SRD class's `hit_die` (character_creation.create_character).
