@@ -202,11 +202,35 @@ class AttackParams:
     rules.weapon_range_feet/monster_action_range_feet."""
 
 
+def _match_weapon_by_name(weapon_name: str, srd: SrdIndex) -> SrdEntry | None:
+    """Word-set match, not exact-index match, as a fallback when
+    weapon_name isn't already a real SRD equipment index. The same lesson
+    Day 14's healing-potion fix established for item names applies here:
+    a persona-driven companion's own free-text turn declaration is just as
+    likely to dress up a real weapon with a flavor adjective ("her silvered
+    longbow") as to say its bare canonical name, and intent_parser has no
+    way to know that "silvered longbow" isn't a real SRD entry - it's just
+    relaying what the player/companion said. Matches if a weapon's own name
+    (word-split) is fully contained in the given text's words, so extra
+    descriptive words are tolerated but a wrong/unrelated weapon name still
+    isn't matched by accident."""
+    words = set(weapon_name.strip().lower().replace("-", " ").replace(",", " ").split())
+    for item in srd.equipment.values():
+        if not item.get("weapon_category"):
+            continue
+        item_words = set(item["name"].lower().replace("-", " ").replace(",", " ").split())
+        if item_words and item_words <= words:
+            return item
+    return None
+
+
 def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex) -> AttackParams:
     weapon: SrdEntry | None = None
     if weapon_index:
         weapon = srd.equipment.get(weapon_index)
         if weapon is None or not weapon.get("weapon_category"):
+            weapon = _match_weapon_by_name(weapon_index, srd)
+        if weapon is None:
             raise TurnEngineError(f"{weapon_index!r} is not a valid weapon")
     else:
         for idx in actor.inventory:

@@ -101,6 +101,47 @@ def test_pc_attack_params_falls_back_to_unarmed_strike() -> None:
     assert params.damage_type == "bludgeoning"
 
 
+def test_pc_attack_params_matches_a_real_weapon_with_an_invented_adjective() -> None:
+    # Regression for a live --autoplay bug: a companion's persona-driven
+    # free-text turn declaration described her weapon as a "silvered
+    # longbow" - flavor the LLM invented (no such SRD variant exists, and
+    # her actual inventory only ever holds a plain "longbow", Ranger's
+    # fixed class starting equipment). item_or_spell carries that phrase
+    # through to _pc_attack_params verbatim, and an exact-index lookup for
+    # "silvered longbow" fails - the same word-order/extra-word mismatch
+    # Day 14 already hit and fixed for use_item's "healing potion", now
+    # hitting attack's weapon lookup too. This must still resolve to the
+    # real Longbow entry rather than rejecting the attack outright.
+    srd = load_srd()
+    silvana = create_character(
+        character_id="companion_silvana",
+        name="Silvana Wren",
+        race_index="elf",
+        class_index="ranger",
+        background_index="acolyte",
+        base_ability_scores={"STR": 12, "DEX": 15, "CON": 13, "INT": 10, "WIS": 14, "CHA": 8},
+        chosen_skills=["skill-perception", "skill-stealth", "skill-survival"],
+        chosen_equipment=["leather-armor"],
+        is_companion=True,
+    )
+    # DEX 15 base + elf's +2 racial = 17 -> mod +3; Ranger is proficient
+    # with martial weapons (Longbow is Martial/Ranged) -> +2 proficiency
+    # bonus at level 1. Ranged weapon uses DEX, not STR, for both rolls.
+    params = _pc_attack_params(silvana, "silvered longbow", srd)
+    assert params.source_name == "Longbow"
+    assert params.attack_bonus == 5
+    assert (params.damage_dice_count, params.damage_dice_sides, params.damage_bonus) == (1, 8, 3)
+    assert params.damage_type == "piercing"
+    assert (params.range_normal_feet, params.range_long_feet) == (150, 600)
+
+
+def test_pc_attack_params_rejects_a_name_matching_no_real_weapon() -> None:
+    srd = load_srd()
+    fighter = _two_person_party()[0]
+    with pytest.raises(TurnEngineError):
+        _pc_attack_params(fighter, "my fireproof toaster", srd)
+
+
 def test_monster_attack_params_defaults_to_first_action() -> None:
     srd = load_srd()
     goblin = monster_to_character(srd.monsters["goblin"], "goblin_1", Position(x=0, y=0))
