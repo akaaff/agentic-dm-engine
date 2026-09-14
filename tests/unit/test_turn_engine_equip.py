@@ -140,6 +140,24 @@ def test_equip_accepts_two_light_weapons() -> None:
     assert state.turn_order[state.current_turn] == "thorin"  # doesn't end the turn
 
 
+def test_equip_matches_a_real_weapon_with_an_invented_adjective() -> None:
+    # Same fuzzy-name-matching lesson as attack's "silvered longbow" fix
+    # (Day 14/Phase 9H) - the intent parser passes whatever phrase the
+    # player used, not necessarily an exact SRD index.
+    thorin = _fighter()
+    thorin.inventory.append("dagger")
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="equip",
+        params={"items": ["my trusty dagger"]},
+        raw_text="I draw my trusty dagger",
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert thorin.equipped_weapons == ["dagger"]
+
+
 def test_equip_changes_what_attack_resolves_against() -> None:
     thorin = _fighter()
     thorin.inventory.append("dagger")

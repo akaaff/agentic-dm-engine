@@ -1130,22 +1130,38 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
     separate resources)."""
     if actor.equip_used_this_turn:
         raise TurnEngineError(f"{actor.id} has already equipped something this turn")
-    items = action.params.get("items")
-    if not items:
+    names_or_indices = action.params.get("items")
+    if not names_or_indices:
         raise TurnEngineError("equip action requires params['items']")
-    for idx in items:
-        if idx not in actor.inventory:
-            raise TurnEngineError(f"{actor.id} doesn't own {idx!r} - cannot equip it")
-        item = srd.equipment.get(idx)
-        if item is None or not item.get("weapon_category"):
-            raise TurnEngineError(f"{idx!r} is not a weapon")
-    if not weapon_combo_is_legal(items, srd.equipment):
-        names = ", ".join(srd.equipment[idx]["name"] for idx in items)
+    # Same fuzzy-name-matching discipline as _pc_attack_params/
+    # _match_weapon_by_name (Day 14's healing-potion fix, the "silvered
+    # longbow" fix): the intent parser passes whatever weapon phrase the
+    # player used, not necessarily an exact SRD index - scoped to the
+    # actor's own inventory (what they could plausibly equip), not the
+    # whole SRD weapon list.
+    owned_weapons = [
+        item
+        for idx in actor.inventory
+        if (item := srd.equipment.get(idx)) and item.get("weapon_category")
+    ]
+    resolved: list[str] = []
+    for name in names_or_indices:
+        exact = srd.equipment.get(name)
+        if exact is not None and not exact.get("weapon_category"):
+            raise TurnEngineError(f"{name!r} is not a weapon")
+        item = exact if exact is not None and exact["index"] in actor.inventory else None
+        if item is None:
+            item = _match_weapon_by_name(name, owned_weapons)
+        if item is None:
+            raise TurnEngineError(f"{actor.id} doesn't own {name!r} - cannot equip it")
+        resolved.append(item["index"])
+    if not weapon_combo_is_legal(resolved, srd.equipment):
+        names = ", ".join(srd.equipment[idx]["name"] for idx in resolved)
         raise TurnEngineError(
             f"Cannot equip {names} together - at most 2 weapons, a two-handed "
             "weapon must be alone, and 2 weapons together must both be light"
         )
-    actor.equipped_weapons = list(items)
+    actor.equipped_weapons = resolved
     actor.equip_used_this_turn = True
     state.events.append(
         Event(
@@ -1153,7 +1169,7 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
             turn_index=state.current_turn,
             actor=actor.id,
             type="equip",
-            payload={"items": list(items)},
+            payload={"items": resolved},
         )
     )
     return False
