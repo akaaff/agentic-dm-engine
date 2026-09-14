@@ -87,6 +87,13 @@ def test_pc_attack_params_drops_proficiency_bonus_when_not_proficient() -> None:
     # with no proficiency bonus the attack_bonus is just that mod, not -1+2.
     srd = load_srd()
     wizard = _two_person_party()[1]
+    # Phase C: attack resolution only matches equipped_weapons now, not the
+    # whole inventory - give the wizard a longsword she owns but wouldn't
+    # normally equip, to keep exercising the proficiency-bonus-drop branch
+    # this test is actually about (ownership, not proficiency, is Phase C's
+    # own new gate).
+    wizard.inventory.append("longsword")
+    wizard.equipped_weapons = ["longsword"]
     params = _pc_attack_params(wizard, "longsword", srd)
     assert params.attack_bonus == -1
 
@@ -95,6 +102,7 @@ def test_pc_attack_params_falls_back_to_unarmed_strike() -> None:
     srd = load_srd()
     fighter = _two_person_party()[0]
     fighter.inventory = []  # strip the longsword to force the unarmed path
+    fighter.equipped_weapons = []  # Phase C: equipped_weapons, not inventory, is what's checked now
     params = _pc_attack_params(fighter, None, srd)
     assert params.source_name == "unarmed strike"
     assert params.damage_dice_count == 0
@@ -276,6 +284,11 @@ def test_attack_rejected_when_target_out_of_melee_range() -> None:
 
 def test_attack_rejected_beyond_a_ranged_weapons_long_range() -> None:
     state = _build_demo_state([18, 10, 8, 3])
+    # Phase C: thorin's default loadout is his starting longsword - give him
+    # a longbow (two-handed, so it must be his only equipped weapon) to
+    # exercise this test's actual subject, ranged-weapon range enforcement.
+    state.characters["thorin"].inventory.append("longbow")
+    state.characters["thorin"].equipped_weapons = ["longbow"]
     state.characters["thorin"].position = Position(x=0, y=0)
     state.characters["goblin_1"].position = Position(x=200, y=0)  # 1000ft > longbow's 600ft long
     action = ParsedAction(
@@ -308,6 +321,8 @@ def test_attack_gets_disadvantage_beyond_a_ranged_weapons_normal_range() -> None
     # outright (unlike melee, which has no such tier). Two d20s [15, 3],
     # keep the lower (3).
     state = _build_demo_state([18, 10, 8, 3])
+    state.characters["thorin"].inventory.append("longbow")
+    state.characters["thorin"].equipped_weapons = ["longbow"]
     state.characters["thorin"].position = Position(x=0, y=0)
     state.characters["goblin_1"].position = Position(x=31, y=0)
     action = ParsedAction(

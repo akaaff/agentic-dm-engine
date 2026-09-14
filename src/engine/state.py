@@ -114,6 +114,23 @@ class Character(BaseModel):
     engine models) per character per round, per SRD - reset for every
     character when the round number advances, not per-turn like the two
     flags above (a reaction's economy is round-scoped, not turn-scoped)."""
+    equipped_weapons: list[str] = []
+    """The character's currently active weapon set (SRD equipment indices,
+    at most 2, both light if 2) - see turn_engine._resolve_equip. Populated
+    automatically at creation from the character's starting inventory
+    (character_creation.create_character), then only changed by an explicit
+    "equip" action. attack resolution (turn_engine._pc_attack_params) only
+    ever matches a weapon from this list, not the whole inventory - "own it"
+    and "have it equipped" are deliberately different things."""
+    equip_used_this_turn: bool = False
+    """True once this character has used their one free "equip" object
+    interaction this turn - reset in turn_engine._advance_turn_skipping_dead
+    (fires only when a turn genuinely advances TO this character), not at
+    the top of every resolve_action call, for the exact same reason
+    bonus_action_used isn't (see that field's docstring): "equip" doesn't
+    end the turn, so this same actor's very next resolve_action call (e.g.
+    an attack right after equipping) is still the same real turn and must
+    still see this as True."""
     class_index: str | None = None
     """Set only for PCs/companions (mirrors monster_index) - lets the turn
     engine re-look-up the SRD class's spellcasting ability for cast_spell."""

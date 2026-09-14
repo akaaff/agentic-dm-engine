@@ -27,7 +27,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from src.engine.position import Position
-from src.engine.rules import ability_modifier, class_equipment_options
+from src.engine.rules import ability_modifier, class_equipment_options, weapon_combo_is_legal
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character
 
@@ -318,6 +318,27 @@ def create_character(
         inventory.extend([item["equipment"]["index"]] * item["quantity"])
     inventory.extend(chosen_equipment)
 
+    # Auto-populate a legal starting weapon loadout (Phase C: equipped-weapon
+    # tracking) - greedily takes weapon-category items, stopping once a 2nd
+    # item wouldn't form a legal combo (rules.weapon_combo_is_legal) or 2 are
+    # already equipped, so a fresh character can attack immediately without
+    # an explicit "equip" action. `chosen_equipment` (the player's own
+    # deliberate pick) is tried before the rest of `inventory` (a class's
+    # fixed starting kit, e.g. a Barbarian's 4 javelins or a Rogue's 2
+    # daggers) - a player who explicitly chose a battleaxe shouldn't end up
+    # with javelins equipped by default just because javelins happen to be
+    # listed first in the class's fixed kit.
+    equipped_weapons: list[str] = []
+    for idx in [*chosen_equipment, *inventory]:
+        item = srd.equipment.get(idx)
+        if not item or not item.get("weapon_category"):
+            continue
+        candidate = [*equipped_weapons, idx]
+        if weapon_combo_is_legal(candidate, srd.equipment):
+            equipped_weapons = candidate
+        if len(equipped_weapons) == 2:
+            break
+
     con_mod = ability_modifier(final_scores["CON"])
     dex_mod = ability_modifier(final_scores["DEX"])
     hp = max(1, cls["hit_die"] + con_mod)
@@ -357,6 +378,7 @@ def create_character(
         conditions=[],
         spell_slots=dict(LEVEL_1_SPELL_SLOTS.get(class_index, {})),
         inventory=inventory,
+        equipped_weapons=equipped_weapons,
         stats=final_scores,
         proficiency_bonus=2,
         speed=race["speed"],

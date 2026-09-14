@@ -192,6 +192,11 @@ def test_ranged_attack_gets_disadvantage_when_attacker_is_engaged() -> None:
     # per SRD's "Ranged Attacks in Close Combat," that alone imposes
     # disadvantage. Two d20s [15, 3]: disadvantage keeps the lower (3).
     state = _build_demo_state(_INITIATIVE)
+    # Phase C: thorin's default loadout is his starting longsword - give him
+    # a longbow (two-handed, so it must be his only equipped weapon) to
+    # exercise this test's actual subject, ranged-while-engaged disadvantage.
+    state.characters["thorin"].inventory.append("longbow")
+    state.characters["thorin"].equipped_weapons = ["longbow"]
     state.characters["goblin_2"].position = Position(x=1, y=1)
     action = ParsedAction(
         actor="thorin",
@@ -213,6 +218,8 @@ def test_ranged_attack_has_no_disadvantage_when_attacker_is_not_engaged() -> Non
     # raise if resolve_attack tried to consume one that wasn't there). A
     # natural 15 hits, so one more value covers the resulting damage die.
     state = _build_demo_state(_INITIATIVE)
+    state.characters["thorin"].inventory.append("longbow")
+    state.characters["thorin"].equipped_weapons = ["longbow"]
     action = ParsedAction(
         actor="thorin",
         verb="attack",

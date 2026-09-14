@@ -279,6 +279,33 @@ def has_non_proficient_armor(character: Character, srd: SrdIndex) -> bool:
     )
 
 
+def weapon_combo_is_legal(weapon_indices: list[str], equipment: dict[str, SrdEntry]) -> bool:
+    """Whether this set of weapon indices is legal to have simultaneously
+    equipped, per a deliberately simplified subset of SRD's real rules: at
+    most 2 weapons; a "two-handed"-property weapon must be the only one
+    equipped (can't combine with anything else); 2 weapons together must
+    both have the "light" property (SRD's actual two-weapon-fighting
+    eligibility rule). Doesn't check any weapon-property combination beyond
+    that (e.g. doesn't require proficiency, doesn't model versatile's
+    one-handed-with-a-shield case specially) - lives here, not
+    character_creation.py or turn_engine.py, since both need it: creation
+    auto-populates a legal starting loadout, turn_engine's "equip" action
+    validates a player-chosen one against the same rule."""
+    if len(weapon_indices) > 2:
+        return False
+    found = [equipment.get(idx) for idx in weapon_indices]
+    if any(item is None for item in found):
+        return False
+    items = [item for item in found if item is not None]
+    if len(items) == 2:
+        properties = [{p["index"] for p in (item.get("properties") or [])} for item in items]
+        if any("two-handed" in props for props in properties):
+            return False
+        if not all("light" in props for props in properties):
+            return False
+    return True
+
+
 def weapon_range_feet(weapon: SrdEntry) -> tuple[int, int | None]:
     """(normal, long) range in feet for a weapon - `long` is None for melee
     weapons (no "attack at disadvantage from farther away" concept, unlike

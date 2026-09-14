@@ -151,6 +151,7 @@ from src.engine.rules import (
     saving_throw_bonus,
     skill_ability,
     spell_range_feet,
+    weapon_combo_is_legal,
     weapon_range_feet,
 )
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
@@ -238,7 +239,7 @@ class AttackParams:
     flat melee damage bonus applies only to these, per SRD."""
 
 
-def _match_weapon_by_name(weapon_name: str, srd: SrdIndex) -> SrdEntry | None:
+def _match_weapon_by_name(weapon_name: str, candidates: list[SrdEntry]) -> SrdEntry | None:
     """Word-set match, not exact-index match, as a fallback when
     weapon_name isn't already a real SRD equipment index. The same lesson
     Day 14's healing-potion fix established for item names applies here:
@@ -249,11 +250,13 @@ def _match_weapon_by_name(weapon_name: str, srd: SrdIndex) -> SrdEntry | None:
     relaying what the player/companion said. Matches if a weapon's own name
     (word-split) is fully contained in the given text's words, so extra
     descriptive words are tolerated but a wrong/unrelated weapon name still
-    isn't matched by accident."""
+    isn't matched by accident. `candidates` (Phase C: equipped-weapon
+    tracking) scopes the search to a specific weapon list - previously this
+    always searched the whole SRD weapon list regardless of ownership; now
+    every caller passes `actor.equipped_weapons` so a name only matches
+    something actually equipped."""
     words = set(weapon_name.strip().lower().replace("-", " ").replace(",", " ").split())
-    for item in srd.equipment.values():
-        if not item.get("weapon_category"):
-            continue
+    for item in candidates:
         item_words = set(item["name"].lower().replace("-", " ").replace(",", " ").split())
         if item_words and item_words <= words:
             return item
@@ -261,19 +264,20 @@ def _match_weapon_by_name(weapon_name: str, srd: SrdIndex) -> SrdEntry | None:
 
 
 def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex) -> AttackParams:
+    equipped = [item for idx in actor.equipped_weapons if (item := srd.equipment.get(idx))]
     weapon: SrdEntry | None = None
     if weapon_index:
-        weapon = srd.equipment.get(weapon_index)
-        if weapon is None or not weapon.get("weapon_category"):
-            weapon = _match_weapon_by_name(weapon_index, srd)
+        weapon = next((item for item in equipped if item["index"] == weapon_index), None)
         if weapon is None:
-            raise TurnEngineError(f"{weapon_index!r} is not a valid weapon")
-    else:
-        for idx in actor.inventory:
-            item = srd.equipment.get(idx)
-            if item and item.get("weapon_category"):
-                weapon = item
-                break
+            weapon = _match_weapon_by_name(weapon_index, equipped)
+        if weapon is None:
+            equipped_names = ", ".join(item["name"] for item in equipped) or "nothing (unarmed)"
+            raise TurnEngineError(
+                f"{weapon_index!r} isn't in {actor.id}'s equipped weapon set "
+                f"(currently: {equipped_names}) - use 'equip' to switch weapons first"
+            )
+    elif equipped:
+        weapon = equipped[0]
 
     str_mod = ability_modifier(actor.stats["STR"])
     dex_mod = ability_modifier(actor.stats["DEX"])
@@ -314,20 +318,18 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
 
     # Fighting Style (Phase 9I): Archery (+2 ranged attack rolls) and
     # Dueling (+2 damage, one-handed melee weapon with no other weapon
-    # carried - this engine has no worn-vs-carried distinction, so "no
-    # other weapon" means no other weapon-category item anywhere in
-    # inventory, matching how has_non_proficient_armor already treats
-    # inventory as "currently equipped") apply here; Defense's +1 AC is
-    # baked into Character.ac at creation instead (see character_creation.
-    # _compute_ac), since this engine computes AC once, not per-attack.
+    # equipped - now that Phase C's equipped_weapons is a real
+    # worn/carried distinction, this checks the equipped set directly
+    # rather than scanning the whole inventory, so a stashed second weapon
+    # in the backpack no longer wrongly denies the bonus) apply here;
+    # Defense's +1 AC is baked into Character.ac at creation instead (see
+    # character_creation._compute_ac), since this engine computes AC once,
+    # not per-attack.
     archery_bonus = 2 if actor.fighting_style == "archery" and is_ranged else 0
-    other_weapons = sum(
-        1
-        for idx in actor.inventory
-        if (item := srd.equipment.get(idx)) and item.get("weapon_category")
-    )
     dueling_bonus = (
-        2 if actor.fighting_style == "dueling" and not is_ranged and other_weapons <= 1 else 0
+        2
+        if actor.fighting_style == "dueling" and not is_ranged and len(actor.equipped_weapons) <= 1
+        else 0
     )
     rage_bonus = RAGE_DAMAGE_BONUS if actor.is_raging and is_melee_str_weapon else 0
 
@@ -1114,6 +1116,45 @@ def _resolve_rage(state: GameState, actor: Character, rng: random.Random) -> boo
     actor.bonus_action_used = True
     state.events.append(
         Event(round=state.round, turn_index=state.current_turn, actor=actor.id, type="rage")
+    )
+    return False
+
+
+def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd: SrdIndex) -> bool:
+    """Phase C: SRD's free "object interaction" to draw/switch weapons -
+    changes which of the actor's owned weapons _pc_attack_params will
+    actually match against. Returns False (doesn't end the turn), same
+    treatment as Second Wind/Rage/a bonus-action spell, but gated by its
+    own equip_used_this_turn flag rather than bonus_action_used (equip
+    isn't a bonus action, and shouldn't consume one - SRD keeps them
+    separate resources)."""
+    if actor.equip_used_this_turn:
+        raise TurnEngineError(f"{actor.id} has already equipped something this turn")
+    items = action.params.get("items")
+    if not items:
+        raise TurnEngineError("equip action requires params['items']")
+    for idx in items:
+        if idx not in actor.inventory:
+            raise TurnEngineError(f"{actor.id} doesn't own {idx!r} - cannot equip it")
+        item = srd.equipment.get(idx)
+        if item is None or not item.get("weapon_category"):
+            raise TurnEngineError(f"{idx!r} is not a weapon")
+    if not weapon_combo_is_legal(items, srd.equipment):
+        names = ", ".join(srd.equipment[idx]["name"] for idx in items)
+        raise TurnEngineError(
+            f"Cannot equip {names} together - at most 2 weapons, a two-handed "
+            "weapon must be alone, and 2 weapons together must both be light"
+        )
+    actor.equipped_weapons = list(items)
+    actor.equip_used_this_turn = True
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="equip",
+            payload={"items": list(items)},
+        )
     )
     return False
 
@@ -1970,6 +2011,10 @@ def _advance_turn_skipping_dead(state: GameState) -> None:
             # same real turn) must NOT see this reset again, or a second
             # bonus-action cast that same turn would be wrongly allowed.
             next_actor.bonus_action_used = False
+            # Phase C: equip_used_this_turn resets on the same "turn
+            # actually advances TO this character" schedule, for the same
+            # reason - equip doesn't end the turn either.
+            next_actor.equip_used_this_turn = False
             return
 
 
@@ -2069,6 +2114,8 @@ def resolve_action(
         ends_turn = _resolve_second_wind(state, actor, rng)
     elif action.verb == "rage":
         ends_turn = _resolve_rage(state, actor, rng)
+    elif action.verb == "equip":
+        ends_turn = _resolve_equip(state, actor, action, srd)
     elif action.verb == "use_item":
         _resolve_use_item(state, actor, action, rng)
     elif action.verb == "death_save":

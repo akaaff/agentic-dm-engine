@@ -25,6 +25,7 @@ ActionVerb = Literal[
     "shove",
     "second_wind",
     "rage",
+    "equip",
     "end_turn",
     "invalid",
 ]
@@ -39,7 +40,8 @@ class ParsedAction(BaseModel):
     params: dict[str, Any] = {}
     """Verb-specific extras. Convention: `move`/`dash` carry
     `params["move_to"] = {"x": int, "y": int}`; `skill_check` carries
-    `params["skill"] = str`."""
+    `params["skill"] = str`; `equip` carries `params["items"] = [str, ...]`
+    (the weapon indices to make the new active equipped set)."""
     raw_text: str
     confidence: float | None = None
     """Set by the LLM intent parser; absent for scripted/hand-authored actions."""

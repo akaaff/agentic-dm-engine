@@ -138,6 +138,13 @@ def test_dueling_fighting_style_grants_nothing_with_a_second_weapon_carried() ->
         fighting_style="dueling",
         position=Position(x=0, y=0),
     )
+    # Phase C: longsword+dagger isn't a legal simultaneous-equip combo
+    # (longsword isn't light), so create_character's own auto-populate
+    # would only ever equip the longsword alone - directly poke both as
+    # equipped to keep testing this test's actual subject (Dueling denied
+    # when 2 weapons are equipped, regardless of whether that specific
+    # combo could ever be reached through the "equip" verb itself).
+    thorin.equipped_weapons = ["longsword", "dagger"]
     goblin = _goblin("goblin_1", Position(x=0, y=0))
     state = _make_state(thorin, goblin)
     action = ParsedAction(
@@ -363,6 +370,7 @@ def test_sneak_attack_triggers_via_an_adjacent_ally_without_advantage() -> None:
 def test_sneak_attack_does_not_trigger_without_a_finesse_or_ranged_weapon() -> None:
     fenwick = _rogue()
     fenwick.inventory = ["warhammer"]
+    fenwick.equipped_weapons = ["warhammer"]
     fenwick.has_help_advantage = True  # advantage present, but wrong weapon type
     goblin = _goblin("goblin_1", Position(x=0, y=0))
     state = _make_state(fenwick, goblin)
@@ -407,6 +415,7 @@ def test_sneak_attack_does_not_trigger_twice_in_one_turn() -> None:
 def test_sneak_attack_does_not_apply_to_a_non_rogue() -> None:
     thorin = _fighter()
     thorin.inventory = ["shortsword"]
+    thorin.equipped_weapons = ["shortsword"]
     thorin.has_help_advantage = True
     goblin = _goblin("goblin_1", Position(x=0, y=0))
     state = _make_state(thorin, goblin)
