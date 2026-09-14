@@ -4,17 +4,27 @@ export default function CharacterSheet({
   character,
   isCurrentTurn,
   isYou,
+  color,
 }: {
   character: LiveCharacter
   isCurrentTurn: boolean
   isYou: boolean
+  /** This character's actorColors.ts color - a distinct one per PC/
+   * companion, red for every enemy. Replaces the old ally/enemy CSS
+   * classes (still-blue ally, still-red enemy border, just no longer two
+   * hardcoded colors baked into index.css). */
+  color: string
 }) {
   const hpPct = character.max_hp > 0 ? Math.max(0, (character.hp / character.max_hp) * 100) : 0
-  const side = character.is_pc ? 'ally' : 'enemy'
+  // current-turn's purple highlight (an existing, more urgent "it's your
+  // turn" signal) takes priority over the character's own identity color,
+  // matching this card's pre-existing visual behavior exactly.
+  const borderColor = isCurrentTurn ? '#7c4dff' : color
 
   return (
     <div
-      className={`character-sheet ${side} ${isCurrentTurn ? 'current-turn' : ''} ${character.is_dead ? 'dead' : ''}`}
+      className={`character-sheet ${isCurrentTurn ? 'current-turn' : ''} ${character.is_dead ? 'dead' : ''}`}
+      style={{ borderLeftColor: borderColor, borderLeftWidth: 3, borderLeftStyle: 'solid' }}
     >
       <div className="character-sheet-header">
         <strong>

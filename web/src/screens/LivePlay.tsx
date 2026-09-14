@@ -1,9 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import CharacterDetailSheet from '../components/CharacterDetailSheet'
 import CharacterSheet from '../components/CharacterSheet'
 import CombatGrid from '../components/CombatGrid'
 import NarrationFeed from '../components/NarrationFeed'
 import SceneImagePanel from '../components/SceneImagePanel'
+import { buildActorColorMap } from '../utils/actorColors'
 import { useSessionSocket } from '../ws/sessionClient'
 
 export default function LivePlay({
@@ -26,6 +27,10 @@ export default function LivePlay({
   const [draft, setDraft] = useState('')
 
   const isMyTurn = awaitingActor === myCharacterId
+  const actorColors = useMemo(
+    () => (gameState ? buildActorColorMap(gameState.turn_order, gameState.characters) : {}),
+    [gameState],
+  )
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -61,11 +66,16 @@ export default function LivePlay({
               myCharacterId={myCharacterId}
               canMove={isMyTurn}
               onMoveTo={sendPlayerMove}
+              actorColors={actorColors}
             />
           )}
           <SceneImagePanel url={sceneImageUrl} />
         </div>
-        <NarrationFeed entries={narrationLog} />
+        <NarrationFeed
+          entries={narrationLog}
+          characters={gameState?.characters ?? {}}
+          actorColors={actorColors}
+        />
         <form className="action-form" onSubmit={handleSubmit}>
           <input
             value={draft}
@@ -90,6 +100,7 @@ export default function LivePlay({
                 character={character}
                 isCurrentTurn={gameState.turn_order[gameState.current_turn] === id}
                 isYou={id === myCharacterId}
+                color={actorColors[id]}
               />
             )
           })}

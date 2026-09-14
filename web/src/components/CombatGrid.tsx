@@ -12,10 +12,13 @@ const TERRAIN_FILL: Record<TerrainType, string> = {
   hazard: '#3a1a1a',
 }
 
-function tokenColor(character: LiveCharacter): string {
+/** Dead/downed override the character's own distinct actorColors entry -
+ * those two states matter more here than "whose token is this" once a
+ * character can no longer act. */
+function tokenColor(character: LiveCharacter, baseColor: string): string {
   if (character.is_dead) return '#4a4552'
   if (character.hp <= 0) return '#8a7a3a'
-  return character.is_pc ? '#4dabff' : '#ff6b6b'
+  return baseColor
 }
 
 function initials(name: string): string {
@@ -34,8 +37,14 @@ function initials(name: string): string {
  * returns null - not yet enough data to pick one - or the <image> itself
  * fails to load, which is the expected/common case until the portrait
  * batch job has generated that particular combination. */
-function TokenFace({ character, stroke, strokeWidth }: {
+function TokenFace({
+  character,
+  baseColor,
+  stroke,
+  strokeWidth,
+}: {
   character: LiveCharacter
+  baseColor: string
   stroke: string
   strokeWidth: number
 }) {
@@ -61,7 +70,14 @@ function TokenFace({ character, stroke, strokeWidth }: {
 
   return (
     <>
-      <circle cx={0} cy={0} r={TOKEN_RADIUS} fill={tokenColor(character)} stroke={stroke} strokeWidth={strokeWidth} />
+      <circle
+        cx={0}
+        cy={0}
+        r={TOKEN_RADIUS}
+        fill={tokenColor(character, baseColor)}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+      />
       <text x={0} y={4} textAnchor="middle" fontSize={11} fill="#0d0b12">
         {initials(character.name)}
       </text>
@@ -76,6 +92,7 @@ export default function CombatGrid({
   myCharacterId,
   canMove,
   onMoveTo,
+  actorColors,
 }: {
   battleMap: LiveBattleMap
   characters: Record<string, LiveCharacter>
@@ -83,6 +100,7 @@ export default function CombatGrid({
   myCharacterId: string
   canMove: boolean
   onMoveTo: (to: { x: number; y: number }) => void
+  actorColors: Record<string, string>
 }) {
   const width = battleMap.width * CELL_SIZE
   const height = battleMap.height * CELL_SIZE
@@ -129,6 +147,7 @@ export default function CombatGrid({
           <g key={character.id} className="grid-token-group" transform={`translate(${cx},${cy})`}>
             <TokenFace
               character={character}
+              baseColor={actorColors[character.id] ?? '#ff6b6b'}
               stroke={isActing ? '#ffd166' : character.id === myCharacterId ? '#ffffff' : 'none'}
               strokeWidth={isActing ? 3 : 2}
             />

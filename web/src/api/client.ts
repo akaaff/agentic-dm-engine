@@ -125,6 +125,8 @@ export interface Character {
   // New for the character-sheet + portrait feature (Phase 2).
   race_index: string | null
   gender: string | null
+  // New for equipped-weapon tracking (Phase C).
+  equipped_weapons: string[]
 }
 
 export type CampaignSize = 'one_shot' | 'short_arc' | 'full'

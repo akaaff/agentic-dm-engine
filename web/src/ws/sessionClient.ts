@@ -58,6 +58,12 @@ export interface LiveCharacter {
   // only, null for monsters and for anything created before this feature.
   race_index: string | null
   gender: string | null
+  // New for equipped-weapon tracking (Phase C) - the SRD indices of the
+  // character's currently active weapon set (at most 2, both light if 2) -
+  // see turn_engine._resolve_equip. Attack resolution only ever matches a
+  // weapon from this list, not the whole inventory.
+  equipped_weapons: string[]
+  equip_used_this_turn: boolean
 }
 
 export type TerrainType = 'floor' | 'wall' | 'difficult' | 'hazard'
@@ -69,6 +75,23 @@ export interface LiveBattleMap {
   spawn_points: Record<string, { x: number; y: number }>
 }
 
+// Mirrors src/engine/events.py's Event - already reaching the browser via
+// state_update's verbatim GameState.model_dump() (same "data already on the
+// wire" pattern as LiveCharacter's own fields), just never declared here.
+// `payload` shape varies by `type` - see formatEvent.ts for the actual
+// per-type field names, confirmed against turn_engine.py's real call sites
+// rather than assumed from the EventType literal alone.
+export interface LiveEvent {
+  id: string
+  round: number
+  turn_index: number
+  actor: string
+  type: string
+  payload: Record<string, unknown>
+  timestamp: string
+  narrated: boolean
+}
+
 export interface LiveGameState {
   encounter_id: string
   characters: Record<string, LiveCharacter>
@@ -77,6 +100,7 @@ export interface LiveGameState {
   round: number
   status: 'in_progress' | 'victory' | 'defeat' | 'aborted'
   battle_map: LiveBattleMap | null
+  events: LiveEvent[]
 }
 
 type ServerMessage =
@@ -94,6 +118,14 @@ export interface NarrationEntry {
    * between encounters, not from an individual action. "action" is the
    * ordinary per-turn narration this project has always had. */
   kind: 'scene' | 'action'
+  /** The mechanical events (damage/heal amounts, crits, etc.) this
+   * narration text is actually about - undefined for a "scene" entry.
+   * Paired up client-side, not sent as one message: the backend always
+   * broadcasts exactly one `narration` message immediately followed by one
+   * `state_update` for the same action resolution (see session.py), so
+   * useSessionSocket stitches them back together by tracking how many
+   * events existed before each narration arrived. */
+  events?: LiveEvent[]
 }
 
 const WS_BASE_URL = 'ws://localhost:8000'
@@ -106,6 +138,11 @@ export function useSessionSocket(sessionId: string) {
   const [error, setError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
+  // How many of game_state.events this client has already accounted for -
+  // the next state_update's new events (a plain slice from this count) are
+  // the ones the most recently-received narration text is about.
+  const lastEventCountRef = useRef(0)
+  const pendingNarrationRef = useRef<string | null>(null)
 
   useEffect(() => {
     // `cancelled` guards against React StrictMode's dev-mode double-invoke
@@ -115,6 +152,8 @@ export function useSessionSocket(sessionId: string) {
     // this same closure's state setters and can show a spurious "connection
     // failed" even though the second, real socket connects fine right after.
     let cancelled = false
+    lastEventCountRef.current = 0
+    pendingNarrationRef.current = null
     const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}`)
     wsRef.current = ws
 
@@ -132,13 +171,26 @@ export function useSessionSocket(sessionId: string) {
       if (cancelled) return
       const message = JSON.parse(event.data) as ServerMessage
       switch (message.type) {
-        case 'state_update':
+        case 'state_update': {
           setGameState(message.game_state)
-          break
-        case 'narration':
-          if (message.text) {
-            setNarrationLog((prev) => [...prev, { text: message.text, kind: 'action' }])
+          const newEvents = message.game_state.events.slice(lastEventCountRef.current)
+          lastEventCountRef.current = message.game_state.events.length
+          const pendingText = pendingNarrationRef.current
+          pendingNarrationRef.current = null
+          if (pendingText || newEvents.length > 0) {
+            setNarrationLog((prev) => [
+              ...prev,
+              { text: pendingText ?? '', kind: 'action', events: newEvents },
+            ])
           }
+          break
+        }
+        case 'narration':
+          // Stashed, not pushed yet - the state_update broadcast that
+          // always immediately follows (see session.py) carries the
+          // mechanical events this same narration is about, and both land
+          // in the log as one combined entry.
+          pendingNarrationRef.current = message.text || null
           break
         case 'scene_narration':
           if (message.text) {

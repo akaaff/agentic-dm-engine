@@ -526,6 +526,32 @@ button.secondary {
   border-radius: 0 6px 6px 0;
 }
 
+/* Structured mechanical summary (damage/heal amounts, crits) injected
+   below a narration entry's prose - see formatEvent.ts. Small, secondary
+   to the narration text itself. */
+.event-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: -0.3rem 0 0.6rem;
+}
+
+.event-badge {
+  font-size: 0.75rem;
+  color: #9d94ad;
+  background: #14121a;
+  border: 1px solid #3a3448;
+  border-left-width: 3px;
+  border-left-style: solid;
+  border-radius: 0 4px 4px 0;
+  padding: 0.15rem 0.5rem;
+  white-space: nowrap;
+}
+
+.event-badge-highlight {
+  font-weight: 700;
+}
+
 .action-form {
   display: flex;
   gap: 0.5rem;
@@ -545,14 +571,6 @@ button.secondary {
   border: 1px solid #3a3448;
   border-radius: 8px;
   padding: 0.6rem 0.75rem;
-}
-
-.character-sheet.ally {
-  border-left: 3px solid #4dabff;
-}
-
-.character-sheet.enemy {
-  border-left: 3px solid #ff6b6b;
 }
 
 .character-sheet.current-turn {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type SpellSummary } from '../api/client'
+import { api, type EquipmentSummary, type SpellSummary } from '../api/client'
 import type { LiveCharacter } from '../ws/sessionClient'
 import { portraitUrl } from '../utils/portraits'
 
@@ -31,6 +31,7 @@ function resourceLabel(key: string): string {
  * what's mechanically available right now, not a server-computed list. */
 export default function CharacterDetailSheet({ character }: { character: LiveCharacter }) {
   const [cantrips, setCantrips] = useState<SpellSummary[]>([])
+  const [equipment, setEquipment] = useState<EquipmentSummary[]>([])
 
   useEffect(() => {
     if (!character.class_index) {
@@ -51,9 +52,38 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
     }
   }, [character.class_index])
 
+  useEffect(() => {
+    let cancelled = false
+    api
+      .listEquipment()
+      .then((items) => {
+        if (!cancelled) setEquipment(items)
+      })
+      .catch(() => {
+        if (!cancelled) setEquipment([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const hpPct = character.max_hp > 0 ? Math.max(0, (character.hp / character.max_hp) * 100) : 0
   const portrait = portraitUrl(character)
   const resourceEntries = Object.entries(character.class_resources)
+  const equipmentNames = new Map(equipment.map((e) => [e.index, e.name]))
+  const itemName = (idx: string) => equipmentNames.get(idx) ?? idx
+
+  // Grouped/counted, not a naive listing - the engine's inventory is a flat
+  // list of item *instances* (a quiver of 20 arrows is 20 separate "arrow"
+  // entries, not one entry with a quantity - see CLAUDE.md's Day-18 note),
+  // never fixed at the display layer until now.
+  const inventoryCounts = new Map<string, number>()
+  for (const idx of character.inventory) {
+    inventoryCounts.set(idx, (inventoryCounts.get(idx) ?? 0) + 1)
+  }
+  const spellSlotEntries = Object.entries(character.spell_slots).sort(
+    ([a], [b]) => Number(a) - Number(b),
+  )
 
   return (
     <div className="character-detail-sheet sheet">
@@ -86,6 +116,12 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
           character.hp <= 0 &&
           (character.is_stable ? ' - stable' : ' - unconscious')}
       </div>
+      <p className="companion-meta">
+        <strong>Equipped:</strong>{' '}
+        {character.equipped_weapons.length > 0
+          ? character.equipped_weapons.map(itemName).join(', ')
+          : 'nothing (unarmed)'}
+      </p>
 
       <table className="detail-stats-table">
         <tbody>
@@ -133,6 +169,31 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
         </div>
       )}
 
+      {spellSlotEntries.length > 0 && (
+        <div>
+          <strong>Spell slots:</strong>
+          <ul className="detail-action-list">
+            {spellSlotEntries.map(([level, remaining]) => (
+              <li key={level} className={remaining <= 0 ? 'detail-action-unavailable' : ''}>
+                Level {level}: {remaining} remaining
+              </li>
+            ))}
+          </ul>
+          <p className="companion-meta">Cantrips are unlimited - no slot cost.</p>
+        </div>
+      )}
+
+      {inventoryCounts.size > 0 && (
+        <div>
+          <strong>Inventory:</strong>
+          <p className="companion-meta">
+            {[...inventoryCounts.entries()]
+              .map(([idx, count]) => (count > 1 ? `${itemName(idx)} x${count}` : itemName(idx)))
+              .join(', ')}
+          </p>
+        </div>
+      )}
+
       <div>
         <strong>Available actions:</strong>
         <ul className="detail-action-list">
@@ -144,6 +205,9 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
           <li>Grapple / Shove</li>
           <li>Skill Check</li>
           <li>Use Item</li>
+          <li className={character.equip_used_this_turn ? 'detail-action-unavailable' : ''}>
+            Equip (switch weapons - doesn't cost your turn)
+          </li>
           {cantrips.length > 0 && (
             <li>
               Cast a Spell - cantrips: {cantrips.map((c) => c.name).join(', ')}

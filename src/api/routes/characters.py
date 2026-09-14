@@ -295,6 +295,7 @@ def _character_to_record(character: Character) -> CharacterRecord:
         conditions=[c.model_dump() for c in character.conditions],
         race_index=character.race_index,
         gender=character.gender,
+        equipped_weapons=list(character.equipped_weapons),
     )
 
 
@@ -322,4 +323,5 @@ def _record_to_character(record: CharacterRecord) -> Character:
         conditions=[Condition.model_validate(c) for c in record.conditions],
         race_index=record.race_index,
         gender=record.gender,
+        equipped_weapons=record.equipped_weapons,
     )

@@ -65,6 +65,16 @@ class CharacterRecord(Base):
     spell_slots-adjacent Phase-9 additions, etc.) silently drop on a DB
     round-trip (see the class_index/skill_proficiencies entries above) -
     not fixed here, out of scope for this feature."""
+    equipped_weapons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    """Added for equipped-weapon tracking - unlike the ~20-field gap noted
+    above, this one had to be fixed immediately rather than flagged as a
+    follow-up: caught live the moment a freshly-created character (whose
+    in-memory response correctly showed an auto-populated equipped set) was
+    re-fetched and came back with an empty list - the same class of bug,
+    but this field is core to the feature actually working at all (a live
+    WS session builds its GameState from a *reloaded* character, so an
+    always-empty equipped set would force every real attack through the
+    unarmed-strike fallback, silently, regardless of what was equipped)."""
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
