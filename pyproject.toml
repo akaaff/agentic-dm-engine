@@ -58,8 +58,10 @@ warn_unused_ignores = true
 # datasets ships no py.typed marker; trl re-exports SFTConfig/SFTTrainer
 # dynamically (a lazy-module __getattr__, not a plain assignment mypy can
 # see statically) - torch/transformers/peft/diffusers already ship their
-# own type info and don't need this.
-module = ["datasets", "datasets.*", "trl", "trl.*"]
+# own type info and don't need this. accelerate (generate_portraits.py's
+# init_empty_weights, needed to avoid materializing a full-precision T5
+# before loading real fp8 weights) has the same missing-py.typed gap.
+module = ["datasets", "datasets.*", "trl", "trl.*", "accelerate", "accelerate.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 

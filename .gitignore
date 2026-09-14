@@ -19,8 +19,9 @@ data/training/curated/*.jsonl
 models/
 *.safetensors
 
-# generated scene images - regenerable at runtime
+# generated scene images / portraits - regenerable at runtime
 data/generated_images/
+data/portraits/
 
 # wandb local run cache (Day 26 fine-tune logging) - the run itself lives on wandb.ai
 wandb/
