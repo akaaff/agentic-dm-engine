@@ -239,6 +239,99 @@ def test_session_setup_failure_reports_error_instead_of_crashing(
     assert session_id not in ws_session_module._sessions
 
 
+def test_rest_recovers_party_resources_between_encounters(client: TestClient) -> None:
+    # Issue #28: there was previously no way to rest mid-campaign outside a
+    # scripted rest scene. Fast-forwards straight to "victory" by mutating
+    # the live session's state directly (real combat is covered elsewhere -
+    # this is about the rest message itself, same "set the state you need"
+    # pattern test_advance_campaign_after_victory_continues_to_the_next_
+    # encounter already uses) and confirms a "rest" message actually
+    # recovers the party's resources through a real WS round trip.
+    session_id = _start_real_session(client)
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        msg = ws.receive_json()
+        while msg["type"] != "awaiting_input":
+            msg = ws.receive_json()
+
+        session = ws_session_module._sessions[session_id]
+        thorin = session.game_state.characters["thorin"]
+        thorin.hp = 1
+        session.game_state.status = "victory"
+
+        ws.send_json({"type": "rest", "rest_type": "long"})
+        narration_msg = ws.receive_json()
+        assert narration_msg["type"] == "narration"
+        assert "rest" in narration_msg["text"].lower()
+        state_msg = ws.receive_json()
+        assert state_msg["type"] == "state_update"
+        assert state_msg["game_state"]["characters"]["thorin"]["hp"] == thorin.max_hp
+        # Status itself is untouched by resting - still a "victory" stop
+        # the player leaves via continue_campaign, not silently advanced.
+        assert state_msg["game_state"]["status"] == "victory"
+
+
+def test_rest_rejected_while_an_encounter_is_still_in_progress(client: TestClient) -> None:
+    session_id = _start_real_session(client)
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        msg = ws.receive_json()
+        while msg["type"] != "awaiting_input":
+            msg = ws.receive_json()
+
+        session = ws_session_module._sessions[session_id]
+        thorin = session.game_state.characters["thorin"]
+        thorin.hp = 1
+
+        ws.send_json({"type": "rest", "rest_type": "long"})
+        error_msg = ws.receive_json()
+        assert error_msg["type"] == "error"
+
+    # Nothing recovered - the rejected request never touched the party.
+    assert thorin.hp == 1
+
+
+def test_continue_campaign_chains_to_the_next_encounter(client: TestClient) -> None:
+    # The explicit counterpart to _advance_campaign_after_victory's own
+    # direct-call test below, driven through a real WS round trip instead -
+    # confirms the message wiring itself, not just the underlying function.
+    # kobold_warren_full (not goblin_ambush_oneshot - see _start_real_session)
+    # has real scenes after its first combat, same campaign the direct-call
+    # test below uses, so "continuing" past a forced victory has somewhere
+    # real to chain to instead of hanging with nothing left to broadcast.
+    create_response = client.post("/characters", json=_VALID_FIGHTER_BODY)
+    assert create_response.status_code == 201
+    session_response = client.post(
+        "/sessions",
+        json={
+            "campaign_id": "kobold_warren_full",
+            "character_id": "thorin",
+            "companion_ids": ["companion_grom"],
+        },
+    )
+    assert session_response.status_code == 201
+    session_id: str = session_response.json()["session_id"]
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        msg = ws.receive_json()
+        while msg["type"] != "awaiting_input":
+            msg = ws.receive_json()
+
+        session = ws_session_module._sessions[session_id]
+        assert session.game_state.encounter_id == "kobold_ambush"
+        session.game_state.status = "victory"
+
+        ws.send_json({"type": "continue_campaign"})
+        messages = [ws.receive_json()]
+        while messages[-1]["type"] != "awaiting_input":
+            messages.append(ws.receive_json())
+
+    state_updates = [m for m in messages if m["type"] == "state_update"]
+    assert state_updates[-1]["game_state"]["encounter_id"] == "bandit_hideout"
+    scene_narrations = [m["text"] for m in messages if m["type"] == "scene_narration"]
+    assert scene_narrations  # rising_action + scout_the_hideout's own intro/outcome
+
+
 async def test_advance_campaign_after_victory_continues_to_the_next_encounter() -> None:
     # Regression guard for the other half of the same gap as the
     # scene_narration test above: a live session never advanced past one

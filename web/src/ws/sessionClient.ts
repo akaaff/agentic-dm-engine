@@ -319,6 +319,19 @@ export function useSessionSocket(sessionId: string) {
     setError(null)
   }
 
+  // Party-wide, not turn-based (issue #28) - only reachable between
+  // encounters (gameState.status === 'victory'), so unlike sendPlayerAction/
+  // sendPlayerMove these don't touch awaitingActor at all.
+  function sendRest(restType: 'short' | 'long') {
+    wsRef.current?.send(JSON.stringify({ type: 'rest', rest_type: restType }))
+    setError(null)
+  }
+
+  function sendContinueCampaign() {
+    wsRef.current?.send(JSON.stringify({ type: 'continue_campaign' }))
+    setError(null)
+  }
+
   return {
     gameState,
     narrationLog,
@@ -329,5 +342,7 @@ export function useSessionSocket(sessionId: string) {
     connected,
     sendPlayerAction,
     sendPlayerMove,
+    sendRest,
+    sendContinueCampaign,
   }
 }

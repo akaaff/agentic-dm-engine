@@ -440,6 +440,12 @@ button.secondary {
   font-weight: bold;
 }
 
+.rest-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
 .scene-row {
   display: flex;
   flex-wrap: wrap;

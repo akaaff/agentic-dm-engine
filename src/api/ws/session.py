@@ -35,6 +35,7 @@ from src.engine.campaign_runner import advance_to_next_encounter
 from src.engine.companions import build_companion, load_companion_spec_by_character_id
 from src.engine.encounter import GameStateBuildError, build_encounter_state, load_encounter
 from src.engine.monster_ai import choose_monster_action
+from src.engine.resting import apply_long_rest, apply_short_rest
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
 from src.engine.turn_engine import TurnEngineError
@@ -339,8 +340,16 @@ async def _advance_campaign_after_victory(session: Session) -> None:
     encounter - the same chaining cli.play.run_autoplay already does for
     autoplay, now live. No-ops immediately for a session with no campaign
     set (the demo-encounter fallback and every offline test that calls
-    create_session() directly), so this can be called unconditionally right
-    alongside _autoplay_non_human_turns.
+    create_session() directly).
+
+    Issue #28: no longer called automatically the instant status becomes
+    "victory" - a party that wants to rest between encounters needs a real,
+    reachable pause to do it in, and this chain used to run synchronously
+    within the very same server-side turn that produced the victory, before
+    the client could ever see (let alone act on) the intermediate state. Now
+    only reached via an explicit "continue_campaign" client message (see
+    _handle_client_message), so "victory" is a real stop the player chooses
+    to leave, with _handle_rest_request available to them first.
 
     A loop, not a single step: companions alone can sometimes finish a
     trivial encounter before the human's own turn ever comes up (
@@ -386,10 +395,61 @@ async def _advance_campaign_after_victory(session: Session) -> None:
         await _autoplay_non_human_turns(session)
 
 
+async def _handle_rest_request(session: Session, rest_type: str) -> None:
+    """Issue #28: a party-wide short/long rest, requested outside the
+    turn-based action pipeline entirely - unlike every verb turn_engine
+    resolves, a rest isn't one actor's turn, it acts on the whole party at
+    once, so it doesn't go anywhere near ParsedAction/resolve_action. Only
+    reachable between encounters (status == "victory", the real stop point
+    _advance_campaign_after_victory no longer auto-leaves - see its own
+    docstring), not mid-combat and not after a defeat/abort there's nothing
+    left to rest for.
+
+    Mutates session.party's Character objects in place (apply_short_rest/
+    apply_long_rest's existing contract) - the exact same objects already
+    referenced by session.game_state.characters (build_encounter_state
+    reuses party objects, never copies them), so the very next
+    state_update already reflects the recovered HP/slots/class_resources
+    with no extra wiring needed."""
+    if session.party is None or session.game_state.status != "victory":
+        await _broadcast(
+            session,
+            {"type": "error", "detail": "The party can only rest between encounters."},
+        )
+        return
+
+    if rest_type == "short":
+        apply_short_rest(session.party, session.action_rng)
+        narration = "The party takes a short rest, tending wounds and catching their breath."
+    elif rest_type == "long":
+        apply_long_rest(session.party)
+        narration = "The party makes camp and takes a long rest, waking refreshed."
+    else:
+        await _broadcast(session, {"type": "error", "detail": f"Unknown rest type: {rest_type!r}"})
+        return
+
+    await _broadcast(session, {"type": "narration", "text": narration})
+    await _broadcast(session, _state_update_message(session))
+
+
 async def _handle_client_message(
     session: Session, websocket: WebSocket, raw: dict[str, object]
 ) -> None:
     msg_type = raw.get("type")
+
+    if msg_type == "rest":
+        await _handle_rest_request(session, str(raw.get("rest_type", "")))
+        return
+    if msg_type == "continue_campaign":
+        # Explicit, player-chosen continuation of a "victory" stop - see
+        # _advance_campaign_after_victory's own docstring for why this is no
+        # longer automatic. No-ops harmlessly if status isn't "victory"
+        # (e.g. a stale double-click) or there's no campaign to chain into.
+        await _advance_campaign_after_victory(session)
+        await _autoplay_non_human_turns(session)
+        await _send_awaiting_input(session)
+        return
+
     raw_text = ""
     action: ParsedAction | None = None
 
@@ -453,7 +513,6 @@ async def _handle_client_message(
         await _broadcast(session, {"type": "scene_image", "url": result["scene_image_url"]})
 
     await _autoplay_non_human_turns(session)
-    await _advance_campaign_after_victory(session)
     await _send_awaiting_input(session)
 
 
@@ -497,10 +556,11 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
         # human can actually act on rather than one that's already stale.
         await _autoplay_non_human_turns(session)
         # Rare, but possible: companions alone finish the first encounter
-        # before the human ever acts - continue the campaign the same way
-        # a mid-session victory does, before this connection's first
-        # state_update rather than leaving it stuck on a finished fight.
-        await _advance_campaign_after_victory(session)
+        # before the human ever acts - status is "victory" already on this
+        # connection's first state_update. That's fine: issue #28 made
+        # "victory" a real stop the player leaves via an explicit
+        # continue_campaign message (or rests first), not something this
+        # connect path should silently skip past.
         await websocket.send_json(_state_update_message(session))
         # Personal, not the shared _send_awaiting_input (which searches the
         # whole session for whoever should act next, after an action

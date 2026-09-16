@@ -24,6 +24,8 @@ export default function LivePlay({
     connected,
     sendPlayerAction,
     sendPlayerMove,
+    sendRest,
+    sendContinueCampaign,
   } = useSessionSocket(sessionId)
   const [draft, setDraft] = useState('')
 
@@ -69,6 +71,24 @@ export default function LivePlay({
             {gameState.status === 'defeat' && 'Defeat... the party has fallen.'}
             {gameState.status === 'aborted' && 'The encounter ended early.'}
           </p>
+        )}
+        {gameState?.status === 'victory' && logCaughtUp && (
+          // Issue #28: "victory" is a real stop the party chooses to leave -
+          // rest here to recover HP/spell slots/class resources before the
+          // campaign's next encounter, or just continue on. Gated on
+          // logCaughtUp for the same reason isMyTurn is - don't offer a
+          // choice about a state the paced log hasn't actually shown yet.
+          <div className="rest-controls">
+            <button type="button" onClick={() => sendRest('short')}>
+              Short Rest
+            </button>
+            <button type="button" onClick={() => sendRest('long')}>
+              Long Rest
+            </button>
+            <button type="button" onClick={sendContinueCampaign}>
+              Continue
+            </button>
+          </div>
         )}
         <div className="scene-row">
           {gameState?.battle_map && (
