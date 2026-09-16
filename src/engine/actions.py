@@ -26,6 +26,7 @@ ActionVerb = Literal[
     "second_wind",
     "rage",
     "equip",
+    "offhand_attack",
     "end_turn",
     "invalid",
 ]
@@ -41,7 +42,9 @@ class ParsedAction(BaseModel):
     """Verb-specific extras. Convention: `move`/`dash` carry
     `params["move_to"] = {"x": int, "y": int}`; `skill_check` carries
     `params["skill"] = str`; `equip` carries `params["items"] = [str, ...]`
-    (the weapon indices to make the new active equipped set)."""
+    (the weapon/armor/shield indices to make the new active equipped set).
+    `offhand_attack` needs only `target` (like `attack`) - always resolves
+    against the actor's second equipped weapon, no `item_or_spell`."""
     raw_text: str
     confidence: float | None = None
     """Set by the LLM intent parser; absent for scripted/hand-authored actions."""

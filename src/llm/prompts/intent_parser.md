@@ -15,7 +15,8 @@ Valid verbs and what they mean:
 - "shove": the player tries to shove another character prone or away, e.g. "I shove the goblin" / "I try to knock it down". Set "target" to who they're shoving.
 - "second_wind": the player (a Fighter) uses their Second Wind to heal themselves, e.g. "I use my second wind" / "I catch my breath and push through the pain". No target needed.
 - "rage": the player (a Barbarian) flies into a rage, e.g. "I fly into a rage" / "I let my fury take over". No target needed.
-- "equip": the player switches which weapon(s) they're actively wielding, e.g. "I draw my dagger" / "I switch to my daggers" / "I sheathe my sword and draw two daggers". Set params.items to the list of weapon names being equipped.
+- "equip": the player switches which weapon(s), armor, or shield they're actively using, e.g. "I draw my dagger" / "I switch to my daggers" / "I sheathe my sword and draw two daggers" / "I put on my chain mail" / "I raise my shield". Set params.items to the list of item names being equipped.
+- "offhand_attack": the player makes a bonus-action attack with their second (off-hand) weapon, only after already dual-wielding two light weapons, e.g. "I follow up with my other dagger" / "I stab with my off-hand blade". Set "target" to who they're attacking.
 - "end_turn": the player explicitly says they're done / pass / end their turn with no other action.
 - "invalid": use this for anything nonsensical, out of scope for the game, referencing a character that isn't listed below, or that doesn't fit any verb above.
 

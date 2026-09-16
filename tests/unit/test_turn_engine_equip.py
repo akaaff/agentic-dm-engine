@@ -253,3 +253,102 @@ def test_equip_succeeds_again_once_the_turn_has_advanced_back() -> None:
     )
     resolve_action(state, second, _FixedRandom([]))  # type: ignore[arg-type]
     assert thorin.equipped_weapons == ["greataxe"]
+
+
+# ------------------------------------------------------- offhand_attack (#12)
+
+
+def _dual_dagger_fighter(position: Position | None = None) -> Character:
+    thorin = _fighter(position)
+    thorin.inventory += ["dagger", "dagger"]
+    thorin.equipped_weapons = ["dagger", "dagger"]
+    return thorin
+
+
+def test_offhand_attack_rejects_with_fewer_than_two_equipped_weapons() -> None:
+    thorin = _fighter()  # only the longsword equipped
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=0, y=0)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="offhand_attack",
+        target="goblin_1",
+        raw_text="I stab with my other blade",
+    )
+    with pytest.raises(TurnEngineError, match="needs two light weapons equipped"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_offhand_attack_rejects_when_bonus_action_already_used() -> None:
+    thorin = _dual_dagger_fighter()
+    thorin.bonus_action_used = True
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=0, y=0)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="offhand_attack",
+        target="goblin_1",
+        raw_text="I stab with my other blade",
+    )
+    with pytest.raises(TurnEngineError, match="already used their bonus action"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_offhand_attack_deals_damage_without_the_ability_modifier() -> None:
+    # Thorin: base STR15/DEX14, Human's +1-to-all racial bonus -> STR16/
+    # DEX15, mods 3/2. Dagger is finesse so ability_mod = max(3, 2) = 3.
+    # Attack bonus = 3 + proficiency(2) = 5, natural 15 -> total 20, beats
+    # the goblin's AC15 cleanly (not a crit - natural isn't 20). Damage die
+    # natural 3 both times: a normal attack deals 3 + ability_mod(3) = 6;
+    # the off-hand attack deals 3 + 0 = 3 - the ability modifier is the
+    # only thing that should differ.
+    thorin = _dual_dagger_fighter()
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(thorin, goblin)
+
+    # Off-hand (bonus action) first, so the turn is still thorin's for the
+    # main-action attack right after - matches the real SRD play order.
+    offhand_attack = ParsedAction(
+        actor="thorin",
+        verb="offhand_attack",
+        target="goblin_1",
+        raw_text="I stab with my off-hand dagger",
+    )
+    resolve_action(state, offhand_attack, _FixedRandom([15, 3]))  # type: ignore[arg-type]
+    offhand_damage = next(e for e in state.events if e.type == "damage_dealt")
+    assert offhand_damage.payload["amount"] == 3
+
+    normal_attack = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="dagger",
+        raw_text="I follow up with my main-hand dagger",
+    )
+    resolve_action(state, normal_attack, _FixedRandom([15, 3]))  # type: ignore[arg-type]
+    normal_damage = [e for e in state.events if e.type == "damage_dealt"][-1]
+    assert normal_damage.payload["amount"] == 6
+
+
+def test_offhand_attack_does_not_end_the_turn() -> None:
+    thorin = _dual_dagger_fighter()
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(thorin, goblin)
+
+    offhand_attack = ParsedAction(
+        actor="thorin",
+        verb="offhand_attack",
+        target="goblin_1",
+        raw_text="I follow up with my other dagger",
+    )
+    resolve_action(state, offhand_attack, _FixedRandom([15, 3]))  # type: ignore[arg-type]
+    assert state.turn_order[state.current_turn] == "thorin"
+
+    # The actor's real main action still works afterward, same turn.
+    normal_attack = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="dagger",
+        raw_text="I finish with my main-hand dagger",
+    )
+    resolve_action(state, normal_attack, _FixedRandom([15, 3]))  # type: ignore[arg-type]
+    assert len([e for e in state.events if e.type == "attack_roll"]) == 2

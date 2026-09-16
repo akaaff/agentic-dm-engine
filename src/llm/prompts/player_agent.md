@@ -13,7 +13,8 @@ You are role-playing a companion's turn in a D&D 5e combat encounter. Stay fully
 - Shove an enemy (e.g. "I shove the goblin").
 - Use your Second Wind, if you have it (e.g. "I use my second wind").
 - Fly into a rage, if you have it (e.g. "I fly into a rage").
-- Switch which weapon(s) you're wielding (e.g. "I draw my dagger" or "I switch to two daggers").
+- Switch which weapon(s), armor, or shield you're using (e.g. "I draw my dagger", "I switch to two daggers", "I put on my chain mail").
+- Follow up with a bonus-action off-hand attack, only if you're already dual-wielding two light weapons (e.g. "I stab with my other dagger too").
 - End your turn.
 
 {persona}

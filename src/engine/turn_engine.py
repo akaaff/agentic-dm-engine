@@ -263,7 +263,17 @@ def _match_weapon_by_name(weapon_name: str, candidates: list[SrdEntry]) -> SrdEn
     return None
 
 
-def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex) -> AttackParams:
+def _pc_attack_params(
+    actor: Character,
+    weapon_index: str | None,
+    srd: SrdIndex,
+    include_ability_damage_bonus: bool = True,
+) -> AttackParams:
+    """`include_ability_damage_bonus=False` (Two-Weapon Fighting's off-hand
+    attack, `_resolve_offhand_attack`) drops the ability modifier from
+    `damage_bonus` only - the attack roll itself is unaffected - per SRD's
+    "you don't add your ability modifier to the damage of [the off-hand]
+    attack" rule."""
     equipped = [item for idx in actor.equipped_weapons if (item := srd.equipment.get(idx))]
     weapon: SrdEntry | None = None
     if weapon_index:
@@ -292,7 +302,7 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
             attack_bonus=str_mod + actor.proficiency_bonus,
             damage_dice_count=0,
             damage_dice_sides=4,
-            damage_bonus=str_mod + 1 + rage_bonus,
+            damage_bonus=(str_mod if include_ability_damage_bonus else 0) + 1 + rage_bonus,
             damage_type="bludgeoning",
             source_name="unarmed strike",
             range_normal_feet=5,
@@ -342,7 +352,10 @@ def _pc_attack_params(actor: Character, weapon_index: str | None, srd: SrdIndex)
         attack_bonus=ability_mod + prof_bonus + archery_bonus,
         damage_dice_count=dice_count,
         damage_dice_sides=dice_sides,
-        damage_bonus=ability_mod + notation_bonus + dueling_bonus + rage_bonus,
+        damage_bonus=(ability_mod if include_ability_damage_bonus else 0)
+        + notation_bonus
+        + dueling_bonus
+        + rage_bonus,
         damage_type=weapon["damage"]["damage_type"]["index"],
         source_name=weapon["name"],
         range_normal_feet=range_normal_feet,
@@ -666,6 +679,44 @@ def _resolve_attack(
         if target.is_dead:
             return
         _resolve_single_attack(state, actor, target, params, rng, srd)
+
+
+def _resolve_offhand_attack(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> bool:
+    """Two-Weapon Fighting's SRD bonus-action off-hand attack (issue #12) -
+    a second attack with the actor's *other* equipped weapon, no ability
+    modifier added to its damage (see _pc_attack_params's
+    include_ability_damage_bonus). Gated by the same bonus_action_used flag
+    as Second Wind/Rage/a bonus-action spell (SRD keeps them one shared
+    resource), and requires exactly 2 equipped weapons - which, thanks to
+    weapon_combo_is_legal already enforced at equip time, always means both
+    are light, exactly SRD's eligibility rule for this attack. Returns
+    False (doesn't end the turn), letting the actor still take their main
+    action - an ordinary `attack` with either equipped weapon."""
+    if actor.bonus_action_used:
+        raise TurnEngineError(
+            f"{actor.id} has already used their bonus action this turn - "
+            "cannot make an off-hand attack"
+        )
+    if len(actor.equipped_weapons) != 2:
+        raise TurnEngineError(
+            f"{actor.id} needs two light weapons equipped to make an off-hand attack "
+            "- use 'equip' first"
+        )
+    if action.target is None:
+        raise TurnEngineError("offhand_attack action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown offhand_attack target: {action.target}")
+    _validate_attack_target(actor, target)
+
+    params = _pc_attack_params(
+        actor, actor.equipped_weapons[1], srd, include_ability_damage_bonus=False
+    )
+    _resolve_single_attack(state, actor, target, params, rng, srd)
+    actor.bonus_action_used = True
+    return False
 
 
 def _target_saving_throw_bonus(target: Character, ability: AbilityScore, srd: SrdIndex) -> int:
@@ -2132,6 +2183,8 @@ def resolve_action(
         ends_turn = _resolve_rage(state, actor, rng)
     elif action.verb == "equip":
         ends_turn = _resolve_equip(state, actor, action, srd)
+    elif action.verb == "offhand_attack":
+        ends_turn = _resolve_offhand_attack(state, actor, action, rng, srd)
     elif action.verb == "use_item":
         _resolve_use_item(state, actor, action, rng)
     elif action.verb == "death_save":
