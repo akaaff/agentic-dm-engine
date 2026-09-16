@@ -34,6 +34,9 @@ def test_bards_two_proficiency_pools_are_satisfied() -> None:
     assert sorted(companion.skill_proficiencies) == sorted(
         ["skill-performance", "skill-persuasion", "skill-insight", "skill-religion"]
     )
+    # Issue #30: Pip's authored chosen_spells threads through build_companion
+    # the same way chosen_racial_skills already did.
+    assert companion.known_spells == ["healing-word", "thunderwave", "sleep", "charm-person"]
 
 
 def test_every_companion_spec_builds_without_error() -> None:

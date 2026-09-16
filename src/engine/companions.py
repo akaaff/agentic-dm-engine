@@ -37,6 +37,10 @@ class CompanionSpec(BaseModel):
     companion - Skill Versatility (issue #23), 2 skills of the author's
     choice. No vendored companion is currently half-elf, but this keeps the
     YAML spec able to author one."""
+    chosen_spells: list[str] | None = None
+    """Only meaningful (and required by create_character) for a "Spells
+    Known" caster companion - Bard or Sorcerer (issue #30). Pip Larkspur
+    (bard) is currently the only companion that needs this authored."""
 
 
 def load_companion_spec(
@@ -90,4 +94,5 @@ def build_companion(spec: CompanionSpec, srd: SrdIndex | None = None) -> Charact
         srd=srd,
         gender=spec.gender,
         chosen_racial_skills=spec.chosen_racial_skills,
+        chosen_spells=spec.chosen_spells,
     )

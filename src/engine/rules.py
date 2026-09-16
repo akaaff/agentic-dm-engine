@@ -266,6 +266,44 @@ def normalize_spell_name(raw: str) -> str:
     return raw.strip().lower().replace(" ", "-")
 
 
+def class_spell_indices(class_index: str, srd: SrdIndex, level: int | None = None) -> set[str]:
+    """Issue #30: every real SRD spell that `class_index` can access, per the
+    SRD's own per-spell `classes` list - the same filter api/routes/
+    characters.py's cantrip-building loop already applies for level 0,
+    generalized and shared here so character_creation._validate_spell_
+    choices/level_up and the API's known_spells_pool can't drift apart on
+    what counts as "a real spell for this class." `level=None` means any
+    level-1+ spell (level_up's own new-spells-learned check, which - unlike
+    creation's level-1-only pool - can legally reach a higher-level spell
+    once the class's own table grants one)."""
+    return {
+        spell["index"]
+        for spell in srd.spells.values()
+        if (spell.get("level") == level if level is not None else spell.get("level", 0) >= 1)
+        and any(c["index"] == class_index for c in spell.get("classes", []))
+    }
+
+
+def spell_damage_notation(spell: SrdEntry, cast_level: int) -> str:
+    """The dice notation a cast of `spell` at `cast_level` actually deals -
+    "1d10" for a cantrip scaling by character level (damage_at_character_
+    level, keyed "1" here since notation alone doesn't change with level,
+    just which key some other lookup would use) or the slot-level notation
+    for a real spell (damage_at_slot_level[str(cast_level)]). Extracted from
+    turn_engine._spell_attack_params's identical inline logic (issue #30) so
+    a spell's *displayed* damage (api/routes/characters.py's SpellSummary)
+    can never drift from what actually resolves - callers with only a spell
+    entry and no live cast (a display context) pass the spell's own base
+    `spell["level"]` as cast_level."""
+    damage_info = spell["damage"]
+    notation: str = (
+        damage_info["damage_at_character_level"]["1"]
+        if cast_level == 0
+        else damage_info["damage_at_slot_level"][str(cast_level)]
+    )
+    return notation
+
+
 def skill_ability(skill_name: str, srd: SrdIndex) -> AbilityScore:
     """Moved here from turn_engine (Day 22) so campaign_runner's out-of-combat
     skill challenges can share the same skill->governing-ability lookup

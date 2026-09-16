@@ -32,6 +32,7 @@ from src.engine.rules import (
     ability_modifier,
     armor_ac,
     class_equipment_options,
+    class_spell_indices,
     normalize_skill_name,
     weapon_combo_is_legal,
 )
@@ -211,6 +212,22 @@ def arcane_recovery_slot_budget(level: int) -> int:
     return -(-level // 2)
 
 
+SPELLS_KNOWN_BY_LEVEL: dict[str, dict[int, int]] = {
+    "bard": {1: 4, 2: 5, 3: 6, 4: 7, 5: 8},
+    "sorcerer": {1: 2, 2: 3, 3: 4, 4: 5, 5: 6},
+}
+"""Issue #30: the two SRD 5.1 "Spells Known" casters (as opposed to Cleric/
+Druid/Wizard/Paladin, who *prepare* from their whole class list instead - a
+separate, deferred phase, see this file's module docstring). Not in the
+vendored SRD JSON any more than LEVEL_1_SPELL_SLOTS/SPELL_SLOTS_BY_LEVEL are
+(level tables live behind a separate API endpoint) - hardcoded SRD 5.1
+facts, same precedent, same levels-1-5 scope. Counts cantrips-known
+separately in the real SRD table; this project's cantrips have never been
+restricted by a "known" count (ClassDetail.cantrips already lists every
+cantrip a class can access, unconditionally) and stay that way here -
+deliberately out of this issue's scope, only level-1+ spells are gated."""
+
+
 VALID_FIGHTING_STYLES = {"archery", "defense", "dueling"}
 """Phase 9I only implements the mechanical effect of these three SRD
 fighting styles (Character.fighting_style, applied in turn_engine.
@@ -267,6 +284,7 @@ def create_character(
     fighting_style: str | None = None,
     gender: str | None = None,
     chosen_racial_skills: list[str] | None = None,
+    chosen_spells: list[str] | None = None,
 ) -> Character:
     srd = srd or load_srd()
     chosen_equipment = chosen_equipment or []
@@ -314,6 +332,23 @@ def create_character(
     cls = srd.classes.get(class_index)
     if cls is None:
         raise CharacterCreationError(f"Unknown class: {class_index}")
+
+    # "Spells Known" casters (issue #30) - Bard/Sorcerer choose a fixed
+    # level-1 spell list at creation, validated the same required/rejected
+    # shape as chosen_racial_skills above: required (and only meaningful)
+    # exactly for the classes that have it, not silently accepted/ignored
+    # for any other (a Fighter with a phantom chosen_spells list would be a
+    # silent no-op bug, not caught until someone tried to use it).
+    if class_index in SPELLS_KNOWN_BY_LEVEL:
+        if chosen_spells is None:
+            raise CharacterCreationError(
+                f"{class_index} requires chosen_spells "
+                f"(exactly {SPELLS_KNOWN_BY_LEVEL[class_index][1]} level-1 spells)"
+            )
+        _validate_spell_choices(class_index, chosen_spells, srd)
+    elif chosen_spells is not None:
+        raise CharacterCreationError(f"{class_index} doesn't choose known spells")
+
     background = srd.backgrounds.get(background_index)
     if background is None:
         raise CharacterCreationError(f"Unknown background: {background_index}")
@@ -510,6 +545,7 @@ def create_character(
         class_resources=class_resources,
         fighting_style=fighting_style,
         gender=gender,
+        known_spells=list(chosen_spells) if chosen_spells is not None else [],
     )
 
 
@@ -555,6 +591,26 @@ def _validate_skill_choices(cls: SrdEntry, chosen_skills: list[str]) -> None:
             raise CharacterCreationError(f"{skill} is not a valid skill choice for {cls['name']}")
 
 
+def _validate_spell_choices(class_index: str, chosen_spells: list[str], srd: SrdIndex) -> None:
+    """Issue #30 - mirrors _validate_skill_choices's exact shape: a level-1
+    "Spells Known" caster (Bard/Sorcerer, SPELLS_KNOWN_BY_LEVEL) must choose
+    exactly its level-1 count of real, distinct level-1 spells from its own
+    SRD spell list. Only level 1 - a fresh character has no higher slots to
+    cast anything else with."""
+    required_count = SPELLS_KNOWN_BY_LEVEL[class_index][1]
+    if len(chosen_spells) != required_count:
+        raise CharacterCreationError(
+            f"{class_index} requires exactly {required_count} spell choice(s), "
+            f"got {len(chosen_spells)}"
+        )
+    if len(set(chosen_spells)) != len(chosen_spells):
+        raise CharacterCreationError(f"Duplicate spell choice in {chosen_spells}")
+    allowed = class_spell_indices(class_index, srd, level=1)
+    for spell in chosen_spells:
+        if spell not in allowed:
+            raise CharacterCreationError(f"{spell} is not a valid level-1 spell for {class_index}")
+
+
 def is_eligible_for_extra_attack(character: Character) -> bool:
     return character.level >= EXTRA_ATTACK_LEVEL and character.class_index in EXTRA_ATTACK_CLASSES
 
@@ -579,6 +635,7 @@ def level_up(
     character: Character,
     srd: SrdIndex,
     ability_score_increase: dict[AbilityScore, int] | None = None,
+    spells_learned: list[str] | None = None,
 ) -> Character:
     """Advances `character` by exactly one level, recomputing everything the
     same way create_character derives it at level 1 (see the module
@@ -594,7 +651,11 @@ def level_up(
     ability_score_increase argument just doesn't apply one (the caller
     presenting that choice to a human is out of this function's scope, same
     division of responsibility as the module docstring already states for
-    equipment/skill choices at creation).
+    equipment/skill choices at creation). `spells_learned` (issue #30,
+    Bard/Sorcerer) follows the exact same shape: applied only at a level
+    where SPELLS_KNOWN_BY_LEVEL's count actually increases *and* the caller
+    supplied the new spell(s) - a level-up with no spells_learned just
+    doesn't grow known_spells, same division of responsibility.
 
     Calling this repeatedly takes a level-1 character to level 5 one call at
     a time - each call only ever advances by one level."""
@@ -665,5 +726,38 @@ def level_up(
         character.class_resources["bardic_inspiration"] = max(
             1, ability_modifier(character.stats["CHA"])
         )
+
+    # Known-spell growth (issue #30, Bard/Sorcerer): mirrors the ASI block's
+    # "gated by level, only acts if the caller supplied one" shape exactly.
+    # class_spells_known_by_level.get(character.level - 1, 0) - not
+    # character.level itself - since the *previous* level's count is what
+    # was already known; level 1 has no "level 0" entry, so a first-ever
+    # level-up (1 -> 2) correctly treats the prior count as 0 spells... but
+    # a level-1 character already has SPELLS_KNOWN_BY_LEVEL[class][1] known
+    # from create_character, not 0 - so the previous level's *real* entry
+    # (character.level - 1) is looked up directly, never assumed to be 0
+    # except for a class with no entry at all (not a "Spells Known" caster).
+    class_spells_known_by_level = SPELLS_KNOWN_BY_LEVEL.get(character.class_index or "")
+    if class_spells_known_by_level is not None and spells_learned is not None:
+        previously_known = class_spells_known_by_level.get(character.level - 1, 0)
+        now_known = class_spells_known_by_level.get(character.level, previously_known)
+        expected_new = now_known - previously_known
+        if expected_new > 0:
+            if len(spells_learned) != expected_new:
+                raise CharacterCreationError(
+                    f"{character.class_index} learns exactly {expected_new} new spell(s) at "
+                    f"level {character.level}, got {len(spells_learned)}"
+                )
+            if len(set(spells_learned)) != len(spells_learned):
+                raise CharacterCreationError(f"Duplicate spell choice in {spells_learned}")
+            allowed = class_spell_indices(character.class_index or "", srd)
+            for spell in spells_learned:
+                if spell not in allowed:
+                    raise CharacterCreationError(
+                        f"{spell} is not a valid spell for {character.class_index}"
+                    )
+                if spell in character.known_spells:
+                    raise CharacterCreationError(f"{character.id} already knows {spell}")
+            character.known_spells = [*character.known_spells, *spells_learned]
 
     return character

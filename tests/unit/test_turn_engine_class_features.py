@@ -915,6 +915,7 @@ def _bard(position: Position | None = None) -> Character:
             "skill-history",
             "skill-insight",
         ],
+        chosen_spells=["healing-word", "thunderwave", "sleep", "charm-person"],
         position=position,
     )
 
@@ -1011,3 +1012,68 @@ def test_bardic_inspiration_rejected_if_bonus_action_already_used() -> None:
     )
     with pytest.raises(TurnEngineError, match="already used their bonus action"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+# --- Known-spell restriction (issue #30) ----------------------------------
+
+
+def test_bard_can_cast_a_known_spell() -> None:
+    # Pip's chosen_spells (see _bard's own create_character call) includes
+    # healing-word - a real, chosen spell should resolve normally, not be
+    # rejected by the new known-spells gate.
+    pip = _bard(Position(x=0, y=0))
+    thorin = _fighter(Position(x=1, y=0))
+    thorin.hp = 1
+    state = _make_state(pip, thorin)
+    action = ParsedAction(
+        actor="pip",
+        verb="cast_spell",
+        target="thorin",
+        item_or_spell="healing word",
+        raw_text="I sing a word of healing over Thorin",
+    )
+    resolve_action(state, action, _FixedRandom([3]))  # type: ignore[arg-type]
+
+    assert pip.spell_slots[1] == 1  # started at 2
+    assert thorin.hp > 1  # actually healed
+
+
+def test_bard_cannot_cast_an_unknown_spell() -> None:
+    # cure-wounds is a real, valid bard spell - just not one of Pip's own
+    # chosen_spells - rejected the same way an outright-unknown spell name
+    # already is, not silently allowed the way every class used to be.
+    pip = _bard(Position(x=0, y=0))
+    thorin = _fighter(Position(x=1, y=0))
+    state = _make_state(pip, thorin)
+    action = ParsedAction(
+        actor="pip",
+        verb="cast_spell",
+        target="thorin",
+        item_or_spell="cure wounds",
+        raw_text="I try to cast cure wounds",
+    )
+    with pytest.raises(TurnEngineError, match="doesn't know"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+    assert pip.spell_slots[1] == 2  # never consumed - rejected before spending a slot
+
+
+def test_bard_cantrip_unaffected_by_known_spell_restriction() -> None:
+    # Cantrips (level 0) stay unrestricted - out of this issue's scope, same
+    # as ClassDetail.cantrips already being unconditional. Vicious Mockery
+    # is a real bard cantrip Pip never "chose" (cantrips aren't tracked in
+    # known_spells at all), and still resolves.
+    pip = _bard(Position(x=0, y=0))
+    goblin = _goblin("goblin_1", Position(x=1, y=0))
+    state = _make_state(pip, goblin)
+    action = ParsedAction(
+        actor="pip",
+        verb="cast_spell",
+        target="goblin_1",
+        item_or_spell="vicious mockery",
+        raw_text="I hurl an insult",
+    )
+    # DC = 8 + prof(2) + CHA mod(3) = 13. Natural 10 -> total 13 >= 13 -> save
+    # succeeds, no damage - outcome doesn't matter for this test, only that
+    # it resolves at all rather than raising "doesn't know".
+    resolve_action(state, action, _FixedRandom([10, 4]))  # type: ignore[arg-type]
+    assert any(e.type == "spell_cast" for e in state.events)

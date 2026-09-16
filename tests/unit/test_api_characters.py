@@ -117,6 +117,33 @@ def test_get_class_detail_skips_monks_nested_tool_or_instrument_choice(
     }
 
 
+def test_get_class_detail_exposes_known_spells_pool_with_real_detail(client: TestClient) -> None:
+    # Issue #30: a "Spells Known" caster (Bard) exposes its level-1 spell
+    # pool with real mechanical detail, not just bare names - same spirit as
+    # #15's equipment detail.
+    response = client.get("/characters/classes/bard")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spells_known"] == 4
+    pool = {s["index"]: s for s in body["known_spells_pool"]}
+    assert "healing-word" in pool
+    healing_word = pool["healing-word"]
+    assert healing_word["level"] == 1
+    assert healing_word["casting_time"] == "1 bonus action"
+    assert healing_word["range"] == "60 feet"
+    assert healing_word["heal_dice"] == "1d4 + MOD"
+    # Every entry is real level-1 SRD data, no cantrips leaking in.
+    assert all(s["level"] == 1 for s in pool.values())
+
+
+def test_get_class_detail_spells_known_is_zero_for_a_non_caster(client: TestClient) -> None:
+    response = client.get("/characters/classes/fighter")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spells_known"] == 0
+    assert body["known_spells_pool"] == []
+
+
 def test_get_class_detail_exposes_starting_equipment(client: TestClient) -> None:
     # Issue #32: the class's fixed starting kit (not the optional
     # proficiency-gated picker) - previously never exposed at all, so the
@@ -238,6 +265,41 @@ def test_create_character_persists_class_resources_and_level_fields(client: Test
     assert fetched["hit_dice_remaining"] == 1
     assert fetched["class_resources"] == {"rage": 2}
     assert set(fetched["saving_throw_proficiencies"]) == {"STR", "CON"}
+
+
+def test_create_character_persists_known_spells(client: TestClient) -> None:
+    # Issue #30 - same "a live WS session reloads from the DB" persistence
+    # gap as class_resources above, closed from the start this time (the
+    # migration/round-trip were added in the same pass as the feature, not
+    # found live after the fact).
+    body = {
+        "character_id": "pip",
+        "name": "Pip",
+        "race_index": "halfling",
+        "class_index": "bard",
+        "background_index": "acolyte",
+        "base_ability_scores": {"STR": 8, "DEX": 14, "CON": 12, "INT": 10, "WIS": 13, "CHA": 15},
+        "chosen_skills": [
+            "skill-performance",
+            "skill-persuasion",
+            "skill-deception",
+            "skill-acrobatics",
+            "skill-history",
+            "skill-insight",
+        ],
+        "chosen_spells": ["healing-word", "thunderwave", "sleep", "charm-person"],
+    }
+    create_response = client.post("/characters", json=body)
+    assert create_response.status_code == 201
+    assert create_response.json()["known_spells"] == [
+        "healing-word",
+        "thunderwave",
+        "sleep",
+        "charm-person",
+    ]
+
+    fetched = client.get("/characters/pip").json()
+    assert fetched["known_spells"] == ["healing-word", "thunderwave", "sleep", "charm-person"]
 
 
 def test_create_character_persists_fighting_style(client: TestClient) -> None:

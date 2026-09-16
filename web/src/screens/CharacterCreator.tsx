@@ -13,6 +13,7 @@ import {
 } from '../api/client'
 import CharacterPreviewSheet from '../components/CharacterPreviewSheet'
 import { equipmentDetail } from '../utils/equipmentDetail'
+import { nameWithSpellDetail } from '../utils/spellDetail'
 
 // Mirrors character_creation.VALID_GENDERS - portrait-selection only, no
 // mechanical weight (see that module's docstring).
@@ -142,6 +143,10 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   // choice, any skill - unlike chosenSkills, not gated by the class's own
   // skill_options.
   const [chosenRacialSkills, setChosenRacialSkills] = useState<string[]>([])
+  // "Spells Known" caster's level-1 spell choice (issue #30) - Bard/
+  // Sorcerer only, gated by classDetail.spells_known the same way
+  // chosenSkills is gated by skill_choose.
+  const [chosenSpells, setChosenSpells] = useState<string[]>([])
   const [assignments, setAssignments] = useState<Record<AbilityScore, number | ''>>({
     STR: '',
     DEX: '',
@@ -184,6 +189,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     setChosenSkills([])
     setChosenEquipment([])
     setFightingStyle('')
+    setChosenSpells([])
     api
       .getClass(classIndex)
       .then(setClassDetail)
@@ -240,6 +246,14 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     })
   }
 
+  function toggleSpell(spell: string) {
+    setChosenSpells((prev) => {
+      if (prev.includes(spell)) return prev.filter((s) => s !== spell)
+      if (classDetail && prev.length >= classDetail.spells_known) return prev
+      return [...prev, spell]
+    })
+  }
+
   function toggleRacialSkill(skill: string) {
     setChosenRacialSkills((prev) => {
       if (prev.includes(skill)) return prev.filter((s) => s !== skill)
@@ -259,7 +273,10 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     raceIndex !== '' &&
     (raceIndex !== 'half-elf' || chosenRacialSkills.length === 2)
   const canProceedFromClass =
-    classIndex !== '' && classDetail !== null && chosenSkills.length === classDetail.skill_choose
+    classIndex !== '' &&
+    classDetail !== null &&
+    chosenSkills.length === classDetail.skill_choose &&
+    (classDetail.spells_known === 0 || chosenSpells.length === classDetail.spells_known)
   const canProceedFromAbilities = allAbilitiesAssigned
   const canSubmit = backgroundIndex !== ''
 
@@ -283,6 +300,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         gender: gender || undefined,
         fighting_style: fightingStyle || undefined,
         chosen_racial_skills: raceIndex === 'half-elf' ? chosenRacialSkills : undefined,
+        chosen_spells: classDetail?.spells_known ? chosenSpells : undefined,
       })
       setCreated(character)
       setStep(5)
@@ -524,6 +542,30 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 ))}
               </fieldset>
             )}
+            {classDetail && classDetail.spells_known > 0 && (
+              // "Spells Known" caster's level-1 spell choice (issue #30) -
+              // Bard/Sorcerer only (classDetail.spells_known is 0 for
+              // everyone else). Mirrors the skill-choice fieldset above
+              // exactly, showing each spell's real detail (#31/#32's same
+              // "show real stats while picking, not just after" pattern).
+              <fieldset>
+                <legend>
+                  Choose {classDetail.spells_known} spell
+                  {classDetail.spells_known === 1 ? '' : 's'} ({chosenSpells.length}/
+                  {classDetail.spells_known} selected)
+                </legend>
+                {classDetail.known_spells_pool.map((spell) => (
+                  <label key={spell.index} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={chosenSpells.includes(spell.index)}
+                      onChange={() => toggleSpell(spell.index)}
+                    />
+                    {nameWithSpellDetail(spell)}
+                  </label>
+                ))}
+              </fieldset>
+            )}
             <div className="wizard-nav">
               <button type="button" onClick={() => setStep(0)}>
                 Back
@@ -691,6 +733,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         background={backgrounds.find((b) => b.index === backgroundIndex)}
         chosenEquipment={chosenEquipment}
         equipment={equipment}
+        chosenSpells={chosenSpells}
       />
     </div>
   )

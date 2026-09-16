@@ -282,6 +282,7 @@ def _bard() -> Character:
             "skill-history",
             "skill-insight",
         ],
+        chosen_spells=["healing-word", "thunderwave", "sleep", "charm-person"],
     )
 
 
@@ -299,3 +300,52 @@ def test_bardic_inspiration_uses_recompute_on_an_asi_that_boosts_cha() -> None:
     assert pip.level == 4
     assert pip.stats["CHA"] == 18  # 16 -> 18
     assert pip.class_resources["bardic_inspiration"] == 4  # mod+3 -> mod+4
+
+
+def test_known_spells_grow_by_the_class_table_when_a_new_spell_is_supplied() -> None:
+    # Issue #30: Bard's SPELLS_KNOWN_BY_LEVEL is 4 at level 1, 5 at level 2 -
+    # exactly one new spell should be learnable on the level-1 -> 2 call.
+    srd = load_srd()
+    pip = _bard()
+    assert pip.known_spells == ["healing-word", "thunderwave", "sleep", "charm-person"]
+
+    level_up(pip, srd, spells_learned=["cure-wounds"])
+    assert pip.level == 2
+    assert pip.known_spells == [
+        "healing-word",
+        "thunderwave",
+        "sleep",
+        "charm-person",
+        "cure-wounds",
+    ]
+
+
+def test_known_spells_unchanged_when_not_supplied_at_a_growth_level() -> None:
+    # Mirrors test_ability_score_improvement_skipped_when_not_supplied's
+    # exact "the caller hasn't made a choice yet" shape.
+    srd = load_srd()
+    pip = _bard()
+    level_up(pip, srd)
+    assert pip.level == 2
+    assert pip.known_spells == ["healing-word", "thunderwave", "sleep", "charm-person"]
+
+
+def test_known_spells_growth_rejects_wrong_count() -> None:
+    srd = load_srd()
+    pip = _bard()
+    with pytest.raises(CharacterCreationError, match="exactly 1"):
+        level_up(pip, srd, spells_learned=["cure-wounds", "heroism"])
+
+
+def test_known_spells_growth_rejects_a_spell_not_in_the_class_list() -> None:
+    srd = load_srd()
+    pip = _bard()
+    with pytest.raises(CharacterCreationError, match="not a valid spell"):
+        level_up(pip, srd, spells_learned=["fireball"])  # sorcerer/wizard only
+
+
+def test_known_spells_growth_rejects_a_spell_already_known() -> None:
+    srd = load_srd()
+    pip = _bard()
+    with pytest.raises(CharacterCreationError, match="already knows"):
+        level_up(pip, srd, spells_learned=["healing-word"])

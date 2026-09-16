@@ -35,6 +35,10 @@ export interface LiveCharacter {
   monster_index: string | null
   skill_proficiencies: string[]
   saving_throw_proficiencies: string[]
+  // New for issue #30's known-spell list - normalized SRD spell indices,
+  // meaningful only for a "Spells Known" caster (Bard/Sorcerer); empty for
+  // everyone else, including cantrips (which stay unrestricted/untracked).
+  known_spells: string[]
   exhaustion_level: number
   is_dodging: boolean
   has_help_advantage: boolean

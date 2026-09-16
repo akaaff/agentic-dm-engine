@@ -124,7 +124,7 @@ import re
 from dataclasses import dataclass, replace
 
 from src.engine.actions import ParsedAction
-from src.engine.character_creation import is_eligible_for_extra_attack
+from src.engine.character_creation import SPELLS_KNOWN_BY_LEVEL, is_eligible_for_extra_attack
 from src.engine.conditions import apply_condition, has_condition, remove_condition, tick_conditions
 from src.engine.dice import roll
 from src.engine.encounter import monster_to_character
@@ -164,6 +164,7 @@ from src.engine.rules import (
     resolve_skill_check,
     saving_throw_bonus,
     skill_ability,
+    spell_damage_notation,
     spell_mechanic,
     spell_range_feet,
     weapon_combo_is_legal,
@@ -1913,11 +1914,7 @@ def _spell_attack_params(
     is already looked up and classified by the caller (_resolve_cast_spell)."""
     _, ability_mod = _spellcasting_ability_mod(actor, srd)
     damage_info = spell["damage"]
-    notation = (
-        damage_info["damage_at_character_level"]["1"]
-        if spell_level == 0
-        else damage_info["damage_at_slot_level"][str(spell_level)]
-    )
+    notation = spell_damage_notation(spell, spell_level)
     dice_count, dice_sides, notation_bonus = parse_dice_notation(notation)
 
     return AttackParams(
@@ -2371,6 +2368,17 @@ def _resolve_cast_spell(
     spell = srd.spells.get(normalized)
     if spell is None:
         raise TurnEngineError(f"Unknown spell: {action.item_or_spell!r}")
+
+    # "Spells Known" restriction (issue #30) - Bard/Sorcerer may only cast a
+    # level-1+ spell they actually know. Cantrips (level 0) stay unrestricted
+    # - out of this issue's scope, matches ClassDetail.cantrips already
+    # being an unconditional "every cantrip this class can access" list.
+    if (
+        spell.get("level", 0) > 0
+        and actor.class_index in SPELLS_KNOWN_BY_LEVEL
+        and normalized not in actor.known_spells
+    ):
+        raise TurnEngineError(f"{actor.id} doesn't know {spell['name']}")
 
     is_bonus_action = _is_bonus_action_spell(spell)
     if is_bonus_action and actor.bonus_action_used:

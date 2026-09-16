@@ -8,6 +8,7 @@ import type {
 } from '../api/client'
 import { nameWithEquipmentDetail } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
+import { nameWithSpellDetail } from '../utils/spellDetail'
 
 const ABILITIES: AbilityScore[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 
@@ -40,6 +41,7 @@ export default function CharacterPreviewSheet({
   background,
   chosenEquipment,
   equipment,
+  chosenSpells,
 }: {
   name: string
   race: RaceSummary | undefined
@@ -55,6 +57,7 @@ export default function CharacterPreviewSheet({
   background: BackgroundSummary | undefined
   chosenEquipment: string[]
   equipment: EquipmentSummary[]
+  chosenSpells: string[]
 }) {
   const portrait = portraitUrl({
     race_index: race?.index ?? null,
@@ -138,6 +141,22 @@ export default function CharacterPreviewSheet({
         <p>
           <strong>Cantrips available:</strong>{' '}
           {classDetail.cantrips.map((c) => c.name).join(', ')}
+        </p>
+      )}
+
+      {classDetail && classDetail.spells_known > 0 && (
+        // Issue #30: only meaningful for a "Spells Known" caster - resolves
+        // the chosen indices against known_spells_pool for real detail, same
+        // "pool + this character's own picks" pattern startingKitLabel uses.
+        <p>
+          <strong>Spells known:</strong>{' '}
+          {chosenSpells.length > 0
+            ? chosenSpells
+                .map((idx) => classDetail.known_spells_pool.find((s) => s.index === idx))
+                .filter((s): s is (typeof classDetail.known_spells_pool)[number] => s !== undefined)
+                .map(nameWithSpellDetail)
+                .join(', ')
+            : 'none chosen yet'}
         </p>
       )}
 

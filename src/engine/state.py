@@ -110,6 +110,14 @@ class Character(BaseModel):
     """"skill-x" indices (same format as chosen_skills), populated by
     character_creation.py from chosen class skills + the background's fixed
     proficiencies - previously derived at creation time but never stored."""
+    known_spells: list[str] = []
+    """Issue #30: normalized SRD spell indices this character actually knows
+    and can cast (level 1+ only - cantrips remain unrestricted, out of this
+    issue's scope). Only populated/enforced for "Spells Known" casters
+    (Bard, Sorcerer) - see character_creation.SPELLS_KNOWN_BY_LEVEL and
+    turn_engine._resolve_cast_spell's restriction. Empty (and meaningless)
+    for every other class, including "Prepared" casters (Cleric/Druid/
+    Wizard/Paladin), a deliberately deferred second phase."""
     saving_throw_proficiencies: list[AbilityScore] = []
     """Populated by character_creation.py from the SRD class's `saving_throws`
     (e.g. Fighter: STR, CON) - see rules.saving_throw_bonus. Empty for

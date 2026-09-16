@@ -13,13 +13,14 @@ from sqlalchemy.orm import Session
 from src.api.db.models import CharacterRecord
 from src.api.db.session import get_db
 from src.engine.character_creation import (
+    SPELLS_KNOWN_BY_LEVEL,
     CharacterCreationError,
     class_skill_choice_pool,
     create_character,
 )
 from src.engine.position import Position
-from src.engine.rules import class_equipment_options
-from src.engine.srd_loader import SrdIndex, load_srd
+from src.engine.rules import class_equipment_options, class_spell_indices, spell_damage_notation
+from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character, Condition, WildShapeSnapshot
 
 router = APIRouter(prefix="/characters", tags=["characters"])
@@ -58,6 +59,20 @@ class SpellSummary(BaseModel):
     index: str
     name: str
     desc: str
+    # Real mechanical detail (issue #30, same spirit as EquipmentSummary's
+    # issue #15 widening) - read straight from the vendored SRD spell entry,
+    # not derived/guessed.
+    level: int
+    """0 for a cantrip."""
+    casting_time: str
+    range: str
+    components: list[str]
+    material: str | None
+    damage_dice: str | None = None
+    damage_type: str | None = None
+    heal_dice: str | None = None
+    dc_type: str | None = None
+    dc_success: str | None = None
 
 
 class StartingEquipmentItem(BaseModel):
@@ -80,14 +95,25 @@ class ClassDetail(ClassSummary):
     cantrips: list[SpellSummary]
     """Level-0 SRD spells this class's `classes` list includes it in - empty
     for non-casters (e.g. Fighter). The character sheet's "what can I cast"
-    list reads this directly rather than the engine tracking known spells
-    per character - see character_creation.py's module docstring for why
-    this project doesn't otherwise restrict cast_spell to a known-spell list."""
+    list reads this directly rather than the engine tracking a known-cantrip
+    list per character - cantrips stay unrestricted (issue #30 only gates
+    level-1+ spells for "Spells Known" casters, see known_spells_pool below)."""
     starting_equipment: list[StartingEquipmentItem]
     """The class's fixed starting kit (issue #32) - the exact same
     cls["starting_equipment"] entries character_creation.create_character's
     inventory-building loop reads, exposed so the wizard can show what a
     player is actually getting before they submit, not just after."""
+    spells_known: int = 0
+    """Issue #30: this class's level-1 SPELLS_KNOWN_BY_LEVEL count - >0 only
+    for a "Spells Known" caster (Bard/Sorcerer). 0 for every other class,
+    including "Prepared" casters (Cleric/Druid/Wizard/Paladin) - a
+    deliberately deferred second phase, not the same mechanic."""
+    known_spells_pool: list[SpellSummary] = []
+    """This class's real level-1 SRD spells (empty unless spells_known > 0) -
+    the wizard's spell-picker offers exactly these, and character_detail
+    lookups resolve a character's own known_spells indices against this same
+    pool for display. Level-1 only, since this wizard only ever creates
+    level-1 characters."""
 
 
 class SkillSummary(BaseModel):
@@ -152,6 +178,10 @@ class CreateCharacterRequest(BaseModel):
     """Only meaningful (and required) for a Half-Elf - Skill Versatility
     (issue #23), 2 skills of the player's choice. create_character itself
     rejects it for any other race."""
+    chosen_spells: list[str] | None = None
+    """Only meaningful (and required) for a "Spells Known" caster - Bard or
+    Sorcerer (issue #30), ClassDetail.spells_known level-1 spells of the
+    player's choice. create_character itself rejects it for any other class."""
 
 
 def _race_ability_bonuses(race: dict[str, Any]) -> dict[str, int]:
@@ -204,6 +234,46 @@ def _starting_equipment_items(raw: list[dict[str, Any]]) -> list[StartingEquipme
     ]
 
 
+def _spell_summary(spell: SrdEntry) -> SpellSummary:
+    """Real mechanical detail (issue #30) - level/casting_time/range/
+    components/material read straight off the SRD entry, plus whichever of
+    damage/heal/DC the spell actually has, checked independently (not
+    exclusively tied to rules.spell_mechanic's single bucket, since a
+    display can show e.g. Vicious Mockery's damage *and* its save together).
+    Damage notation reuses rules.spell_damage_notation at the spell's own
+    base level, so the displayed number can never drift from what
+    turn_engine._spell_attack_params actually resolves."""
+    level = spell.get("level", 0)
+    damage_dice = damage_type = heal_dice = dc_type = dc_success = None
+    if spell.get("damage"):
+        damage_dice = spell_damage_notation(spell, level)
+        # A couple of real SRD entries (sleep, prismatic-spray) have a
+        # "damage" block with dice but no damage_type at all - sleep's is
+        # hit-points-of-creatures-affected, not a real damage roll.
+        damage_type_info = spell["damage"].get("damage_type")
+        damage_type = damage_type_info["name"] if damage_type_info else None
+    if spell.get("heal_at_slot_level"):
+        heal_dice = spell["heal_at_slot_level"][str(max(level, 1))]
+    if spell.get("dc"):
+        dc_type = spell["dc"]["dc_type"]["name"]
+        dc_success = spell["dc"]["dc_success"]
+    return SpellSummary(
+        index=spell["index"],
+        name=spell["name"],
+        desc=" ".join(spell["desc"]) if isinstance(spell["desc"], list) else spell["desc"],
+        level=level,
+        casting_time=spell.get("casting_time", ""),
+        range=spell.get("range", ""),
+        components=list(spell.get("components", [])),
+        material=spell.get("material"),
+        damage_dice=damage_dice,
+        damage_type=damage_type,
+        heal_dice=heal_dice,
+        dc_type=dc_type,
+        dc_success=dc_success,
+    )
+
+
 @router.get("/classes", response_model=list[ClassSummary])
 def list_classes() -> list[ClassSummary]:
     srd = load_srd()
@@ -226,16 +296,14 @@ def get_class(class_index: str) -> ClassDetail:
     # reference list - see that function's docstring for the full story).
     skill_choose, skill_options = class_skill_choice_pool(cls)
 
-    cantrips = [
-        SpellSummary(
-            index=spell["index"],
-            name=spell["name"],
-            desc=" ".join(spell["desc"]) if isinstance(spell["desc"], list) else spell["desc"],
-        )
-        for spell in srd.spells.values()
-        if spell.get("level") == 0
-        and any(c["index"] == class_index for c in spell.get("classes", []))
-    ]
+    cantrips = [_spell_summary(srd.spells[idx]) for idx in class_spell_indices(class_index, srd, 0)]
+
+    spells_known = SPELLS_KNOWN_BY_LEVEL.get(class_index, {}).get(1, 0)
+    known_spells_pool = (
+        [_spell_summary(srd.spells[idx]) for idx in class_spell_indices(class_index, srd, 1)]
+        if spells_known > 0
+        else []
+    )
 
     return ClassDetail(
         index=cls["index"],
@@ -246,6 +314,8 @@ def get_class(class_index: str) -> ClassDetail:
         equipment_options=class_equipment_options(cls, srd),
         cantrips=sorted(cantrips, key=lambda s: s.name),
         starting_equipment=_starting_equipment_items(cls.get("starting_equipment", [])),
+        spells_known=spells_known,
+        known_spells_pool=sorted(known_spells_pool, key=lambda s: s.name),
     )
 
 
@@ -331,6 +401,7 @@ def create_character_endpoint(body: CreateCharacterRequest, db: DbSession) -> Ch
             gender=body.gender,
             fighting_style=body.fighting_style,
             chosen_racial_skills=body.chosen_racial_skills,
+            chosen_spells=body.chosen_spells,
         )
     except CharacterCreationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -378,6 +449,7 @@ def _character_to_record(character: Character) -> CharacterRecord:
         hit_die_sides=character.hit_die_sides,
         hit_dice_remaining=character.hit_dice_remaining,
         saving_throw_proficiencies=list(character.saving_throw_proficiencies),
+        known_spells=list(character.known_spells),
         fighting_style=character.fighting_style,
         class_resources=dict(character.class_resources),
         used_relentless_endurance_this_rest=character.used_relentless_endurance_this_rest,
@@ -422,6 +494,7 @@ def _record_to_character(record: CharacterRecord) -> Character:
         hit_die_sides=record.hit_die_sides,
         hit_dice_remaining=record.hit_dice_remaining,
         saving_throw_proficiencies=record.saving_throw_proficiencies,  # type: ignore[arg-type]
+        known_spells=record.known_spells,
         fighting_style=record.fighting_style,
         class_resources=record.class_resources,
         used_relentless_endurance_this_rest=record.used_relentless_endurance_this_rest,

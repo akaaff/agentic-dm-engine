@@ -1,11 +1,13 @@
 import pytest
 
 from src.engine.character_creation import (
+    SPELLS_KNOWN_BY_LEVEL,
     CharacterCreationError,
     arcane_recovery_slot_budget,
     create_character,
     validate_standard_array,
 )
+from src.engine.state import AbilityScore
 
 
 def test_equip_auto_populate_does_not_double_count_a_single_chosen_light_weapon() -> None:
@@ -374,6 +376,115 @@ def test_wizard_gets_one_arcane_recovery_use_at_creation() -> None:
     assert elrond.class_resources == {"arcane_recovery": 1}
 
 
+# --- Known spells (issue #30) ------------------------------------------------
+
+_BARD_ABILITY_SCORES: dict[AbilityScore, int] = {
+    "STR": 8,
+    "DEX": 14,
+    "CON": 12,
+    "INT": 10,
+    "WIS": 13,
+    "CHA": 15,
+}
+_BARD_SKILLS = [
+    "skill-performance",
+    "skill-persuasion",
+    "skill-deception",
+    "skill-acrobatics",
+    "skill-history",
+    "skill-insight",
+]
+
+
+def test_spells_known_by_level_table_sanity() -> None:
+    assert SPELLS_KNOWN_BY_LEVEL["bard"] == {1: 4, 2: 5, 3: 6, 4: 7, 5: 8}
+    assert SPELLS_KNOWN_BY_LEVEL["sorcerer"] == {1: 2, 2: 3, 3: 4, 4: 5, 5: 6}
+
+
+def test_bard_chosen_spells_populates_known_spells() -> None:
+    pip = create_character(
+        character_id="pip",
+        name="Pip",
+        race_index="halfling",
+        class_index="bard",
+        background_index="acolyte",
+        base_ability_scores=_BARD_ABILITY_SCORES,
+        chosen_skills=_BARD_SKILLS,
+        chosen_spells=["healing-word", "thunderwave", "sleep", "charm-person"],
+    )
+    assert pip.known_spells == ["healing-word", "thunderwave", "sleep", "charm-person"]
+
+
+def test_bard_requires_chosen_spells() -> None:
+    with pytest.raises(CharacterCreationError, match="requires chosen_spells"):
+        create_character(
+            character_id="pip",
+            name="Pip",
+            race_index="halfling",
+            class_index="bard",
+            background_index="acolyte",
+            base_ability_scores=_BARD_ABILITY_SCORES,
+            chosen_skills=_BARD_SKILLS,
+        )
+
+
+def test_bard_rejects_wrong_spell_count() -> None:
+    with pytest.raises(CharacterCreationError, match="exactly 4"):
+        create_character(
+            character_id="pip",
+            name="Pip",
+            race_index="halfling",
+            class_index="bard",
+            background_index="acolyte",
+            base_ability_scores=_BARD_ABILITY_SCORES,
+            chosen_skills=_BARD_SKILLS,
+            chosen_spells=["healing-word", "thunderwave"],
+        )
+
+
+def test_bard_rejects_a_spell_not_in_its_class_list() -> None:
+    with pytest.raises(CharacterCreationError, match="not a valid level-1 spell"):
+        create_character(
+            character_id="pip",
+            name="Pip",
+            race_index="halfling",
+            class_index="bard",
+            background_index="acolyte",
+            base_ability_scores=_BARD_ABILITY_SCORES,
+            chosen_skills=_BARD_SKILLS,
+            # fireball is real, but sorcerer/wizard-only, not bard.
+            chosen_spells=["healing-word", "thunderwave", "sleep", "fireball"],
+        )
+
+
+def test_bard_rejects_duplicate_spell_choices() -> None:
+    with pytest.raises(CharacterCreationError, match="Duplicate spell choice"):
+        create_character(
+            character_id="pip",
+            name="Pip",
+            race_index="halfling",
+            class_index="bard",
+            background_index="acolyte",
+            base_ability_scores=_BARD_ABILITY_SCORES,
+            chosen_skills=_BARD_SKILLS,
+            chosen_spells=["healing-word", "healing-word", "sleep", "charm-person"],
+        )
+
+
+def test_chosen_spells_rejected_for_a_class_that_does_not_choose_known_spells() -> None:
+    with pytest.raises(CharacterCreationError, match="doesn't choose known spells"):
+        create_character(
+            character_id="thorin",
+            name="Thorin",
+            race_index="human",
+            class_index="fighter",
+            background_index="acolyte",
+            base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+            chosen_skills=["skill-athletics", "skill-perception"],
+            chosen_spells=["fire-bolt"],
+        )
+
+
 def test_arcane_recovery_slot_budget_rounds_up() -> None:
     assert arcane_recovery_slot_budget(1) == 1
     assert arcane_recovery_slot_budget(2) == 1
@@ -399,6 +510,7 @@ def test_bard_gets_bardic_inspiration_uses_equal_to_cha_modifier() -> None:
             "skill-history",
             "skill-insight",
         ],
+        chosen_spells=["healing-word", "thunderwave", "sleep", "charm-person"],
     )
     assert pip.class_resources["bardic_inspiration"] == 2
 
@@ -420,6 +532,7 @@ def test_bard_bardic_inspiration_uses_floor_at_one_for_a_low_cha() -> None:
             "skill-history",
             "skill-insight",
         ],
+        chosen_spells=["healing-word", "thunderwave", "sleep", "charm-person"],
     )
     assert pip.class_resources["bardic_inspiration"] == 1
 

@@ -91,6 +91,12 @@ class CharacterRecord(Base):
     create_character, same as before."""
     hit_dice_remaining: Mapped[int] = mapped_column(default=1, server_default="1")
     saving_throw_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list)
+    known_spells: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    """Issue #30 - populated at creation for "Spells Known" casters
+    (Bard/Sorcerer). Same "a live WS session builds its GameState from a
+    *reloaded* character" reasoning as class_resources/equipped_weapons
+    above - added with its server_default from the start this time, not
+    found live after the fact."""
     fighting_style: Mapped[str | None] = mapped_column(default=None)
     class_resources: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
     used_relentless_endurance_this_rest: Mapped[bool] = mapped_column(default=False)

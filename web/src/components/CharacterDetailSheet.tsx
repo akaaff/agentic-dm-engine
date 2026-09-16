@@ -3,6 +3,7 @@ import { api, type EquipmentSummary, type SpellSummary } from '../api/client'
 import type { LiveCharacter } from '../ws/sessionClient'
 import { equipmentDetail } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
+import { nameWithSpellDetail } from '../utils/spellDetail'
 
 const ABILITIES: (keyof LiveCharacter['stats'])[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 
@@ -35,27 +36,40 @@ function resourceLabel(key: string): string {
  * counterpart to the compact per-combatant cards in the party sidebar
  * (CharacterSheet.tsx). Everything here reads directly from the
  * LiveCharacter already on the wire (see sessionClient.ts's widened
- * interface) except the class's known cantrips, fetched once per class
- * and cached - there's no per-character "known spells" concept in the
- * engine, so the sheet's own action list is a frontend-derived summary of
- * what's mechanically available right now, not a server-computed list. */
+ * interface) except cantrips and the known-spells detail pool, fetched once
+ * per class and cached (character.known_spells itself - which spells this
+ * character actually knows, issue #30 - is on the wire; only the enriched
+ * per-spell detail to display alongside it comes from this fetch). The
+ * sheet's own action list stays a frontend-derived summary of what's
+ * mechanically available right now, not a server-computed list. */
 export default function CharacterDetailSheet({ character }: { character: LiveCharacter }) {
   const [cantrips, setCantrips] = useState<SpellSummary[]>([])
+  const [knownSpellsPool, setKnownSpellsPool] = useState<SpellSummary[]>([])
   const [equipment, setEquipment] = useState<EquipmentSummary[]>([])
 
   useEffect(() => {
     if (!character.class_index) {
       setCantrips([])
+      setKnownSpellsPool([])
       return
     }
     let cancelled = false
     api
       .getClass(character.class_index)
       .then((detail) => {
-        if (!cancelled) setCantrips(detail.cantrips)
+        if (cancelled) return
+        setCantrips(detail.cantrips)
+        // Issue #30 - the class's real level-1 spell pool, cross-referenced
+        // below against character.known_spells (which classes actually know)
+        // for display detail, same "pool + this character's own picks"
+        // pattern equipment/itemDetail already use.
+        setKnownSpellsPool(detail.known_spells_pool)
       })
       .catch(() => {
-        if (!cancelled) setCantrips([])
+        if (!cancelled) {
+          setCantrips([])
+          setKnownSpellsPool([])
+        }
       })
     return () => {
       cancelled = true
@@ -106,6 +120,10 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
   const spellSlotEntries = Object.entries(character.spell_slots).sort(
     ([a], [b]) => Number(a) - Number(b),
   )
+  const knownSpellsByIndex = new Map(knownSpellsPool.map((s) => [s.index, s]))
+  const knownSpells = character.known_spells
+    .map((idx) => knownSpellsByIndex.get(idx))
+    .filter((s): s is SpellSummary => s !== undefined)
 
   return (
     <div className="character-detail-sheet sheet">
@@ -207,6 +225,17 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
         </div>
       )}
 
+      {knownSpells.length > 0 && (
+        <div>
+          <strong>Known spells:</strong>
+          <ul className="detail-action-list">
+            {knownSpells.map((s) => (
+              <li key={s.index}>{nameWithSpellDetail(s)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {inventoryCounts.size > 0 && (
         <div>
           <strong>Inventory:</strong>
@@ -239,7 +268,7 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
           </li>
           {cantrips.length > 0 && (
             <li>
-              Cast a Spell - cantrips: {cantrips.map((c) => c.name).join(', ')}
+              Cast a Spell - cantrips: {cantrips.map(nameWithSpellDetail).join(', ')}
             </li>
           )}
         </ul>

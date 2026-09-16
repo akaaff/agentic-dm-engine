@@ -49,6 +49,19 @@ export interface SpellSummary {
   index: string
   name: string
   desc: string
+  // Real mechanical detail (issue #30) - level/casting_time/range/
+  // components/material always present, the rest set only for whichever of
+  // damage/heal/DC the spell actually has.
+  level: number
+  casting_time: string
+  range: string
+  components: string[]
+  material: string | null
+  damage_dice: string | null
+  damage_type: string | null
+  heal_dice: string | null
+  dc_type: string | null
+  dc_success: string | null
 }
 
 export interface StartingEquipmentItem {
@@ -65,6 +78,11 @@ export interface ClassDetail extends ClassSummary {
   // The class's fixed starting kit (issue #32) - separate from
   // equipment_options, which is just the proficiency-gated *optional* pool.
   starting_equipment: StartingEquipmentItem[]
+  // Issue #30: >0 only for a "Spells Known" caster (Bard/Sorcerer) - the
+  // wizard's spell-choice picker offers exactly known_spells_pool, capped
+  // at spells_known.
+  spells_known: number
+  known_spells_pool: SpellSummary[]
 }
 
 export interface SkillSummary {
@@ -110,6 +128,7 @@ export interface CreateCharacterRequest {
   gender?: string
   fighting_style?: string
   chosen_racial_skills?: string[]
+  chosen_spells?: string[]
 }
 
 export interface Character {
@@ -128,6 +147,7 @@ export interface Character {
   inventory: string[]
   skill_proficiencies: string[]
   saving_throw_proficiencies: string[]
+  known_spells: string[]
   is_companion: boolean
   persona: string | null
   monster_index: string | null
