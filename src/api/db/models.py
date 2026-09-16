@@ -75,6 +75,13 @@ class CharacterRecord(Base):
     WS session builds its GameState from a *reloaded* character, so an
     always-empty equipped set would force every real attack through the
     unarmed-strike fallback, silently, regardless of what was equipped)."""
+    equipped_armor: Mapped[str | None] = mapped_column(default=None)
+    equipped_shield: Mapped[str | None] = mapped_column(default=None)
+    """Added for armor swapping (issue #13) - same reasoning as
+    equipped_weapons above, fixed immediately rather than deferred: a live
+    WS session's GameState comes from a *reloaded* character, so these
+    always resetting to None would silently make every equip-armor action
+    pointless the moment a real session starts."""
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

@@ -260,23 +260,68 @@ def is_class_proficient_with(character: Character, equipment_index: str, srd: Sr
 
 
 def has_non_proficient_armor(character: Character, srd: SrdIndex) -> bool:
-    """True if the character's inventory contains armor or a shield their
-    class isn't proficient with - per SRD, wearing/using it imposes
-    disadvantage on any attack roll or STR/DEX-based ability check (see
-    turn_engine's _resolve_attack/_resolve_skill_check). Inventory is
-    treated as "currently equipped" throughout this engine (same
-    simplification character_creation._compute_ac already makes - a flat
-    list, not a worn/carried distinction)."""
+    """True if the character's currently *equipped* armor or shield (issue
+    #13 - equipped_armor/equipped_shield are now a real worn/carried
+    distinction, the same fix the original equipped-weapons feature already
+    made for the Dueling fighting-style check) is something their class
+    isn't proficient with - per SRD, wearing/using it imposes disadvantage
+    on any attack roll or STR/DEX-based ability check (see turn_engine's
+    _resolve_attack/_resolve_skill_check). A non-proficient piece merely
+    sitting in inventory, never equipped, has no mechanical effect."""
     if character.class_index is None:
         return False
     cls = srd.classes.get(character.class_index)
     if cls is None:
         return False
     options = set(class_equipment_options(cls, srd))
+    equipped = [idx for idx in (character.equipped_armor, character.equipped_shield) if idx]
     return any(
         (item := srd.equipment.get(idx)) and item.get("armor_category") and idx not in options
-        for idx in character.inventory
+        for idx in equipped
     )
+
+
+def armor_ac(
+    equipped_armor: str | None,
+    equipped_shield: str | None,
+    dex_mod: int,
+    fighting_style: str | None,
+    equipment: dict[str, SrdEntry],
+) -> int:
+    """AC from a character's two armor slots (issue #13) - the same formula
+    character_creation._compute_ac originally computed once at creation by
+    scanning the whole inventory, now parameterized by the two explicit
+    equipped-armor/equipped-shield slots so it can be recomputed whenever
+    turn_engine._resolve_equip changes either one. Lives here (not
+    character_creation.py) since both creation and turn_engine need it,
+    matching weapon_combo_is_legal's own "shared logic lives in rules.py"
+    reasoning above.
+
+    10 + Dex modifier (capped per the worn armor's own max_bonus, e.g.
+    Medium armor's +2 cap) if unarmored; the worn armor's own base + capped
+    Dex bonus otherwise. Plus a shield's flat bonus, plus Defense fighting
+    style's +1 (armor only - a shield alone doesn't grant it, per SRD's
+    literal text, matching the original _compute_ac's rule exactly)."""
+    shield_bonus = 0
+    if equipped_shield:
+        shield_item = equipment.get(equipped_shield)
+        if shield_item and shield_item.get("armor_class"):
+            shield_bonus = int(shield_item["armor_class"]["base"])
+
+    armor_item = equipment.get(equipped_armor) if equipped_armor else None
+    defense_bonus = 1 if fighting_style == "defense" and armor_item is not None else 0
+
+    if armor_item is None:
+        return 10 + dex_mod + shield_bonus + defense_bonus
+
+    ac_info = armor_item["armor_class"]
+    base: int = ac_info["base"]
+    if ac_info.get("dex_bonus"):
+        bonus = dex_mod
+        if "max_bonus" in ac_info:
+            bonus = min(bonus, ac_info["max_bonus"])
+        base += bonus
+    return base + shield_bonus + defense_bonus
 
 
 def weapon_combo_is_legal(weapon_indices: list[str], equipment: dict[str, SrdEntry]) -> bool:

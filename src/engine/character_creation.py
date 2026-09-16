@@ -27,7 +27,12 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from src.engine.position import Position
-from src.engine.rules import ability_modifier, class_equipment_options, weapon_combo_is_legal
+from src.engine.rules import (
+    ability_modifier,
+    armor_ac,
+    class_equipment_options,
+    weapon_combo_is_legal,
+)
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character
 
@@ -219,43 +224,6 @@ def validate_standard_array(scores: Mapping[AbilityScore, int]) -> None:
         )
 
 
-def _compute_ac(
-    inventory: list[str],
-    equipment: dict[str, SrdEntry],
-    dex_mod: int,
-    fighting_style: str | None = None,
-) -> int:
-    armor_item: SrdEntry | None = None
-    shield_bonus = 0
-    for idx in inventory:
-        item = equipment.get(idx)
-        if not item or item.get("equipment_category", {}).get("index") != "armor":
-            continue
-        ac_info = item.get("armor_class")
-        if not ac_info:
-            continue
-        if item.get("armor_category") == "Shield":
-            shield_bonus += int(ac_info["base"])
-        else:
-            armor_item = item  # multiple non-shield armor pieces: last wins, not a real scenario
-
-    # Defense fighting style (Phase 9I): "+1 AC while wearing armor" - a
-    # shield alone doesn't count, matching the SRD text precisely.
-    defense_bonus = 1 if fighting_style == "defense" and armor_item is not None else 0
-
-    if armor_item is None:
-        return 10 + dex_mod + shield_bonus + defense_bonus
-
-    ac_info = armor_item["armor_class"]
-    base: int = ac_info["base"]
-    if ac_info.get("dex_bonus"):
-        bonus = dex_mod
-        if "max_bonus" in ac_info:
-            bonus = min(bonus, ac_info["max_bonus"])
-        base += bonus
-    return base + shield_bonus + defense_bonus
-
-
 def create_character(
     character_id: str,
     name: str,
@@ -355,10 +323,29 @@ def create_character(
         if len(equipped_weapons) == 2:
             break
 
+    # Same auto-populate approach as equipped_weapons above, for the two
+    # armor slots (issue #13) - chosen_equipment tried first so a player's
+    # own deliberate armor pick wins over a class's fixed starting kit, then
+    # the first non-shield armor item found fills equipped_armor and the
+    # first shield fills equipped_shield (SRD has no legality question
+    # between them the way two weapons do, so no combo check is needed).
+    equipped_armor: str | None = None
+    equipped_shield: str | None = None
+    for idx in [*chosen_equipment, *inventory]:
+        item = srd.equipment.get(idx)
+        if not item or not item.get("armor_category"):
+            continue
+        if item["armor_category"] == "Shield":
+            equipped_shield = equipped_shield or idx
+        else:
+            equipped_armor = equipped_armor or idx
+        if equipped_armor is not None and equipped_shield is not None:
+            break
+
     con_mod = ability_modifier(final_scores["CON"])
     dex_mod = ability_modifier(final_scores["DEX"])
     hp = max(1, cls["hit_die"] + con_mod)
-    ac = _compute_ac(inventory, srd.equipment, dex_mod, fighting_style)
+    ac = armor_ac(equipped_armor, equipped_shield, dex_mod, fighting_style, srd.equipment)
 
     # chosen_skills can include non-skill proficiencies (e.g. Bard's musical
     # instruments - see CLAUDE.md); only "skill-*" entries count here.
@@ -395,6 +382,8 @@ def create_character(
         spell_slots=dict(LEVEL_1_SPELL_SLOTS.get(class_index, {})),
         inventory=inventory,
         equipped_weapons=equipped_weapons,
+        equipped_armor=equipped_armor,
+        equipped_shield=equipped_shield,
         stats=final_scores,
         proficiency_bonus=2,
         speed=race["speed"],

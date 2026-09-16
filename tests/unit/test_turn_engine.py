@@ -254,6 +254,7 @@ def test_attack_gets_disadvantage_from_non_proficient_armor() -> None:
     state = _build_demo_state([18, 10, 8, 3])
     elrond = state.characters["elrond"]
     elrond.inventory.append("chain-mail")
+    elrond.equipped_armor = "chain-mail"  # issue #13: only equipped armor counts
     state.current_turn = state.turn_order.index("elrond")
     action = ParsedAction(
         actor="elrond", verb="attack", target="goblin_1", item_or_spell="dagger", raw_text="stab"

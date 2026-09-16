@@ -134,6 +134,7 @@ from src.engine.rules import (
     ability_check_modifier,
     ability_modifier,
     apply_damage,
+    armor_ac,
     condition_attack_advantage,
     condition_attack_disadvantage,
     condition_check_disadvantage,
@@ -1174,11 +1175,19 @@ def _resolve_rage(state: GameState, actor: Character, rng: random.Random) -> boo
 def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd: SrdIndex) -> bool:
     """Phase C: SRD's free "object interaction" to draw/switch weapons -
     changes which of the actor's owned weapons _pc_attack_params will
-    actually match against. Returns False (doesn't end the turn), same
-    treatment as Second Wind/Rage/a bonus-action spell, but gated by its
-    own equip_used_this_turn flag rather than bonus_action_used (equip
-    isn't a bonus action, and shouldn't consume one - SRD keeps them
-    separate resources)."""
+    actually match against. Widened for issue #13 to also cover armor and a
+    shield (same free-action treatment as weapons - explicitly not modeling
+    the SRD's real armor-donning time, an accepted simplification already
+    established for weapon-switching): equipping either or both changes
+    `equipped_armor`/`equipped_shield` and recomputes `ac` via
+    rules.armor_ac, since AC can no longer be a fixed-at-creation value.
+    `params["items"]` can name weapons, armor, a shield, or any mix in one
+    call - each kind only overwrites its own slot(s), so equipping just a
+    weapon never clears currently-worn armor and vice versa. Returns False
+    (doesn't end the turn), same treatment as Second Wind/Rage/a bonus-
+    action spell, but gated by its own equip_used_this_turn flag rather
+    than bonus_action_used (equip isn't a bonus action, and shouldn't
+    consume one - SRD keeps them separate resources)."""
     if actor.equip_used_this_turn:
         raise TurnEngineError(f"{actor.id} has already equipped something this turn")
     names_or_indices = action.params.get("items")
@@ -1186,33 +1195,75 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
         raise TurnEngineError("equip action requires params['items']")
     # Same fuzzy-name-matching discipline as _pc_attack_params/
     # _match_weapon_by_name (Day 14's healing-potion fix, the "silvered
-    # longbow" fix): the intent parser passes whatever weapon phrase the
+    # longbow" fix): the intent parser passes whatever item phrase the
     # player used, not necessarily an exact SRD index - scoped to the
     # actor's own inventory (what they could plausibly equip), not the
-    # whole SRD weapon list.
+    # whole SRD equipment list. _match_weapon_by_name's own matching logic
+    # is generic (word-set match against a candidate list) despite its
+    # name - reused as-is for armor, not duplicated.
     owned_weapons = [
         item
         for idx in actor.inventory
         if (item := srd.equipment.get(idx)) and item.get("weapon_category")
     ]
-    resolved: list[str] = []
+    owned_armor = [
+        item
+        for idx in actor.inventory
+        if (item := srd.equipment.get(idx)) and item.get("armor_category")
+    ]
+
+    resolved_weapons: list[str] = []
+    resolved_armor: str | None = None
+    resolved_shield: str | None = None
     for name in names_or_indices:
         exact = srd.equipment.get(name)
-        if exact is not None and not exact.get("weapon_category"):
-            raise TurnEngineError(f"{name!r} is not a weapon")
+        if exact is not None and not (exact.get("weapon_category") or exact.get("armor_category")):
+            raise TurnEngineError(f"{name!r} is not a weapon or armor")
         item = exact if exact is not None and exact["index"] in actor.inventory else None
         if item is None:
-            item = _match_weapon_by_name(name, owned_weapons)
+            item = _match_weapon_by_name(name, owned_weapons) or _match_weapon_by_name(
+                name, owned_armor
+            )
         if item is None:
             raise TurnEngineError(f"{actor.id} doesn't own {name!r} - cannot equip it")
-        resolved.append(item["index"])
-    if not weapon_combo_is_legal(resolved, srd.equipment):
-        names = ", ".join(srd.equipment[idx]["name"] for idx in resolved)
+
+        if item.get("weapon_category"):
+            resolved_weapons.append(item["index"])
+        elif item["armor_category"] == "Shield":
+            if resolved_shield is not None:
+                raise TurnEngineError("Cannot equip two shields at once")
+            resolved_shield = item["index"]
+        else:
+            if resolved_armor is not None:
+                raise TurnEngineError("Cannot equip two suits of armor at once")
+            resolved_armor = item["index"]
+
+    if resolved_weapons and not weapon_combo_is_legal(resolved_weapons, srd.equipment):
+        names = ", ".join(srd.equipment[idx]["name"] for idx in resolved_weapons)
         raise TurnEngineError(
             f"Cannot equip {names} together - at most 2 weapons, a two-handed "
             "weapon must be alone, and 2 weapons together must both be light"
         )
-    actor.equipped_weapons = resolved
+
+    changed_items: list[str] = list(resolved_weapons)
+    if resolved_weapons:
+        actor.equipped_weapons = resolved_weapons
+    if resolved_armor is not None:
+        actor.equipped_armor = resolved_armor
+        changed_items.append(resolved_armor)
+    if resolved_shield is not None:
+        actor.equipped_shield = resolved_shield
+        changed_items.append(resolved_shield)
+    if resolved_armor is not None or resolved_shield is not None:
+        dex_mod = ability_modifier(actor.stats["DEX"])
+        actor.ac = armor_ac(
+            actor.equipped_armor,
+            actor.equipped_shield,
+            dex_mod,
+            actor.fighting_style,
+            srd.equipment,
+        )
+
     actor.equip_used_this_turn = True
     state.events.append(
         Event(
@@ -1220,7 +1271,7 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
             turn_index=state.current_turn,
             actor=actor.id,
             type="equip",
-            payload={"items": resolved},
+            payload={"items": changed_items},
         )
     )
     return False

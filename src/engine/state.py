@@ -131,6 +131,20 @@ class Character(BaseModel):
     end the turn, so this same actor's very next resolve_action call (e.g.
     an attack right after equipping) is still the same real turn and must
     still see this as True."""
+    equipped_armor: str | None = None
+    """The character's currently worn armor (SRD equipment index, non-shield
+    armor_category), or None if unarmored - issue #12. Mirrors
+    equipped_weapons's role but as a single slot, not a list: armor has no
+    two-handed/light-pairing legality question the way weapons do, just "at
+    most one piece worn." Populated at creation the same greedy chosen-
+    equipment-then-inventory scan as equipped_weapons (character_creation.
+    create_character), changed only by an explicit "equip" action
+    (turn_engine._resolve_equip) - which also recomputes `ac` via
+    rules.armor_ac whenever this or equipped_shield changes, since AC can no
+    longer be a fixed-at-creation value once armor is swappable."""
+    equipped_shield: str | None = None
+    """Same as equipped_armor but for a shield (armor_category == "Shield")
+    - a separate slot per SRD, not mutually exclusive with equipped_armor."""
     class_index: str | None = None
     """Set only for PCs/companions (mirrors monster_index) - lets the turn
     engine re-look-up the SRD class's spellcasting ability for cast_spell."""

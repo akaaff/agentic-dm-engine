@@ -296,6 +296,8 @@ def _character_to_record(character: Character) -> CharacterRecord:
         race_index=character.race_index,
         gender=character.gender,
         equipped_weapons=list(character.equipped_weapons),
+        equipped_armor=character.equipped_armor,
+        equipped_shield=character.equipped_shield,
     )
 
 
@@ -324,4 +326,6 @@ def _record_to_character(record: CharacterRecord) -> Character:
         race_index=record.race_index,
         gender=record.gender,
         equipped_weapons=record.equipped_weapons,
+        equipped_armor=record.equipped_armor,
+        equipped_shield=record.equipped_shield,
     )

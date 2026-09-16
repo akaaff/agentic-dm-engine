@@ -127,6 +127,9 @@ export interface Character {
   gender: string | null
   // New for equipped-weapon tracking (Phase C).
   equipped_weapons: string[]
+  // New for armor swapping (issue #13).
+  equipped_armor: string | null
+  equipped_shield: string | null
 }
 
 export type CampaignSize = 'one_shot' | 'short_arc' | 'full'

@@ -80,17 +80,19 @@ def test_equip_rejects_an_unowned_item() -> None:
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
-def test_equip_rejects_a_non_weapon_item() -> None:
+def test_equip_rejects_an_item_thats_neither_weapon_nor_armor() -> None:
+    # Armor became a legal equip target with issue #13 - this now tests the
+    # genuinely-wrong-category case instead (general adventuring gear;
+    # clothes-common is already in every fighter's starting kit).
     thorin = _fighter()
-    thorin.inventory.append("leather-armor")
     state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
     action = ParsedAction(
         actor="thorin",
         verb="equip",
-        params={"items": ["leather-armor"]},
-        raw_text="I equip my armor",
+        params={"items": ["clothes-common"]},
+        raw_text="I equip my clothes",
     )
-    with pytest.raises(TurnEngineError, match="not a weapon"):
+    with pytest.raises(TurnEngineError, match="not a weapon or armor"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
@@ -352,3 +354,80 @@ def test_offhand_attack_does_not_end_the_turn() -> None:
     )
     resolve_action(state, normal_attack, _FixedRandom([15, 3]))  # type: ignore[arg-type]
     assert len([e for e in state.events if e.type == "attack_roll"]) == 2
+
+
+# --------------------------------------------- armor/shield equip (#13)
+
+
+def test_equip_armor_changes_equipped_armor_and_recomputes_ac() -> None:
+    # Thorin: base AC 12 (unarmored, dex_mod 2). Leather Armor: base 11,
+    # full (uncapped) dex bonus -> 11 + 2 = 13.
+    thorin = _fighter()
+    assert thorin.ac == 12
+    thorin.inventory.append("leather-armor")
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin", verb="equip", params={"items": ["leather-armor"]}, raw_text="I don my armor"
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert thorin.equipped_armor == "leather-armor"
+    assert thorin.ac == 13
+
+
+def test_equip_shield_alone_recomputes_ac() -> None:
+    thorin = _fighter()
+    thorin.inventory.append("shield")
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin", verb="equip", params={"items": ["shield"]}, raw_text="I raise my shield"
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert thorin.equipped_shield == "shield"
+    assert thorin.ac == 14  # 10 + dex_mod(2) + shield(2)
+
+
+def test_equip_armor_does_not_clear_equipped_weapons() -> None:
+    thorin = _fighter()  # longsword already equipped by auto-populate
+    assert thorin.equipped_weapons == ["longsword"]
+    thorin.inventory.append("leather-armor")
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin", verb="equip", params={"items": ["leather-armor"]}, raw_text="I don my armor"
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert thorin.equipped_weapons == ["longsword"]
+    assert thorin.equipped_armor == "leather-armor"
+
+
+def test_equip_weapon_and_armor_together_in_one_action() -> None:
+    thorin = _fighter()
+    thorin.inventory += ["dagger", "dagger", "leather-armor"]
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="equip",
+        params={"items": ["dagger", "dagger", "leather-armor"]},
+        raw_text="I draw two daggers and don my armor",
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert thorin.equipped_weapons == ["dagger", "dagger"]
+    assert thorin.equipped_armor == "leather-armor"
+    assert thorin.ac == 13
+
+
+def test_equip_rejects_two_suits_of_armor_at_once() -> None:
+    thorin = _fighter()
+    thorin.inventory += ["leather-armor", "chain-mail"]
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="equip",
+        params={"items": ["leather-armor", "chain-mail"]},
+        raw_text="I put on both",
+    )
+    with pytest.raises(TurnEngineError, match="Cannot equip two suits of armor"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]

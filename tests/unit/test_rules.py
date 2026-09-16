@@ -4,6 +4,7 @@ from src.engine.position import Position
 from src.engine.rules import (
     ability_modifier,
     apply_damage,
+    armor_ac,
     class_equipment_options,
     condition_attack_advantage,
     condition_attack_disadvantage,
@@ -236,16 +237,83 @@ def test_is_class_proficient_with_treats_no_class_as_proficient_with_anything() 
     assert is_class_proficient_with(monster, "plate-armor", srd) is True
 
 
-def test_has_non_proficient_armor_true_only_for_armor_outside_the_class_pool() -> None:
+def test_has_non_proficient_armor_true_only_for_equipped_armor_outside_the_class_pool() -> None:
+    # Issue #13: equipped_armor/equipped_shield are a real worn/carried
+    # distinction now (mirroring the equipped-weapons feature's own earlier
+    # fix to the Dueling check) - a non-proficient piece merely owned but
+    # never equipped must NOT trigger this, only one actually worn.
     srd = load_srd()
     wizard_in_chainmail = _make_character(class_index="wizard", inventory=["chain-mail"])
+    wizard_in_chainmail.equipped_armor = "chain-mail"
     assert has_non_proficient_armor(wizard_in_chainmail, srd) is True
 
+    wizard_owns_but_never_equipped_chainmail = _make_character(
+        class_index="wizard", inventory=["chain-mail"]
+    )
+    assert has_non_proficient_armor(wizard_owns_but_never_equipped_chainmail, srd) is False
+
     fighter_in_chainmail = _make_character(class_index="fighter", inventory=["chain-mail"])
+    fighter_in_chainmail.equipped_armor = "chain-mail"
     assert has_non_proficient_armor(fighter_in_chainmail, srd) is False
 
     wizard_with_no_armor = _make_character(class_index="wizard", inventory=["dagger"])
     assert has_non_proficient_armor(wizard_with_no_armor, srd) is False
+
+
+def test_armor_ac_unarmored_is_10_plus_dex() -> None:
+    srd = load_srd()
+    assert armor_ac(None, None, dex_mod=3, fighting_style=None, equipment=srd.equipment) == 13
+
+
+def test_armor_ac_light_armor_gets_full_uncapped_dex_bonus() -> None:
+    srd = load_srd()
+    # Leather Armor: base 11, dex_bonus True, no max_bonus.
+    assert (
+        armor_ac("leather-armor", None, dex_mod=4, fighting_style=None, equipment=srd.equipment)
+        == 15
+    )
+
+
+def test_armor_ac_medium_armor_caps_the_dex_bonus() -> None:
+    srd = load_srd()
+    # Scale Mail: base 14, dex_bonus True, max_bonus 2 - a +4 Dex mod is
+    # capped down to +2, not applied in full the way light armor's is.
+    assert (
+        armor_ac("scale-mail", None, dex_mod=4, fighting_style=None, equipment=srd.equipment) == 16
+    )
+
+
+def test_armor_ac_heavy_armor_ignores_dex_entirely() -> None:
+    srd = load_srd()
+    # Chain Mail: base 16, dex_bonus False - a high Dex mod contributes nothing.
+    assert (
+        armor_ac("chain-mail", None, dex_mod=4, fighting_style=None, equipment=srd.equipment) == 16
+    )
+
+
+def test_armor_ac_shield_adds_its_flat_bonus() -> None:
+    srd = load_srd()
+    assert (
+        armor_ac("chain-mail", "shield", dex_mod=4, fighting_style=None, equipment=srd.equipment)
+        == 18
+    )
+    # Shield alone (unarmored) still applies.
+    assert armor_ac(None, "shield", dex_mod=1, fighting_style=None, equipment=srd.equipment) == 13
+
+
+def test_armor_ac_defense_fighting_style_needs_actual_armor_not_just_a_shield() -> None:
+    srd = load_srd()
+    # +1 AC while wearing armor (Phase 9I) - a shield alone doesn't count,
+    # per the SRD's literal text, matching the original _compute_ac's rule.
+    assert (
+        armor_ac(
+            "leather-armor", None, dex_mod=2, fighting_style="defense", equipment=srd.equipment
+        )
+        == 14
+    )
+    assert (
+        armor_ac(None, "shield", dex_mod=2, fighting_style="defense", equipment=srd.equipment) == 14
+    )
 
 
 def test_weapon_range_feet_melee_vs_ranged_vs_reach() -> None:

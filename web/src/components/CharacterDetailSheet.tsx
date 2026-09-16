@@ -127,9 +127,11 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
       </div>
       <p className="companion-meta">
         <strong>Equipped:</strong>{' '}
-        {character.equipped_weapons.length > 0
-          ? character.equipped_weapons.map(itemName).join(', ')
-          : 'nothing (unarmed)'}
+        {[
+          ...character.equipped_weapons.map(itemName),
+          ...(character.equipped_armor ? [itemName(character.equipped_armor)] : []),
+          ...(character.equipped_shield ? [itemName(character.equipped_shield)] : []),
+        ].join(', ') || 'nothing (unarmed, unarmored)'}
       </p>
 
       <table className="detail-stats-table">

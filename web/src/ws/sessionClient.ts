@@ -64,6 +64,12 @@ export interface LiveCharacter {
   // weapon from this list, not the whole inventory.
   equipped_weapons: string[]
   equip_used_this_turn: boolean
+  // New for armor swapping (issue #13) - the character's currently worn
+  // armor/shield (single slots, unlike equipped_weapons's list), null when
+  // unarmored/no shield. `ac` already reflects these via rules.armor_ac,
+  // recomputed by turn_engine._resolve_equip whenever either changes.
+  equipped_armor: string | null
+  equipped_shield: string | null
 }
 
 export type TerrainType = 'floor' | 'wall' | 'difficult' | 'hazard'

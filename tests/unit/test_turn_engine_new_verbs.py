@@ -101,6 +101,7 @@ def test_skill_check_gets_disadvantage_from_non_proficient_armor_on_dex_check() 
     state = _build_demo_state(_INITIATIVE)
     elrond = state.characters["elrond"]
     elrond.inventory.append("chain-mail")
+    elrond.equipped_armor = "chain-mail"  # issue #13: only equipped armor counts
     state.current_turn = 1
     action = ParsedAction(
         actor="elrond", verb="skill_check", params={"skill": "acrobatics"}, raw_text="tumble"
@@ -119,6 +120,7 @@ def test_skill_check_ignores_armor_proficiency_for_non_str_dex_skills() -> None:
     state = _build_demo_state(_INITIATIVE)
     elrond = state.characters["elrond"]
     elrond.inventory.append("chain-mail")
+    elrond.equipped_armor = "chain-mail"  # issue #13: only equipped armor counts
     state.current_turn = 1
     action = ParsedAction(
         actor="elrond", verb="skill_check", params={"skill": "perception"}, raw_text="look around"
