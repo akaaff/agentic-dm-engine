@@ -117,6 +117,22 @@ def test_get_class_detail_skips_monks_nested_tool_or_instrument_choice(
     }
 
 
+def test_get_class_detail_exposes_starting_equipment(client: TestClient) -> None:
+    # Issue #32: the class's fixed starting kit (not the optional
+    # proficiency-gated picker) - previously never exposed at all, so the
+    # wizard had no way to show a Barbarian's real explorer's pack + 4
+    # javelins before character creation actually ran.
+    response = client.get("/characters/classes/barbarian")
+    assert response.status_code == 200
+    starting_equipment = response.json()["starting_equipment"]
+    assert {
+        "index": "explorers-pack",
+        "name": "Explorer's Pack",
+        "quantity": 1,
+    } in starting_equipment
+    assert {"index": "javelin", "name": "Javelin", "quantity": 4} in starting_equipment
+
+
 def test_get_unknown_class_detail_returns_404(client: TestClient) -> None:
     response = client.get("/characters/classes/not-a-class")
     assert response.status_code == 404
@@ -154,7 +170,18 @@ def test_list_classes_includes_fighter_with_hit_die(client: TestClient) -> None:
 def test_list_backgrounds_returns_only_acolyte(client: TestClient) -> None:
     response = client.get("/characters/backgrounds")
     assert response.status_code == 200
-    assert [b["index"] for b in response.json()] == ["acolyte"]
+    body = response.json()
+    assert [b["index"] for b in body] == ["acolyte"]
+    # Issue #32: the background's own fixed starting kit, same gap as
+    # ClassDetail.starting_equipment above - BackgroundSummary previously
+    # had no equipment field at all.
+    starting_equipment = body[0]["starting_equipment"]
+    assert {
+        "index": "clothes-common",
+        "name": "Clothes, common",
+        "quantity": 1,
+    } in starting_equipment
+    assert {"index": "pouch", "name": "Pouch", "quantity": 1} in starting_equipment
 
 
 def test_create_character_end_to_end_and_persists(client: TestClient) -> None:

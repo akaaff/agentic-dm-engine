@@ -1,4 +1,12 @@
-import type { AbilityScore, ClassDetail, EquipmentSummary, RaceSummary } from '../api/client'
+import type {
+  AbilityScore,
+  BackgroundSummary,
+  ClassDetail,
+  EquipmentSummary,
+  RaceSummary,
+  StartingEquipmentItem,
+} from '../api/client'
+import { nameWithEquipmentDetail } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
 
 const ABILITIES: AbilityScore[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
@@ -29,7 +37,7 @@ export default function CharacterPreviewSheet({
   assignments,
   raceBonus,
   finalScore,
-  backgroundName,
+  background,
   chosenEquipment,
   equipment,
 }: {
@@ -44,7 +52,7 @@ export default function CharacterPreviewSheet({
   assignments: Record<AbilityScore, number | ''>
   raceBonus: (ability: AbilityScore) => number
   finalScore: (ability: AbilityScore) => number | null
-  backgroundName: string | null
+  background: BackgroundSummary | undefined
   chosenEquipment: string[]
   equipment: EquipmentSummary[]
 }) {
@@ -54,6 +62,20 @@ export default function CharacterPreviewSheet({
     gender: gender || null,
   })
   const equipmentNames = new Map(equipment.map((e) => [e.index, e.name]))
+  const equipmentByIndex = new Map(equipment.map((e) => [e.index, e]))
+  // Issue #32: the class/background's *fixed* starting kit, combined the
+  // same way character_creation.create_character's inventory-building loop
+  // combines them (class items, then background items) - distinct from
+  // chosenEquipment, which is only the optional proficiency-gated picks.
+  const startingKit: StartingEquipmentItem[] = [
+    ...(classDetail?.starting_equipment ?? []),
+    ...(background?.starting_equipment ?? []),
+  ]
+  const startingKitLabel = (item: StartingEquipmentItem): string => {
+    const full = equipmentByIndex.get(item.index)
+    const name = full ? nameWithEquipmentDetail(full) : item.name
+    return item.quantity > 1 ? `${name} x${item.quantity}` : name
+  }
 
   return (
     <aside className="character-preview-sheet sheet">
@@ -78,7 +100,7 @@ export default function CharacterPreviewSheet({
       <h2>{name || 'Unnamed hero'}</h2>
       <p className="companion-meta">
         {race?.name ?? 'No race chosen'} {className ?? ''}
-        {backgroundName ? ` - ${backgroundName}` : ''}
+        {background ? ` - ${background.name}` : ''}
       </p>
 
       <table>
@@ -116,6 +138,12 @@ export default function CharacterPreviewSheet({
         <p>
           <strong>Cantrips available:</strong>{' '}
           {classDetail.cantrips.map((c) => c.name).join(', ')}
+        </p>
+      )}
+
+      {startingKit.length > 0 && (
+        <p>
+          <strong>Starting kit:</strong> {startingKit.map(startingKitLabel).join(', ')}
         </p>
       )}
 

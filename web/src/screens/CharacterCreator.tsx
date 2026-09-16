@@ -688,7 +688,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         assignments={assignments}
         raceBonus={raceBonus}
         finalScore={finalScore}
-        backgroundName={backgrounds.find((b) => b.index === backgroundIndex)?.name ?? null}
+        background={backgrounds.find((b) => b.index === backgroundIndex)}
         chosenEquipment={chosenEquipment}
         equipment={equipment}
       />

@@ -60,6 +60,12 @@ class SpellSummary(BaseModel):
     desc: str
 
 
+class StartingEquipmentItem(BaseModel):
+    index: str
+    name: str
+    quantity: int
+
+
 class ClassDetail(ClassSummary):
     skill_choose: int
     skill_options: list[str]
@@ -77,6 +83,11 @@ class ClassDetail(ClassSummary):
     list reads this directly rather than the engine tracking known spells
     per character - see character_creation.py's module docstring for why
     this project doesn't otherwise restrict cast_spell to a known-spell list."""
+    starting_equipment: list[StartingEquipmentItem]
+    """The class's fixed starting kit (issue #32) - the exact same
+    cls["starting_equipment"] entries character_creation.create_character's
+    inventory-building loop reads, exposed so the wizard can show what a
+    player is actually getting before they submit, not just after."""
 
 
 class SkillSummary(BaseModel):
@@ -89,6 +100,10 @@ class SkillSummary(BaseModel):
 class BackgroundSummary(BaseModel):
     index: str
     name: str
+    starting_equipment: list[StartingEquipmentItem]
+    """The background's fixed starting kit (issue #32) - same shape/purpose
+    as ClassDetail.starting_equipment, the other half of what
+    create_character's inventory-building loop actually reads."""
 
 
 class EquipmentSummary(BaseModel):
@@ -175,6 +190,20 @@ def list_races() -> list[RaceSummary]:
     ]
 
 
+def _starting_equipment_items(raw: list[dict[str, Any]]) -> list[StartingEquipmentItem]:
+    """Reads the exact same shape character_creation's inventory-building
+    loop does (cls/background["starting_equipment"] -> [{equipment: {index,
+    name}, quantity}]) and reshapes it for the API response - issue #32."""
+    return [
+        StartingEquipmentItem(
+            index=item["equipment"]["index"],
+            name=item["equipment"]["name"],
+            quantity=item["quantity"],
+        )
+        for item in raw
+    ]
+
+
 @router.get("/classes", response_model=list[ClassSummary])
 def list_classes() -> list[ClassSummary]:
     srd = load_srd()
@@ -216,6 +245,7 @@ def get_class(class_index: str) -> ClassDetail:
         skill_options=sorted(skill_options),
         equipment_options=class_equipment_options(cls, srd),
         cantrips=sorted(cantrips, key=lambda s: s.name),
+        starting_equipment=_starting_equipment_items(cls.get("starting_equipment", [])),
     )
 
 
@@ -240,7 +270,14 @@ def list_skills() -> list[SkillSummary]:
 @router.get("/backgrounds", response_model=list[BackgroundSummary])
 def list_backgrounds() -> list[BackgroundSummary]:
     srd = load_srd()
-    return [BackgroundSummary(index=b["index"], name=b["name"]) for b in srd.backgrounds.values()]
+    return [
+        BackgroundSummary(
+            index=b["index"],
+            name=b["name"],
+            starting_equipment=_starting_equipment_items(b.get("starting_equipment", [])),
+        )
+        for b in srd.backgrounds.values()
+    ]
 
 
 @router.get("/equipment", response_model=list[EquipmentSummary])

@@ -51,11 +51,20 @@ export interface SpellSummary {
   desc: string
 }
 
+export interface StartingEquipmentItem {
+  index: string
+  name: string
+  quantity: number
+}
+
 export interface ClassDetail extends ClassSummary {
   skill_choose: number
   skill_options: string[]
   equipment_options: string[]
   cantrips: SpellSummary[]
+  // The class's fixed starting kit (issue #32) - separate from
+  // equipment_options, which is just the proficiency-gated *optional* pool.
+  starting_equipment: StartingEquipmentItem[]
 }
 
 export interface SkillSummary {
@@ -68,6 +77,7 @@ export interface SkillSummary {
 export interface BackgroundSummary {
   index: string
   name: string
+  starting_equipment: StartingEquipmentItem[]
 }
 
 export interface EquipmentSummary {
