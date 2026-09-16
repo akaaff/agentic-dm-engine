@@ -1359,13 +1359,18 @@ def _resolve_move(
     # whatever that reduced budget is, per SRD (dash doesn't restore speed
     # exhaustion/grappling has already taken away).
     base_speed = effective_speed(actor)
-    speed = base_speed * 2 if action.verb == "dash" else base_speed
+    total_budget = base_speed * 2 if action.verb == "dash" else base_speed
+    # A plain move no longer ends the turn (found live - see
+    # Character.movement_used_feet's own docstring), so a second move this
+    # same turn only gets whatever's left of the budget, not a fresh one.
+    remaining_budget = max(0, total_budget - actor.movement_used_feet)
 
-    if not can_afford_move(speed, full_path, state.battle_map.terrain):
+    if not can_afford_move(remaining_budget, full_path, state.battle_map.terrain):
         cost = move_cost_feet(full_path, state.battle_map.terrain)
         raise TurnEngineError(
-            f"{actor.id} cannot afford this move (cost={cost}, speed budget={speed})"
+            f"{actor.id} cannot afford this move (cost={cost}, speed budget={remaining_budget})"
         )
+    actor.movement_used_feet += move_cost_feet(full_path, state.battle_map.terrain) or 0
 
     destination = steps[-1]
     occupant = next(
@@ -2733,6 +2738,11 @@ def _advance_turn_skipping_dead(state: GameState) -> None:
             # actually advances TO this character" schedule, for the same
             # reason - equip doesn't end the turn either.
             next_actor.equip_used_this_turn = False
+            # movement_used_feet resets on the same schedule too (found
+            # live) - a plain move doesn't end the turn either, so a
+            # follow-up attack in the same real turn must still see
+            # whatever movement this character already spent this turn.
+            next_actor.movement_used_feet = 0
             return
 
 
@@ -2807,12 +2817,23 @@ def resolve_action(
     # successfully resolves - _resolve_cast_spell reports back whether it
     # was one via this flag, so the actor gets to act again (their main
     # action, or another bonus action attempt, which _resolve_cast_spell
-    # itself rejects via actor.bonus_action_used).
+    # itself rejects via actor.bonus_action_used). "move" is the other
+    # exception (found live): real SRD gives every turn a movement budget
+    # separate from the action, so moving alone must not cost the action -
+    # "dash" stays turn-ending since Dash genuinely *is* the action (it
+    # trades your action for extra movement, per SRD).
     ends_turn = True
 
     if action.verb == "attack":
         _resolve_attack(state, actor, action, rng, srd)
-    elif action.verb in ("move", "dash"):
+    elif action.verb == "move":
+        _resolve_move(state, actor, action, rng, srd)
+        # An opportunity attack triggered by leaving a threatened square can
+        # kill or down the actor mid-move - they can't keep acting either
+        # way, so the turn still has to advance past them (matches the old
+        # unconditional-ends_turn behavior for exactly this case).
+        ends_turn = actor.is_dead or actor.hp <= 0
+    elif action.verb == "dash":
         _resolve_move(state, actor, action, rng, srd)
     elif action.verb == "skill_check":
         _resolve_skill_check(state, actor, action, rng, srd)

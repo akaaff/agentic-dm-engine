@@ -209,10 +209,16 @@ def choose_monster_action(game_state: GameState, actor: Character) -> ParsedActi
         for c in game_state.characters.values()
         if not c.is_dead and c.id != actor.id
     }
+    # Move no longer ends the turn (found live), so this can now be called a
+    # second time for the same actor within one real turn, after an earlier
+    # partial move already spent some of its budget - use what's actually
+    # left, not a fresh full speed, or a monster with exactly enough speed
+    # to close half the gap would waste an attempt on a now-unaffordable move.
+    remaining_speed = max(0, effective_speed(actor) - actor.movement_used_feet)
     path = _approach_path(
         actor.position,
         target.position,
-        effective_speed(actor),
+        remaining_speed,
         range_feet,
         game_state.battle_map.terrain,
         occupied,

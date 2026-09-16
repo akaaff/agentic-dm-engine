@@ -1,6 +1,15 @@
 from src.engine.monster_ai import choose_monster_action
 from src.engine.position import BattleMap, Position
 from src.engine.state import Character, GameState
+from src.engine.turn_engine import resolve_action
+
+
+class _FixedRandom:
+    def __init__(self, values: list[int]) -> None:
+        self._values = list(values)
+
+    def randint(self, a: int, b: int) -> int:
+        return self._values.pop(0)
 
 
 def _make_character(
@@ -132,6 +141,33 @@ def test_moves_toward_target_when_out_of_range() -> None:
     assert action.params["path"]
     last_step = action.params["path"][-1]
     assert last_step["x"] == 5  # one square short of thorin - now 5ft/adjacent
+
+
+def test_moves_then_attacks_within_the_same_real_turn_once_move_no_longer_ends_it() -> None:
+    # Live-reported: a monster that starts out of range used to take two
+    # real turns to close distance and attack (move used to end the turn -
+    # see turn_engine.resolve_action's dispatch). Same setup as
+    # test_moves_toward_target_when_out_of_range, but now resolves the move
+    # for real and confirms a second choose_monster_action call for the
+    # *same* actor (turn_order/current_turn unchanged - exactly what the
+    # live autoplay loop does) returns attack, not another move.
+    goblin = _make_character(
+        "goblin_1", is_pc=False, position=Position(x=0, y=0), monster_index="goblin"
+    )
+    thorin = _make_character("thorin", is_pc=True, position=Position(x=6, y=0))
+    state = _make_state([goblin, thorin], battle_map=_open_map(10, 10))
+
+    first_action = choose_monster_action(state, state.characters["goblin_1"])
+    assert first_action.verb == "move"
+    resolve_action(state, first_action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    # The move alone didn't end the goblin's turn.
+    assert state.turn_order[state.current_turn] == "goblin_1"
+    assert state.characters["goblin_1"].position == Position(x=5, y=0)
+
+    second_action = choose_monster_action(state, state.characters["goblin_1"])
+    assert second_action.verb == "attack"
+    assert second_action.target == "thorin"
 
 
 def test_move_path_respects_speed_budget() -> None:

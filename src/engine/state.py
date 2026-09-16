@@ -152,6 +152,17 @@ class Character(BaseModel):
     resolve_action call (their main action, still the same real turn) must
     still see this as True, or a second bonus-action cast that turn would
     be wrongly allowed. A second attempt while still True is rejected."""
+    movement_used_feet: int = 0
+    """Feet of this turn's movement budget already spent - "move" no longer
+    ends the turn (a real bug fix, not this project's own simplification:
+    real SRD gives every turn both a movement budget AND a separate action,
+    found live when a player/monster moving adjacent to a target had no way
+    to then attack the same turn). Resets in _advance_turn_skipping_dead on
+    the same "only when the turn actually advances to this character"
+    schedule as bonus_action_used/equip_used_this_turn, for the same
+    reason: a follow-up attack in the same real turn must still see
+    whatever movement this character already spent. `dash` still ends the
+    turn (it's SRD's own action, unlike plain movement) - unaffected."""
     disengaged_this_turn: bool = False
     """Phase 9H: True after resolving "disengage" - gives that verb the
     real mechanical effect it lacked since Day 13 (its own module docstring

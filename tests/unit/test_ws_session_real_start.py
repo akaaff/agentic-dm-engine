@@ -189,10 +189,12 @@ def test_real_session_narrates_scenes_before_first_combat(client: TestClient) ->
 
 def test_non_human_turns_auto_resolve_before_awaiting_input(client: TestClient) -> None:
     # Deterministic regardless of the session's real (unseeded) initiative
-    # roll: exactly as many non-human turns as precede thorin in turn_order
-    # should have auto-resolved (one narration each) before thorin is ever
-    # asked for input - proves _autoplay_non_human_turns actually ran the
-    # right number of times, not just that thorin eventually got prompted.
+    # roll: every non-human actor before thorin in turn_order contributes at
+    # least one narration before thorin is ever asked for input - proves
+    # _autoplay_non_human_turns actually ran for each of them, not just that
+    # thorin eventually got prompted. Not exactly one each any more (move no
+    # longer ends the turn - a goblin that starts out of range now takes two
+    # resolve_action calls, move then attack, to finish one real turn).
     session_id = _start_real_session(client)
 
     with client.websocket_connect(f"/ws/session/{session_id}") as ws:
@@ -208,7 +210,7 @@ def test_non_human_turns_auto_resolve_before_awaiting_input(client: TestClient) 
     thorin_index = turn_order.index("thorin")
 
     narrations = [m for m in messages if m["type"] == "narration"]
-    assert len(narrations) == thorin_index
+    assert len(narrations) >= thorin_index
 
 
 def test_session_setup_failure_reports_error_instead_of_crashing(

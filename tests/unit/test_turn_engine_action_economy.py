@@ -294,6 +294,15 @@ def test_reaction_used_this_round_caps_a_reactor_at_one_opportunity_attack() -> 
     assert len([e for e in state.events if e.type == "attack_roll"]) == 1
     assert state.characters["goblin_1"].reaction_used_this_round is True
 
+    # "move" no longer ends the turn (found live) - explicitly end Thorin's
+    # so it's Elrond's turn next, matching this test's actual point (two
+    # different movers, one reactor).
+    resolve_action(
+        state,
+        ParsedAction(actor="thorin", verb="end_turn", raw_text="I hold there"),
+        _FixedRandom([]),  # type: ignore[arg-type]
+    )
+
     elrond_move = ParsedAction(
         actor="elrond",
         verb="move",

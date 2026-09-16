@@ -129,6 +129,12 @@ SCRIPTED_ACTIONS: list[ParsedAction] = [
         params={"path": [{"x": 1, "y": 1}]},
         raw_text="Thorin advances toward the nearest goblin.",
     ),
+    # "move" no longer ends the turn (found live) - Thorin isn't yet in
+    # range after this move, so he explicitly ends his turn here rather
+    # than attacking, preserving this script's exact original shape (an
+    # end_turn emits no event and consumes no RNG, so the hand-computed
+    # fixtures in test_turn_engine_scripted.py need no other changes).
+    ParsedAction(actor="thorin", verb="end_turn", raw_text="Thorin holds, not yet in range."),
     ParsedAction(
         actor="elrond",
         verb="attack",
