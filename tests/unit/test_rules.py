@@ -1,5 +1,6 @@
 import pytest
 
+from src.engine.encounter import monster_to_character
 from src.engine.position import Position
 from src.engine.rules import (
     ability_modifier,
@@ -13,6 +14,8 @@ from src.engine.rules import (
     has_non_proficient_armor,
     is_class_proficient_with,
     monster_action_range_feet,
+    monster_damage_multiplier,
+    monster_is_immune_to_condition,
     multiattack_sub_actions,
     normalize_skill_name,
     resolve_attack,
@@ -258,6 +261,45 @@ def test_has_non_proficient_armor_true_only_for_equipped_armor_outside_the_class
 
     wizard_with_no_armor = _make_character(class_index="wizard", inventory=["dagger"])
     assert has_non_proficient_armor(wizard_with_no_armor, srd) is False
+
+
+def test_monster_damage_multiplier_is_always_1_for_a_non_monster() -> None:
+    srd = load_srd()
+    pc = _make_character()
+    assert monster_damage_multiplier(pc, "poison", srd) == 1.0
+
+
+def test_monster_damage_multiplier_immune_resistant_vulnerable_normal() -> None:
+    # Ghost: resistant to acid/fire/lightning/thunder + a compound
+    # "bludgeoning, piercing, and slashing from nonmagical weapons" clause
+    # (issue #18 - matched by substring, not exact equality); immune to
+    # cold/necrotic/poison; no listed vulnerabilities in the vendored data.
+    srd = load_srd()
+    ghost = monster_to_character(srd.monsters["ghost"], "ghost_1", Position(x=0, y=0))
+    assert monster_damage_multiplier(ghost, "cold", srd) == 0.0  # immune
+    assert monster_damage_multiplier(ghost, "fire", srd) == 0.5  # resistant
+    assert monster_damage_multiplier(ghost, "bludgeoning", srd) == 0.5  # compound clause
+    assert monster_damage_multiplier(ghost, "radiant", srd) == 1.0  # not listed at all
+
+    # Skeleton: vulnerable to bludgeoning (a plain single-type entry).
+    skeleton = monster_to_character(srd.monsters["skeleton"], "skeleton_1", Position(x=0, y=0))
+    assert monster_damage_multiplier(skeleton, "bludgeoning", srd) == 2.0
+
+
+def test_monster_is_immune_to_condition_false_for_a_non_monster() -> None:
+    srd = load_srd()
+    pc = _make_character()
+    assert monster_is_immune_to_condition(pc, "prone", srd) is False
+
+
+def test_monster_is_immune_to_condition_matches_real_srd_data() -> None:
+    srd = load_srd()
+    ooze = monster_to_character(srd.monsters["gray-ooze"], "ooze_1", Position(x=0, y=0))
+    assert monster_is_immune_to_condition(ooze, "prone", srd) is True
+    assert monster_is_immune_to_condition(ooze, "grappled", srd) is False  # not in its list
+
+    wolf = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=0, y=0))
+    assert monster_is_immune_to_condition(wolf, "prone", srd) is False
 
 
 def test_armor_ac_unarmored_is_10_plus_dex() -> None:

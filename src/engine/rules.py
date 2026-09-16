@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from src.engine.conditions import has_condition
 from src.engine.dice import RollResult, roll, roll_d20
 from src.engine.srd_loader import SrdEntry, SrdIndex
-from src.engine.state import AbilityScore, Character
+from src.engine.state import AbilityScore, Character, ConditionName
 
 
 @dataclass(frozen=True)
@@ -279,6 +279,50 @@ def has_non_proficient_armor(character: Character, srd: SrdIndex) -> bool:
         (item := srd.equipment.get(idx)) and item.get("armor_category") and idx not in options
         for idx in equipped
     )
+
+
+def monster_damage_multiplier(target: Character, damage_type: str, srd: SrdIndex) -> float:
+    """1.0 normal, 0.5 resistant, 0.0 immune, 2.0 vulnerable (issue #18) -
+    always 1.0 for a non-monster target (PCs/companions have no SRD
+    resistance data). The vendored damage_resistances/immunities/
+    vulnerabilities entries are free-text strings, not a closed vocabulary
+    - some are a bare damage type ("poison"), others a compound clause
+    ("bludgeoning, piercing, and slashing from nonmagical weapons", e.g.
+    Ghost) - matched by substring containment rather than exact equality so
+    both shapes work, and the nonmagical-weapons clause is treated as an
+    unconditional resistance since this project has no "magical weapon"
+    concept to gate it on. Checked in immunity -> resistance -> vulnerability
+    order (a type can't sensibly be both, but SRD data has no cross-list
+    dedup guarantee)."""
+    if target.monster_index is None:
+        return 1.0
+    monster = srd.monsters.get(target.monster_index)
+    if monster is None:
+        return 1.0
+    if any(damage_type in entry for entry in monster.get("damage_immunities", [])):
+        return 0.0
+    if any(damage_type in entry for entry in monster.get("damage_resistances", [])):
+        return 0.5
+    if any(damage_type in entry for entry in monster.get("damage_vulnerabilities", [])):
+        return 2.0
+    return 1.0
+
+
+def monster_is_immune_to_condition(
+    target: Character, condition_name: ConditionName, srd: SrdIndex
+) -> bool:
+    """True if this monster's SRD stat block lists condition_name in its
+    condition_immunities (issue #18) - always False for a non-monster
+    target. Per SRD, a creature immune to a condition can't be affected by
+    it at all (e.g. an ooze can't be grappled or knocked prone), so callers
+    should reject the attempt outright rather than let it resolve and
+    silently do nothing."""
+    if target.monster_index is None:
+        return False
+    monster = srd.monsters.get(target.monster_index)
+    if monster is None:
+        return False
+    return any(c["index"] == condition_name for c in monster.get("condition_immunities", []))
 
 
 def armor_ac(

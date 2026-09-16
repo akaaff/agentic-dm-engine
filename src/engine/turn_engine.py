@@ -143,6 +143,8 @@ from src.engine.rules import (
     has_non_proficient_armor,
     is_class_proficient_with,
     monster_action_range_feet,
+    monster_damage_multiplier,
+    monster_is_immune_to_condition,
     monster_saving_throw_bonus,
     multiattack_sub_actions,
     normalize_skill_name,
@@ -788,6 +790,12 @@ def _apply_damage_and_handle_downing(
     # take" per SRD, meaning the post-resistance amount, not the raw hit.
     if target.is_raging and damage_type in _RAGE_RESISTANT_DAMAGE_TYPES:
         damage //= 2
+    # Issue #18: a monster's own SRD resistances/immunities/vulnerabilities
+    # - always a 1.0 no-op for a PC/companion target, see
+    # rules.monster_damage_multiplier's own docstring for the free-text
+    # substring-matching rationale. int() truncation matches SRD's
+    # "resistance halves damage, rounded down" for the 0.5 case.
+    damage = int(damage * monster_damage_multiplier(target, damage_type, srd))
     actual_loss = apply_damage(target, damage)
     state.events.append(
         Event(
@@ -1348,7 +1356,7 @@ def _grapple_shove_contest(
 
 
 def _resolve_grapple(
-    state: GameState, actor: Character, action: ParsedAction, rng: random.Random
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> None:
     if action.target is None:
         raise TurnEngineError("grapple action requires a target")
@@ -1356,6 +1364,12 @@ def _resolve_grapple(
     if target is None:
         raise TurnEngineError(f"Unknown grapple target: {action.target}")
     _validate_attack_target(actor, target)
+    # Issue #18: SRD - a creature immune to the grappled condition (oozes,
+    # most incorporeal undead, elementals...) can't be grappled at all, so
+    # the attempt is rejected outright rather than rolled and silently
+    # doing nothing on a "success".
+    if monster_is_immune_to_condition(target, "grappled", srd):
+        raise TurnEngineError(f"{target.id} is immune to the grappled condition")
 
     actor_total, target_total = _grapple_shove_contest(actor, target, rng)
     # SRD contested-check resolution: the higher total wins outright, but a
@@ -1395,7 +1409,7 @@ def _resolve_grapple(
 
 
 def _resolve_shove(
-    state: GameState, actor: Character, action: ParsedAction, rng: random.Random
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> None:
     if action.target is None:
         raise TurnEngineError("shove action requires a target")
@@ -1403,6 +1417,10 @@ def _resolve_shove(
     if target is None:
         raise TurnEngineError(f"Unknown shove target: {action.target}")
     _validate_attack_target(actor, target)
+    # Issue #18: same reasoning as _resolve_grapple - immune means the
+    # attempt can't succeed, so it's rejected outright, not rolled.
+    if monster_is_immune_to_condition(target, "prone", srd):
+        raise TurnEngineError(f"{target.id} is immune to the prone condition")
 
     actor_total, target_total = _grapple_shove_contest(actor, target, rng)
     # Same contest and same tie-goes-to-the-defender resolution as grapple -
@@ -2223,9 +2241,9 @@ def resolve_action(
     elif action.verb == "help":
         _resolve_help(state, actor, action)
     elif action.verb == "grapple":
-        _resolve_grapple(state, actor, action, rng)
+        _resolve_grapple(state, actor, action, rng, srd)
     elif action.verb == "shove":
-        _resolve_shove(state, actor, action, rng)
+        _resolve_shove(state, actor, action, rng, srd)
     elif action.verb == "cast_spell":
         ends_turn = _resolve_cast_spell(state, actor, action, rng, srd)
     elif action.verb == "second_wind":

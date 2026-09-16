@@ -244,6 +244,54 @@ def test_resolve_action_rejects_a_monster_attacking_another_monster() -> None:
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
+def test_attack_damage_reduced_by_monster_resistance() -> None:
+    # Issue #18, end-to-end through a real attack resolution (not just the
+    # pure rules.monster_damage_multiplier unit tests). Swap goblin_1's own
+    # monster_index to "ghost" - resistant to "bludgeoning, piercing, and
+    # slashing from nonmagical weapons" (the exact compound-clause shape
+    # the substring-matching was built for), AC 11, HP 45 (plenty of
+    # buffer). Thorin's longsword: STR16(human+1)->mod3, proficient->+2,
+    # attack_bonus 5, natural 10 -> total 15 vs AC 11 -> hit, not a crit.
+    # Damage: die natural 6 + STR mod 3 = 9 raw: halved (resistant, slashing
+    # is nonmagical here) -> 4.
+    state = _build_demo_state([18, 10, 8, 3])
+    state.characters["goblin_1"].monster_index = "ghost"
+    # The demo encounter's own spawn points put them 10ft apart - adjacent
+    # for a real melee hit, same "not what this test is about" fix already
+    # used elsewhere for range enforcement.
+    state.characters["goblin_1"].position = Position(
+        x=state.characters["thorin"].position.x + 1, y=state.characters["thorin"].position.y
+    )
+    action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", raw_text="I swing my longsword"
+    )
+    resolve_action(state, action, _FixedRandom([10, 6]))  # type: ignore[arg-type]
+
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 4
+
+
+def test_attack_damage_zeroed_by_monster_immunity() -> None:
+    # Ghost is immune to poison - use_item/cast_spell-style poison damage
+    # isn't reachable via a plain weapon attack in this project, so this
+    # directly exercises _apply_damage_and_handle_downing's own multiplier
+    # step by calling it the same way _resolve_attack does, rather than
+    # contriving a poison-damage weapon that may not exist in the SRD data.
+    from src.engine.turn_engine import _apply_damage_and_handle_downing
+
+    state = _build_demo_state([18, 10, 8, 3])
+    ghost = state.characters["goblin_1"]
+    ghost.monster_index = "ghost"
+    thorin = state.characters["thorin"]
+    srd = load_srd()
+
+    _apply_damage_and_handle_downing(state, thorin, ghost, 20, "poison", _FixedRandom([]), srd)  # type: ignore[arg-type]
+
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 0
+    assert ghost.hp == ghost.max_hp  # untouched
+
+
 def test_attack_gets_disadvantage_from_non_proficient_armor() -> None:
     # Elrond (Wizard) has no armor proficiency at all - simulate exactly
     # the authoring mistake this mechanic exists to catch (a companion

@@ -229,3 +229,27 @@ def test_shove_requires_a_target() -> None:
     action = ParsedAction(actor="thorin", verb="shove", raw_text="I try to shove")
     with pytest.raises(TurnEngineError):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_grapple_rejects_a_condition_immune_target() -> None:
+    # Issue #18: a shadow (incorporeal undead) is SRD-immune to both
+    # grappled and prone - swap goblin_1's own monster_index directly (same
+    # "poke the fixture" shortcut other tests in this project already use)
+    # rather than authoring a whole new encounter just for this monster.
+    state = _build_demo_state(_INITIATIVE)
+    state.characters["goblin_1"].monster_index = "shadow"
+    action = ParsedAction(
+        actor="thorin", verb="grapple", target="goblin_1", raw_text="I grapple the shadow"
+    )
+    with pytest.raises(TurnEngineError, match="immune to the grappled condition"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_shove_rejects_a_condition_immune_target() -> None:
+    state = _build_demo_state(_INITIATIVE)
+    state.characters["goblin_1"].monster_index = "shadow"
+    action = ParsedAction(
+        actor="thorin", verb="shove", target="goblin_1", raw_text="I shove the shadow"
+    )
+    with pytest.raises(TurnEngineError, match="immune to the prone condition"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
