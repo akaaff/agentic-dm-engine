@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
+from src.engine.events import Event
 from src.engine.position import BattleMap, Position
 from src.engine.rules import ability_modifier
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
@@ -143,7 +144,22 @@ def build_encounter_state(
         )
 
     dex_modifiers = {cid: ability_modifier(c.stats["DEX"]) for cid, c in characters.items()}
-    turn_order = roll_initiative(dex_modifiers, rng)
+    initiative_rolls = roll_initiative(dex_modifiers, rng)
+    turn_order = [r.character_id for r in initiative_rolls]
+    # Issue #14: surface each roll's own detail as an Event, not just the
+    # final ordering - previously discarded the instant roll_initiative
+    # returned, so nothing about *why* the turn order came out this way was
+    # ever shown to the player.
+    initiative_events = [
+        Event(
+            round=1,
+            turn_index=0,
+            actor=r.character_id,
+            type="initiative_rolled",
+            payload={"natural": r.natural, "modifier": r.modifier, "total": r.total},
+        )
+        for r in initiative_rolls
+    ]
 
     return GameState(
         encounter_id=encounter.id,
@@ -151,7 +167,7 @@ def build_encounter_state(
         turn_order=turn_order,
         current_turn=0,
         round=1,
-        events=[],
+        events=initiative_events,
         pending_action=None,
         status="in_progress",
         battle_map=encounter.battle_map,

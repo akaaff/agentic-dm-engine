@@ -119,6 +119,15 @@ def test_build_encounter_state_places_everyone_and_rolls_initiative() -> None:
     assert state.characters["goblin_2"].position == Position(x=7, y=3)
     assert state.characters["goblin_3"].position == Position(x=6, y=4)
 
+    # Issue #14: one initiative_rolled Event per combatant, carrying the
+    # real per-roll detail this test's own comment already hand-computed.
+    initiative_events = [e for e in state.events if e.type == "initiative_rolled"]
+    assert len(initiative_events) == 6
+    elrond_event = next(e for e in initiative_events if e.actor == "elrond")
+    assert elrond_event.payload == {"natural": 15, "modifier": 3, "total": 18}
+    goblin_1_event = next(e for e in initiative_events if e.actor == "goblin_1")
+    assert goblin_1_event.payload == {"natural": 8, "modifier": 2, "total": 10}
+
 
 def test_day22_encounters_load_and_build_state_with_known_monster_types() -> None:
     """wolf_den (short arc), kobold_ambush and bandit_hideout (full campaign) -

@@ -44,6 +44,17 @@ export function formatEvent(
   const p = event.payload
 
   switch (event.type) {
+    case 'initiative_rolled': {
+      const natural = typeof p.natural === 'number' ? p.natural : null
+      const modifier = typeof p.modifier === 'number' ? p.modifier : null
+      const total = typeof p.total === 'number' ? p.total : null
+      const rollText = natural !== null && modifier !== null ? ` (d20 ${natural}${modifier >= 0 ? '+' : ''}${modifier})` : ''
+      return {
+        key: event.id,
+        color,
+        label: `${actorName} rolls initiative: ${total ?? '?'}${rollText}`,
+      }
+    }
     case 'attack_roll': {
       const natural = typeof p.natural === 'number' ? p.natural : null
       const hit = p.hit === true

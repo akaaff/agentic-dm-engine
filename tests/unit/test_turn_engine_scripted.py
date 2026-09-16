@@ -28,6 +28,12 @@ def test_scripted_skirmish_event_log_matches_hand_trace() -> None:
     event_summary = [(e.round, e.turn_index, e.actor, e.type) for e in state.events]
 
     assert event_summary == [
+        # Issue #14: one initiative_rolled event per combatant, in turn
+        # order, emitted by build_encounter_state before any turn starts.
+        (1, 0, "thorin", "initiative_rolled"),
+        (1, 0, "elrond", "initiative_rolled"),
+        (1, 0, "goblin_1", "initiative_rolled"),
+        (1, 0, "goblin_2", "initiative_rolled"),
         (1, 0, "thorin", "move"),
         (1, 1, "elrond", "attack_roll"),
         (1, 1, "elrond", "damage_dealt"),

@@ -26,11 +26,11 @@ def test_roll_initiative_orders_by_total_then_dex_mod_then_id() -> None:
     }
     rng = _FixedRandom([10, 15, 16, 12, 12, 5])
 
-    order = roll_initiative(dex_modifiers, rng)  # type: ignore[arg-type]
+    rolls = roll_initiative(dex_modifiers, rng)  # type: ignore[arg-type]
 
     # 18 (pc_rogue, higher dex_mod wins the 18/18 tie) > 18 (pc_wizard)
     # > 14/14 tie broken by id (goblin_1 < goblin_2) > 11 (pc_fighter) > 7 (goblin_3)
-    assert order == [
+    assert [r.character_id for r in rolls] == [
         "pc_rogue",
         "pc_wizard",
         "goblin_1",
@@ -38,6 +38,12 @@ def test_roll_initiative_orders_by_total_then_dex_mod_then_id() -> None:
         "pc_fighter",
         "goblin_3",
     ]
+    # Issue #14: the per-roll detail (natural d20, modifier, total) is kept
+    # alongside the ordering, not discarded - spot-check a couple entries.
+    pc_rogue = next(r for r in rolls if r.character_id == "pc_rogue")
+    assert (pc_rogue.natural, pc_rogue.modifier, pc_rogue.total) == (15, 3, 18)
+    goblin_3 = next(r for r in rolls if r.character_id == "goblin_3")
+    assert (goblin_3.natural, goblin_3.modifier, goblin_3.total) == (5, 2, 7)
 
 
 def test_next_turn_advances_within_round() -> None:
