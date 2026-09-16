@@ -17,6 +17,7 @@ export default function LivePlay({
   const {
     gameState,
     narrationLog,
+    logCaughtUp,
     sceneImageUrl,
     awaitingActor,
     error,
@@ -26,7 +27,12 @@ export default function LivePlay({
   } = useSessionSocket(sessionId)
   const [draft, setDraft] = useState('')
 
-  const isMyTurn = awaitingActor === myCharacterId
+  // The server can say it's already your turn before the narration log has
+  // finished revealing everything that led up to it (staggered on purpose -
+  // see sessionClient.ts) - stay disabled until the reader's actually caught
+  // up, not just when awaiting_input technically arrives.
+  const isMyTurn = awaitingActor === myCharacterId && logCaughtUp
+  const catchingUp = awaitingActor === myCharacterId && !logCaughtUp
   const actorColors = useMemo(
     () => (gameState ? buildActorColorMap(gameState.turn_order, gameState.characters) : {}),
     [gameState],
@@ -80,7 +86,9 @@ export default function LivePlay({
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={isMyTurn ? 'What do you do?' : "Waiting for other turns..."}
+            placeholder={
+              isMyTurn ? 'What do you do?' : catchingUp ? 'Catching up...' : 'Waiting for other turns...'
+            }
             disabled={!isMyTurn}
           />
           <button type="submit" disabled={!isMyTurn || !draft.trim()}>

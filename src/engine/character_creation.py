@@ -42,6 +42,21 @@ Rather than vendor a 362-entry file for one item whose numbers still need
 hardcoding either way, "potion-of-healing" is allowed here explicitly -
 see turn_engine.HEALING_POTION_DICE for the (hardcoded, documented) amount."""
 
+HEALING_POTION_INDEX = "potion-of-healing"
+"""Same literal turn_engine.HEALING_POTION_INDEX hardcodes independently -
+not imported from there to avoid a cross-module dependency for one string,
+matching this file's existing EXTRA_EQUIPMENT_INDICES convention above.
+Every fresh character starts with exactly one (see the DEFAULT_STARTING_
+CONSUMABLES use below) - use_item's healing-potion path (Day 14) was
+otherwise permanently unreachable in real play, since nothing ever put one
+in a character's inventory: chosen_equipment only ever grants one if a
+player explicitly opts in through free-form input, and the wizard's own
+equipment picker (GET /characters/equipment) can't offer it as a choice at
+all, since a synthetic non-SRD index has neither a weapon_category nor an
+armor_category for that endpoint to key off of."""
+
+DEFAULT_STARTING_CONSUMABLES = [HEALING_POTION_INDEX]
+
 LEVEL_1_SPELL_SLOTS: dict[str, dict[int, int]] = {
     "wizard": {1: 2},
     "cleric": {1: 2},
@@ -317,6 +332,7 @@ def create_character(
     for item in background.get("starting_equipment", []):
         inventory.extend([item["equipment"]["index"]] * item["quantity"])
     inventory.extend(chosen_equipment)
+    inventory.extend(DEFAULT_STARTING_CONSUMABLES)
 
     # Auto-populate a legal starting weapon loadout (Phase C: equipped-weapon
     # tracking) - greedily takes weapon-category items, stopping once a 2nd

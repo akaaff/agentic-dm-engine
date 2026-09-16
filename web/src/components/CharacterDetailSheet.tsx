@@ -5,6 +5,15 @@ import { portraitUrl } from '../utils/portraits'
 
 const ABILITIES: (keyof LiveCharacter['stats'])[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 
+// Items granted at creation (character_creation.DEFAULT_STARTING_CONSUMABLES)
+// that aren't real SRD equipment entries - see character_creation.py's
+// EXTRA_EQUIPMENT_INDICES docstring for why. api.listEquipment() can never
+// know their display name, so itemName() below falls back to this map
+// before falling back to the raw index string.
+const NON_SRD_ITEM_NAMES: Record<string, string> = {
+  'potion-of-healing': 'Potion of Healing',
+}
+
 function abilityModifier(score: number): number {
   return Math.floor((score - 10) / 2)
 }
@@ -71,7 +80,7 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
   const portrait = portraitUrl(character)
   const resourceEntries = Object.entries(character.class_resources)
   const equipmentNames = new Map(equipment.map((e) => [e.index, e.name]))
-  const itemName = (idx: string) => equipmentNames.get(idx) ?? idx
+  const itemName = (idx: string) => equipmentNames.get(idx) ?? NON_SRD_ITEM_NAMES[idx] ?? idx
 
   // Grouped/counted, not a naive listing - the engine's inventory is a flat
   // list of item *instances* (a quiver of 20 arrows is 20 separate "arrow"

@@ -130,9 +130,18 @@ export interface NarrationEntry {
 
 const WS_BASE_URL = 'ws://localhost:8000'
 
+// How long a revealed narration entry stays "the last thing shown" before
+// the next queued one is allowed to appear - only ever adds delay when
+// entries are genuinely bursty (several resolved in a chain server-side,
+// e.g. companion/monster turns auto-playing after the human's own action);
+// an isolated entry that arrives on its own still reveals immediately, see
+// drainNext's "queue empty after this one" branch below.
+const ENTRY_REVEAL_DELAY_MS = 3000
+
 export function useSessionSocket(sessionId: string) {
   const [gameState, setGameState] = useState<LiveGameState | null>(null)
   const [narrationLog, setNarrationLog] = useState<NarrationEntry[]>([])
+  const [logCaughtUp, setLogCaughtUp] = useState(true)
   const [sceneImageUrl, setSceneImageUrl] = useState<string | null>(null)
   const [awaitingActor, setAwaitingActor] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -143,6 +152,16 @@ export function useSessionSocket(sessionId: string) {
   // the ones the most recently-received narration text is about.
   const lastEventCountRef = useRef(0)
   const pendingNarrationRef = useRef<string | null>(null)
+  // Entries received but not yet revealed in narrationLog, the timer pacing
+  // their reveal, and when the last one was actually shown - refs, not
+  // state, since draining shouldn't itself trigger a render (only the
+  // narrationLog/logCaughtUp updates it causes should).
+  const entryQueueRef = useRef<NarrationEntry[]>([])
+  const drainTimerRef = useRef<number | null>(null)
+  const lastRevealTimeRef = useRef(-Infinity) // -Infinity, not 0: "never
+  // revealed yet" must make the very first entry's own wait computation
+  // come out to 0 unconditionally, not just whenever performance.now()
+  // (time since page load) already happens to exceed the delay by luck.
 
   useEffect(() => {
     // `cancelled` guards against React StrictMode's dev-mode double-invoke
@@ -154,6 +173,50 @@ export function useSessionSocket(sessionId: string) {
     let cancelled = false
     lastEventCountRef.current = 0
     pendingNarrationRef.current = null
+    entryQueueRef.current = []
+    if (drainTimerRef.current !== null) {
+      window.clearTimeout(drainTimerRef.current)
+      drainTimerRef.current = null
+    }
+    lastRevealTimeRef.current = -Infinity
+    setLogCaughtUp(true)
+
+    // Paces the queue by real elapsed time since the last reveal, not by
+    // whether the queue happened to look empty at the instant a new entry
+    // arrived - two entries can arrive as separate WebSocket messages only
+    // milliseconds apart (a burst of resolved turns sent back to back), and
+    // each one's own onmessage call runs to completion before the next
+    // starts, so a purely queue-occupancy-based "is anything else pending"
+    // check would see an empty queue every single time and reveal every
+    // entry instantly. Scheduling the next reveal for whatever time remains
+    // of the delay (0 if enough real time has already passed) fixes that
+    // without adding any wait when entries genuinely arrive spaced out.
+    function scheduleDrain() {
+      if (drainTimerRef.current !== null) return // already scheduled
+      const next = entryQueueRef.current[0]
+      if (!next) {
+        setLogCaughtUp(true)
+        return
+      }
+      const elapsed = performance.now() - lastRevealTimeRef.current
+      const wait = Math.max(0, ENTRY_REVEAL_DELAY_MS - elapsed)
+      drainTimerRef.current = window.setTimeout(() => {
+        drainTimerRef.current = null
+        const entry = entryQueueRef.current.shift()
+        if (entry) {
+          setNarrationLog((prev) => [...prev, entry])
+          lastRevealTimeRef.current = performance.now()
+        }
+        scheduleDrain() // schedules the next one, or marks caught up if none left
+      }, wait)
+    }
+
+    function enqueueEntry(entry: NarrationEntry) {
+      entryQueueRef.current.push(entry)
+      setLogCaughtUp(false)
+      scheduleDrain()
+    }
+
     const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}`)
     wsRef.current = ws
 
@@ -178,10 +241,7 @@ export function useSessionSocket(sessionId: string) {
           const pendingText = pendingNarrationRef.current
           pendingNarrationRef.current = null
           if (pendingText || newEvents.length > 0) {
-            setNarrationLog((prev) => [
-              ...prev,
-              { text: pendingText ?? '', kind: 'action', events: newEvents },
-            ])
+            enqueueEntry({ text: pendingText ?? '', kind: 'action', events: newEvents })
           }
           break
         }
@@ -194,7 +254,7 @@ export function useSessionSocket(sessionId: string) {
           break
         case 'scene_narration':
           if (message.text) {
-            setNarrationLog((prev) => [...prev, { text: message.text, kind: 'scene' }])
+            enqueueEntry({ text: message.text, kind: 'scene' })
           }
           break
         case 'scene_image':
@@ -211,6 +271,10 @@ export function useSessionSocket(sessionId: string) {
 
     return () => {
       cancelled = true
+      if (drainTimerRef.current !== null) {
+        window.clearTimeout(drainTimerRef.current)
+        drainTimerRef.current = null
+      }
       ws.close()
     }
   }, [sessionId])
@@ -230,6 +294,7 @@ export function useSessionSocket(sessionId: string) {
   return {
     gameState,
     narrationLog,
+    logCaughtUp,
     sceneImageUrl,
     awaitingActor,
     error,

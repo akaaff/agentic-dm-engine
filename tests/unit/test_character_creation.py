@@ -46,7 +46,7 @@ def test_create_human_fighter_end_to_end() -> None:
     assert character.background == "Acolyte"
     assert character.spell_slots == {}
     assert sorted(character.inventory) == sorted(
-        ["clothes-common", "pouch", "chain-mail", "shield"]
+        ["clothes-common", "pouch", "chain-mail", "shield", "potion-of-healing"]
     )
     # chosen class skills + Acolyte's fixed background proficiencies
     assert sorted(character.skill_proficiencies) == sorted(
@@ -79,7 +79,9 @@ def test_create_elf_wizard_end_to_end() -> None:
     assert character.ac == 13
     assert character.speed == 30
     assert character.spell_slots == {1: 2}
-    assert sorted(character.inventory) == sorted(["spellbook", "clothes-common", "pouch"])
+    assert sorted(character.inventory) == sorted(
+        ["spellbook", "clothes-common", "pouch", "potion-of-healing"]
+    )
     assert sorted(character.skill_proficiencies) == sorted(
         ["skill-arcana", "skill-history", "skill-insight", "skill-religion"]
     )

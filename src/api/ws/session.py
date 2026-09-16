@@ -266,11 +266,25 @@ async def _autoplay_non_human_turns(session: Session) -> None:
     consecutive_invalid = 0
     while session.game_state.status == "in_progress":
         current_actor_id = session.game_state.turn_order[session.game_state.current_turn]
-        if current_actor_id == session.human_character_id:
-            return
         actor = session.game_state.characters[current_actor_id]
 
-        if consecutive_invalid >= 3:
+        if current_actor_id == session.human_character_id:
+            if actor.hp <= 0 and not actor.is_dead:
+                # Same shortcut player_agent_node already has for an
+                # unconscious companion (src/graph/nodes/player_agent.py) -
+                # a death save is an automatic roll, not a real decision, so
+                # there's nothing meaningful for a human to type either.
+                # Once stable, _advance_turn_skipping_dead's own is_stable
+                # check keeps the turn pointer from ever landing here again,
+                # so this only ever fires while still actively rolling.
+                parsed_action = ParsedAction(
+                    actor=current_actor_id,
+                    verb="death_save",
+                    raw_text=f"{actor.name} fights to stay conscious.",
+                )
+            else:
+                return
+        elif consecutive_invalid >= 3:
             # Applies to monsters too, not just companions - found live as
             # a real infinite loop once turn_engine started enforcing
             # attack range: choose_monster_action's own path-finding can

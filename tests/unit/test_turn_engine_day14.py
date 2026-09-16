@@ -224,7 +224,8 @@ def test_use_item_heals_and_removes_the_potion() -> None:
     state = _build_demo_state(_INITIATIVE)
     thorin = state.characters["thorin"]
     thorin.hp = 4
-    thorin.inventory.append(HEALING_POTION_INDEX)
+    # create_character grants one potion-of-healing by default now - no
+    # need to append one here.
 
     # 2d4+2, naturals [3, 2] -> total 7. min(7, max_hp(12)-hp(4)=8) = 7.
     action = ParsedAction(
@@ -245,7 +246,7 @@ def test_use_item_heal_is_capped_at_max_hp() -> None:
     state = _build_demo_state(_INITIATIVE)
     thorin = state.characters["thorin"]
     thorin.hp = 11  # max_hp 12, only 1 point of room
-    thorin.inventory.append(HEALING_POTION_INDEX)
+    # create_character grants one potion-of-healing by default now.
 
     action = ParsedAction(
         actor="thorin",
@@ -265,7 +266,7 @@ def test_use_item_accepts_natural_word_order_too() -> None:
     state = _build_demo_state(_INITIATIVE)
     thorin = state.characters["thorin"]
     thorin.hp = 4
-    thorin.inventory.append(HEALING_POTION_INDEX)
+    # create_character grants one potion-of-healing by default now.
 
     action = ParsedAction(
         actor="thorin",
@@ -288,6 +289,9 @@ def test_use_item_rejects_unsupported_items() -> None:
 
 def test_use_item_rejects_when_potion_not_in_inventory() -> None:
     state = _build_demo_state(_INITIATIVE)
+    # create_character grants one potion-of-healing by default now - remove
+    # it so this test can still exercise the "actor genuinely has none" path.
+    state.characters["thorin"].inventory.remove(HEALING_POTION_INDEX)
     action = ParsedAction(
         actor="thorin",
         verb="use_item",
