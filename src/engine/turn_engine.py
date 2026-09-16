@@ -144,6 +144,8 @@ from src.engine.rules import (
     has_non_proficient_armor,
     has_relentless_endurance,
     is_class_proficient_with,
+    is_monk_weapon,
+    monk_martial_arts_die_sides,
     monster_action_range_feet,
     monster_damage_multiplier,
     monster_has_pack_tactics,
@@ -286,6 +288,7 @@ def _pc_attack_params(
     srd: SrdIndex,
     include_ability_damage_bonus: bool = True,
     smite_slot_level: int | None = None,
+    force_unarmed: bool = False,
 ) -> AttackParams:
     """`include_ability_damage_bonus=False` (Two-Weapon Fighting's off-hand
     attack, `_resolve_offhand_attack`) drops the ability modifier from
@@ -297,7 +300,12 @@ def _pc_attack_params(
     at declare-time, even though the slot itself isn't spent until
     _resolve_single_attack confirms a hit - a Paladin with no such slot, or
     a non-Paladin, or a ranged-weapon attack should be rejected outright
-    rather than silently doing nothing on a miss-or-hit."""
+    rather than silently doing nothing on a miss-or-hit.
+
+    `force_unarmed` (issue #24, Flurry of Blows) skips the equipped-weapon
+    lookup entirely, even if the actor has one or two weapons equipped -
+    Flurry is always two *unarmed* strikes specifically, unlike a plain
+    `attack` (which falls back to unarmed only when nothing is equipped)."""
     if smite_slot_level is not None:
         if actor.class_index != "paladin":
             raise TurnEngineError(f"{actor.id} is not a Paladin and cannot use Divine Smite")
@@ -305,9 +313,13 @@ def _pc_attack_params(
             raise TurnEngineError(
                 f"{actor.id} has no level {smite_slot_level} spell slots remaining for Divine Smite"
             )
-    equipped = [item for idx in actor.equipped_weapons if (item := srd.equipment.get(idx))]
+    equipped = (
+        []
+        if force_unarmed
+        else [item for idx in actor.equipped_weapons if (item := srd.equipment.get(idx))]
+    )
     weapon: SrdEntry | None = None
-    if weapon_index:
+    if weapon_index and not force_unarmed:
         weapon = next((item for item in equipped if item["index"] == weapon_index), None)
         if weapon is None:
             weapon = _match_weapon_by_name(weapon_index, equipped)
@@ -327,6 +339,23 @@ def _pc_attack_params(
     rage_bonus = RAGE_DAMAGE_BONUS if actor.is_raging else 0
 
     if weapon is None:
+        if actor.class_index == "monk":
+            # Martial Arts (issue #24): the scaling die *replaces* the flat
+            # 1 bludgeoning damage entirely (not added on top), and DEX can
+            # be used instead of STR for both the attack and damage rolls.
+            monk_mod = max(str_mod, dex_mod)
+            return AttackParams(
+                attack_bonus=monk_mod + actor.proficiency_bonus,
+                damage_dice_count=1,
+                damage_dice_sides=monk_martial_arts_die_sides(actor.level),
+                damage_bonus=(monk_mod if include_ability_damage_bonus else 0) + rage_bonus,
+                damage_type="bludgeoning",
+                source_name="unarmed strike",
+                range_normal_feet=5,
+                range_long_feet=None,
+                is_melee_str_weapon=True,
+                smite_slot_level=smite_slot_level,
+            )
         # Unarmed strike (PHB): 1 bludgeoning damage + STR mod, no damage die,
         # 5ft reach like any other melee attack.
         return AttackParams(
@@ -347,7 +376,12 @@ def _pc_attack_params(
     is_ranged = weapon.get("weapon_range") == "Ranged"
     if smite_slot_level is not None and is_ranged:
         raise TurnEngineError("Divine Smite requires a melee weapon attack")
-    if is_finesse:
+    # Martial Arts (issue #24, Monk): DEX is usable for a monk weapon's
+    # attack and damage rolls too, same as finesse already allows - a
+    # class-specific option, not a property of the weapon alone, so it's
+    # checked here rather than folded into is_finesse itself.
+    is_monk_weapon_for_actor = actor.class_index == "monk" and is_monk_weapon(weapon)
+    if is_finesse or is_monk_weapon_for_actor:
         ability_mod = max(str_mod, dex_mod)
     elif is_ranged:
         ability_mod = dex_mod
@@ -382,6 +416,15 @@ def _pc_attack_params(
     range_normal_feet, range_long_feet = weapon_range_feet(weapon)
 
     dice_count, dice_sides, notation_bonus = parse_dice_notation(weapon["damage"]["damage_dice"])
+    if is_monk_weapon_for_actor:
+        # Martial Arts (issue #24): "roll the Martial Arts die in place of
+        # the weapon's own damage" - only when it's actually bigger (dice
+        # count stays 1; every monk-tagged weapon in this data is a
+        # single-die weapon, and this engine already only ever reads the
+        # one-handed `damage` field, never a versatile weapon's
+        # two_handed_damage, so there's no second die-count case to weigh
+        # here).
+        dice_sides = max(dice_sides, monk_martial_arts_die_sides(actor.level))
     return AttackParams(
         attack_bonus=ability_mod + prof_bonus + archery_bonus,
         damage_dice_count=dice_count,
@@ -825,6 +868,40 @@ def _resolve_cunning_action(
         raise TurnEngineError(
             "cunning_action requires params['action'] to be 'dash' or 'disengage'"
         )
+    actor.bonus_action_used = True
+    return False
+
+
+def _resolve_flurry_of_blows(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> bool:
+    """Monk's Flurry of Blows (issue #24): spend 1 Ki point to make two
+    unarmed strikes as a bonus action, same gate shape as Second Wind/Rage
+    (bonus_action_used + _use_class_resource), plus SRD's own level-2+ Ki
+    gate. Unlike Two-Weapon Fighting's off-hand attack, both Flurry strikes
+    are full unarmed strikes - neither drops the ability modifier - so
+    _pc_attack_params is called with force_unarmed=True and no other
+    adjustment, reusing Martial Arts' scaling die/DEX option automatically
+    (see _pc_attack_params's Monk branch)."""
+    if actor.class_index != "monk" or actor.level < 2:
+        raise TurnEngineError(f"{actor.id} doesn't have Flurry of Blows")
+    if actor.bonus_action_used:
+        raise TurnEngineError(
+            f"{actor.id} has already used their bonus action this turn - cannot use Flurry of Blows"
+        )
+    if action.target is None:
+        raise TurnEngineError("flurry_of_blows action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown flurry_of_blows target: {action.target}")
+    _validate_attack_target(actor, target)
+
+    _use_class_resource(actor, "ki")
+    params = _pc_attack_params(actor, None, srd, force_unarmed=True)
+    for _ in range(2):
+        if target.is_dead:
+            break
+        _resolve_single_attack(state, actor, target, params, rng, srd)
     actor.bonus_action_used = True
     return False
 
@@ -1406,6 +1483,8 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
             dex_mod,
             actor.fighting_style,
             srd.equipment,
+            class_index=actor.class_index,
+            wis_mod=ability_modifier(actor.stats["WIS"]),
         )
 
     actor.equip_used_this_turn = True
@@ -2530,6 +2609,8 @@ def resolve_action(
         ends_turn = _resolve_offhand_attack(state, actor, action, rng, srd)
     elif action.verb == "cunning_action":
         ends_turn = _resolve_cunning_action(state, actor, action, rng, srd)
+    elif action.verb == "flurry_of_blows":
+        ends_turn = _resolve_flurry_of_blows(state, actor, action, rng, srd)
     elif action.verb == "use_item":
         _resolve_use_item(state, actor, action, rng)
     elif action.verb == "death_save":

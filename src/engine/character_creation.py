@@ -407,8 +407,17 @@ def create_character(
 
     con_mod = ability_modifier(final_scores["CON"])
     dex_mod = ability_modifier(final_scores["DEX"])
+    wis_mod = ability_modifier(final_scores["WIS"])
     hp = max(1, cls["hit_die"] + con_mod)
-    ac = armor_ac(equipped_armor, equipped_shield, dex_mod, fighting_style, srd.equipment)
+    ac = armor_ac(
+        equipped_armor,
+        equipped_shield,
+        dex_mod,
+        fighting_style,
+        srd.equipment,
+        class_index=class_index,
+        wis_mod=wis_mod,
+    )
 
     # chosen_skills can include non-skill proficiencies (e.g. Bard's musical
     # instruments - see CLAUDE.md); only "skill-*" entries count here.
@@ -580,9 +589,35 @@ def level_up(
         if slots_this_level is not None:
             character.spell_slots = dict(slots_this_level)
 
+    # Ki points (issue #24, Monk): unlike Second Wind/Rage's level-1-fixed
+    # value (a documented simplification elsewhere in this file), Ki scales
+    # every level starting at 2 (ki points = monk level) - without this,
+    # Flurry of Blows would be permanently stuck at whatever level 1 gives
+    # (0, since Monks have no Ki at all yet), unusable for any leveled Monk.
+    if character.class_index == "monk":
+        character.class_resources["ki"] = character.level
+
     if character.level in ABILITY_SCORE_IMPROVEMENT_LEVELS and ability_score_increase is not None:
         _validate_ability_score_increase(ability_score_increase)
         for ability, bonus in ability_score_increase.items():
             character.stats[ability] = character.stats.get(ability, 0) + bonus
+
+    # A Monk's AC depends on WIS (Unarmored Defense) as well as DEX, unlike
+    # every other AC source in this project - an ASI at level 4 boosting
+    # either should actually move their AC, so recompute it here. Scoped to
+    # Monk only (not every class) since that's the one case level_up can
+    # actually change the AC formula's inputs; a general "AC should
+    # recompute on any ASI" gap for everyone else is real but pre-existing
+    # and out of this issue's scope.
+    if character.class_index == "monk":
+        character.ac = armor_ac(
+            character.equipped_armor,
+            character.equipped_shield,
+            ability_modifier(character.stats["DEX"]),
+            character.fighting_style,
+            srd.equipment,
+            class_index=character.class_index,
+            wis_mod=ability_modifier(character.stats["WIS"]),
+        )
 
     return character

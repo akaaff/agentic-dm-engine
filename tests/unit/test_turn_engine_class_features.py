@@ -725,3 +725,171 @@ def test_cunning_action_rejects_an_unknown_sub_action() -> None:
     )
     with pytest.raises(TurnEngineError, match="'dash' or 'disengage'"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+# --- Monk: Martial Arts + Flurry of Blows (issue #24) --------------------------
+
+
+def _monk(position: Position | None = None) -> Character:
+    position = position or Position(x=0, y=0)
+    # Human's own +1-to-every-ability racial bonus applies: STR8->9(mod-1),
+    # DEX15->16(mod+3), CON13->14(mod+2), INT10->11(mod0), WIS12->13(mod+1),
+    # CHA14->15(mod+2) - DEX clearly beats STR, proving Martial Arts' DEX
+    # option actually matters for this fixture, not just legal to use.
+    return create_character(
+        character_id="kai",
+        name="Kai",
+        race_index="human",
+        class_index="monk",
+        background_index="acolyte",
+        base_ability_scores={"STR": 8, "DEX": 15, "CON": 13, "INT": 10, "WIS": 12, "CHA": 14},
+        chosen_skills=["skill-acrobatics", "skill-stealth"],
+        position=position,
+    )
+
+
+def test_monk_unarmed_strike_uses_martial_arts_die_and_dex_option() -> None:
+    # Kai (level 1): DEX mod+3 beats STR mod-1 -> attack_bonus 3+2(prof)=5.
+    # Natural 12 -> total 17 >= goblin AC 15 -> hit, not a crit. Martial
+    # Arts die at level 1 is 1d4: die 3 + DEX mod 3 = 6 (not the plain
+    # unarmed strike's flat "1 + STR mod", which would be a negative-mod 0).
+    kai = _monk()
+    kai.equipped_weapons = []  # Monk's starting kit auto-equips a dart - force truly unarmed
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai", verb="attack", target="goblin_1", raw_text="I strike with a swift punch"
+    )
+    resolve_action(state, action, _FixedRandom([12, 3]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["roll_total"] == 17
+    assert attack_event.payload["hit"] is True
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 6
+
+
+def test_monk_unarmed_strike_die_scales_to_1d6_at_level_5() -> None:
+    kai = _monk()
+    kai.equipped_weapons = []
+    kai.level = 5
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai", verb="attack", target="goblin_1", raw_text="I strike with a swift punch"
+    )
+    resolve_action(state, action, _FixedRandom([12, 5]))  # type: ignore[arg-type]
+
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 8  # die 5 (now 1d6-legal) + DEX mod 3
+
+
+def test_monk_weapon_die_is_bumped_to_the_martial_arts_die_when_bigger() -> None:
+    # A dagger's own die is 1d4; at level 5 Martial Arts' die is 1d6, larger
+    # - Kai's dagger attack rolls 1d6, not 1d4. Dagger is also finesse, but
+    # this specifically proves the monk-weapon path (not finesse) drives
+    # the die swap - finesse alone would never touch damage_dice_sides.
+    kai = _monk()
+    kai.level = 5
+    kai.inventory.append("dagger")
+    kai.equipped_weapons = ["dagger"]
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="dagger",
+        raw_text="I stab with my dagger",
+    )
+    resolve_action(state, action, _FixedRandom([12, 6]))  # type: ignore[arg-type]
+
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 9  # die 6 (only legal on a 1d6) + DEX mod 3
+
+
+def test_monk_weapon_die_is_not_reduced_when_already_bigger_than_martial_arts() -> None:
+    # A quarterstaff's own die is 1d6; at level 1 Martial Arts' die is only
+    # 1d4, smaller - stays the quarterstaff's own 1d6, never shrunk.
+    kai = _monk()
+    kai.inventory.append("quarterstaff")
+    kai.equipped_weapons = ["quarterstaff"]
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="quarterstaff",
+        raw_text="I strike with my quarterstaff",
+    )
+    resolve_action(state, action, _FixedRandom([12, 6]))  # type: ignore[arg-type]
+
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 9  # die 6 (a legal 1d6 roll) + DEX mod 3
+
+
+def test_flurry_of_blows_spends_ki_and_lands_two_full_damage_unarmed_strikes() -> None:
+    # Bypasses level_up (same established pattern as this session's Divine
+    # Smite tests) - directly pokes level/ki to isolate Flurry's own logic.
+    kai = _monk()
+    kai.level = 2
+    kai.class_resources["ki"] = 2
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai",
+        verb="flurry_of_blows",
+        target="goblin_1",
+        raw_text="I unleash a flurry of blows",
+    )
+    resolve_action(state, action, _FixedRandom([12, 3, 10, 2]))  # type: ignore[arg-type]
+
+    attack_events = [e for e in state.events if e.type == "attack_roll"]
+    assert len(attack_events) == 2
+    assert all(e.payload["hit"] for e in attack_events)
+    damage_events = [e for e in state.events if e.type == "damage_dealt"]
+    # Both strikes get the full DEX mod (unlike Two-Weapon Fighting's
+    # off-hand attack) - die 3 + 3 = 6, die 2 + 3 = 5.
+    assert [e.payload["amount"] for e in damage_events] == [6, 5]
+    assert kai.class_resources["ki"] == 1
+    assert kai.bonus_action_used is True
+    assert state.turn_order[state.current_turn] == "kai"  # still his turn
+
+
+def test_flurry_of_blows_rejected_below_level_2() -> None:
+    kai = _monk()  # level defaults to 1 - Monks have no Ki at all yet
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai", verb="flurry_of_blows", target="goblin_1", raw_text="I try a flurry"
+    )
+    with pytest.raises(TurnEngineError, match="doesn't have Flurry of Blows"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_flurry_of_blows_rejected_with_no_ki_remaining() -> None:
+    kai = _monk()
+    kai.level = 2
+    kai.class_resources["ki"] = 0
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai", verb="flurry_of_blows", target="goblin_1", raw_text="I try a flurry"
+    )
+    with pytest.raises(TurnEngineError, match="no ki uses remaining"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_flurry_of_blows_rejected_if_bonus_action_already_used() -> None:
+    kai = _monk()
+    kai.level = 2
+    kai.class_resources["ki"] = 2
+    kai.bonus_action_used = True
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai", verb="flurry_of_blows", target="goblin_1", raw_text="I try a flurry"
+    )
+    with pytest.raises(TurnEngineError, match="already used their bonus action"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]

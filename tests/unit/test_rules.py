@@ -15,6 +15,8 @@ from src.engine.rules import (
     has_non_proficient_armor,
     has_relentless_endurance,
     is_class_proficient_with,
+    is_monk_weapon,
+    monk_martial_arts_die_sides,
     monster_action_range_feet,
     monster_damage_multiplier,
     monster_has_pack_tactics,
@@ -377,6 +379,22 @@ def test_has_relentless_endurance_matches_race_index() -> None:
     assert has_relentless_endurance(_make_character(race_index=None)) is False
 
 
+def test_monk_martial_arts_die_sides_scales_at_level_5() -> None:
+    assert monk_martial_arts_die_sides(1) == 4
+    assert monk_martial_arts_die_sides(4) == 4
+    assert monk_martial_arts_die_sides(5) == 6
+    assert monk_martial_arts_die_sides(20) == 6  # real table scales further, out of scope here
+
+
+def test_is_monk_weapon_matches_real_srd_data() -> None:
+    srd = load_srd()
+    assert is_monk_weapon(srd.equipment["shortsword"]) is True  # Martial, but "monk"-tagged
+    assert is_monk_weapon(srd.equipment["dagger"]) is True  # Simple melee
+    assert is_monk_weapon(srd.equipment["quarterstaff"]) is True
+    assert is_monk_weapon(srd.equipment["longsword"]) is False  # Martial, no "monk" tag
+    assert is_monk_weapon(srd.equipment["longbow"]) is False  # ranged
+
+
 def test_armor_ac_unarmored_is_10_plus_dex() -> None:
     srd = load_srd()
     assert armor_ac(None, None, dex_mod=3, fighting_style=None, equipment=srd.equipment) == 13
@@ -430,6 +448,58 @@ def test_armor_ac_defense_fighting_style_needs_actual_armor_not_just_a_shield() 
     )
     assert (
         armor_ac(None, "shield", dex_mod=2, fighting_style="defense", equipment=srd.equipment) == 14
+    )
+
+
+def test_armor_ac_monk_unarmored_defense_adds_wis_mod_when_no_shield() -> None:
+    srd = load_srd()
+    # 10 + DEX mod(2) + WIS mod(3), unarmored, no shield (issue #24).
+    assert (
+        armor_ac(
+            None,
+            None,
+            dex_mod=2,
+            fighting_style=None,
+            equipment=srd.equipment,
+            class_index="monk",
+            wis_mod=3,
+        )
+        == 15
+    )
+
+
+def test_armor_ac_monk_unarmored_defense_disabled_by_a_shield() -> None:
+    srd = load_srd()
+    # A shield breaks Unarmored Defense (SRD's literal "wielding no
+    # shield" gate) - falls back to the ordinary 10 + DEX + shield formula,
+    # no WIS mod, but the shield's own flat bonus still applies.
+    assert (
+        armor_ac(
+            None,
+            "shield",
+            dex_mod=2,
+            fighting_style=None,
+            equipment=srd.equipment,
+            class_index="monk",
+            wis_mod=3,
+        )
+        == 14  # 10 + 2 (dex) + 2 (shield), no WIS
+    )
+
+
+def test_armor_ac_ignores_wis_mod_for_a_non_monk() -> None:
+    srd = load_srd()
+    assert (
+        armor_ac(
+            None,
+            None,
+            dex_mod=2,
+            fighting_style=None,
+            equipment=srd.equipment,
+            class_index="fighter",
+            wis_mod=3,
+        )
+        == 12  # 10 + 2 (dex) only
     )
 
 

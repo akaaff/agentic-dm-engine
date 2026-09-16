@@ -18,6 +18,7 @@ Valid verbs and what they mean:
 - "equip": the player switches which weapon(s), armor, or shield they're actively using, e.g. "I draw my dagger" / "I switch to my daggers" / "I sheathe my sword and draw two daggers" / "I put on my chain mail" / "I raise my shield". Set params.items to the list of item names being equipped.
 - "offhand_attack": the player makes a bonus-action attack with their second (off-hand) weapon, only after already dual-wielding two light weapons, e.g. "I follow up with my other dagger" / "I stab with my off-hand blade". Set "target" to who they're attacking.
 - "cunning_action": the player (a Rogue) uses their bonus action to Dash or Disengage instead of their full action, e.g. "I use my quickness to dash away" / "I nimbly disengage as a bonus action". Set params.action to "dash" or "disengage" accordingly; if "dash", also set params.path the same way a plain "dash" verb would (a single-element list with the destination square) - only handle a single adjacent-square move, same rule as plain "move"/"dash".
+- "flurry_of_blows": the player (a Monk) spends a bonus action and a ki point to unleash a flurry of unarmed strikes, e.g. "I follow up with a flurry of blows" / "I unleash a flurry of punches and kicks". Set "target" to who they're striking.
 - "end_turn": the player explicitly says they're done / pass / end their turn with no other action.
 - "invalid": use this for anything nonsensical, out of scope for the game, referencing a character that isn't listed below, or that doesn't fit any verb above.
 

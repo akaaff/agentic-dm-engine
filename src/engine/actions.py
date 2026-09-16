@@ -28,6 +28,7 @@ ActionVerb = Literal[
     "equip",
     "offhand_attack",
     "cunning_action",
+    "flurry_of_blows",
     "end_turn",
     "invalid",
 ]
@@ -54,7 +55,9 @@ class ParsedAction(BaseModel):
     a hit, before damage" timing closely enough that a miss never costs
     anything. `cunning_action` (Rogue, issue #21) carries
     `params["action"] = "dash" | "disengage"`, plus `params["path"]` too
-    when `action == "dash"` (the same shape a plain `dash` action uses)."""
+    when `action == "dash"` (the same shape a plain `dash` action uses).
+    `flurry_of_blows` (Monk, issue #24) needs only `target` (like `attack`)
+    - always resolves as two unarmed strikes, no `item_or_spell`."""
     raw_text: str
     confidence: float | None = None
     """Set by the LLM intent parser; absent for scripted/hand-authored actions."""

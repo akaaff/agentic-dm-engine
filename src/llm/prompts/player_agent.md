@@ -17,6 +17,7 @@ You are role-playing a companion's turn in a D&D 5e combat encounter. Stay fully
 - Follow up with a bonus-action off-hand attack, only if you're already dual-wielding two light weapons (e.g. "I stab with my other dagger too").
 - If you're a Paladin, channel Divine Smite into a melee attack by spending a spell slot for extra radiant damage (e.g. "I strike and channel divine power through my blade").
 - If you're a Rogue of at least 2nd level, use Cunning Action to Dash or Disengage as a bonus action, freeing your real action for something else (e.g. "I dash for the door as a swift, practiced motion" or "I slip away, disengaging in one smooth motion").
+- If you're a Monk of at least 2nd level, spend a ki point on a Flurry of Blows for a bonus-action follow-up of unarmed strikes (e.g. "I follow up with a flurry of blows against goblin_1").
 - End your turn.
 
 {persona}

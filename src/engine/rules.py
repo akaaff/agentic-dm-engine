@@ -454,12 +454,32 @@ def monster_innate_spellcasting(monster_data: SrdEntry) -> SrdEntry | None:
     return None
 
 
+def monk_martial_arts_die_sides(level: int) -> int:
+    """Martial Arts' scaling unarmed-strike/monk-weapon die (issue #24) -
+    1d4 through level 4, 1d6 from level 5 on. The real SRD table keeps
+    scaling further (1d8 at 11, 1d10 at 17), out of this project's
+    roughly-level-1-5 scope (PROFICIENCY_BONUS_BY_LEVEL/SPELL_SLOTS_BY_LEVEL
+    precedent), so only the one tier boundary within that range matters."""
+    return 6 if level >= 5 else 4
+
+
+def is_monk_weapon(weapon: SrdEntry) -> bool:
+    """True if Martial Arts (Monk, issue #24) applies to this weapon - the
+    vendored SRD equipment data already tags exactly the right set with a
+    "monk" property (every simple melee weapon, plus the shortsword despite
+    being Martial - confirmed live against the real data), so no need to
+    hand-derive "simple melee, not heavy/two-handed" from scratch."""
+    return "monk" in {p["index"] for p in (weapon.get("properties") or [])}
+
+
 def armor_ac(
     equipped_armor: str | None,
     equipped_shield: str | None,
     dex_mod: int,
     fighting_style: str | None,
     equipment: dict[str, SrdEntry],
+    class_index: str | None = None,
+    wis_mod: int = 0,
 ) -> int:
     """AC from a character's two armor slots (issue #13) - the same formula
     character_creation._compute_ac originally computed once at creation by
@@ -474,7 +494,14 @@ def armor_ac(
     Medium armor's +2 cap) if unarmored; the worn armor's own base + capped
     Dex bonus otherwise. Plus a shield's flat bonus, plus Defense fighting
     style's +1 (armor only - a shield alone doesn't grant it, per SRD's
-    literal text, matching the original _compute_ac's rule exactly)."""
+    literal text, matching the original _compute_ac's rule exactly). Plus
+    Monk's Unarmored Defense (issue #24, `class_index`/`wis_mod` both
+    default to "not a Monk"/0 so every pre-existing caller is unaffected):
+    10 + DEX mod + WIS mod instead of the plain unarmored base, but only
+    while wielding no shield either, per SRD's literal "wearing no armor
+    and not wielding a shield" gate - a Monk holding a shield falls back to
+    the ordinary unarmored formula (still gets the shield's own flat
+    bonus, same as anyone else)."""
     shield_bonus = 0
     if equipped_shield:
         shield_item = equipment.get(equipped_shield)
@@ -485,7 +512,10 @@ def armor_ac(
     defense_bonus = 1 if fighting_style == "defense" and armor_item is not None else 0
 
     if armor_item is None:
-        return 10 + dex_mod + shield_bonus + defense_bonus
+        unarmored_defense_bonus = (
+            wis_mod if class_index == "monk" and equipped_shield is None else 0
+        )
+        return 10 + dex_mod + unarmored_defense_bonus + shield_bonus + defense_bonus
 
     ac_info = armor_item["armor_class"]
     base: int = ac_info["base"]

@@ -214,3 +214,52 @@ def test_resolve_action_extra_attack_produces_two_attack_roll_events() -> None:
     assert len(attack_events) == 2
     assert [e.payload["natural"] for e in attack_events] == [5, 3]
     assert all(not e.payload["hit"] for e in attack_events)
+
+
+def _monk() -> Character:
+    # Same fixture as test_character_creation.test_create_monk_only_requires_
+    # its_two_skill_choices: DEX15->mod2, WIS14->mod2 -> unarmored AC 14.
+    return create_character(
+        character_id="kai",
+        name="Kai",
+        race_index="human",
+        class_index="monk",
+        background_index="acolyte",
+        base_ability_scores={"STR": 10, "DEX": 15, "CON": 13, "INT": 8, "WIS": 14, "CHA": 12},
+        chosen_skills=["skill-acrobatics", "skill-stealth"],
+    )
+
+
+def test_monk_gets_no_ki_at_level_1() -> None:
+    # Issue #24: SRD Monks don't get Ki until level 2.
+    assert _monk().class_resources.get("ki", 0) == 0
+
+
+def test_monk_ki_points_scale_with_level_via_level_up() -> None:
+    # Issue #24: unlike Second Wind/Rage's level-1-fixed value, Ki scales
+    # every level (ki points = monk level) - without level_up updating it,
+    # Flurry of Blows would be permanently stuck at 0 for any leveled Monk.
+    srd = load_srd()
+    kai = _monk()
+    level_up(kai, srd)  # -> level 2
+    assert kai.class_resources["ki"] == 2
+    level_up(kai, srd)  # -> level 3
+    assert kai.class_resources["ki"] == 3
+
+
+def test_monk_ac_recomputes_on_an_asi_that_boosts_wis() -> None:
+    # Issue #24: a Monk's AC depends on WIS (Unarmored Defense), unlike
+    # every other AC source in this project - an ASI boosting it should
+    # actually move the Monk's AC, unlike everyone else's (left as a
+    # documented, out-of-scope gap for non-Monks). Human's own +1-to-every-
+    # ability racial bonus applies first: DEX15->16 (mod+3), WIS14->15
+    # (mod+2) -> AC 10+3+2 = 15.
+    srd = load_srd()
+    kai = _monk()
+    assert kai.ac == 15
+    for i in range(3):
+        # 3rd call reaches level 4, the ASI level here.
+        level_up(kai, srd, ability_score_increase={"WIS": 2} if i == 2 else None)
+    assert kai.level == 4
+    assert kai.stats["WIS"] == 17  # 15 -> 17
+    assert kai.ac == 16  # WIS mod 2 -> 3, AC 15 -> 16
