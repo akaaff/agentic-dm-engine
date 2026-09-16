@@ -27,4 +27,4 @@ Other characters in the encounter:
 Recent events:
 {recent_events_summary}
 
-In one sentence, written as {actor_name} acting at the table (e.g. "I swing my axe at goblin_1" or "I take the Dodge action"), declare the single concrete action {actor_name} takes this turn, in character. If there is a living enemy visible, attacking or otherwise engaging it is almost always the right call - a cautious persona can still act decisively once combat has started.
+In one sentence, written as {actor_name} acting at the table (e.g. "I swing my axe at goblin_1" or "I take the Dodge action"), declare the single concrete action {actor_name} takes this turn, in character. If there is a living enemy visible, attacking or otherwise engaging it is almost always the right call - a cautious persona can still act decisively once combat has started. Write only in English - no other language, script, or mixed-language text.

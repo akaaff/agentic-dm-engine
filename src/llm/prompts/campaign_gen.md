@@ -31,3 +31,7 @@ Give the whole campaign a title and a 1-2 sentence description (shown to
 the player before they start). Make the scenes connect into one coherent
 story - each scene's narrative_intro should follow naturally from the one
 before it.
+
+Write every piece of text (title, description, narrative_intro, success_text,
+failure_text) only in English - no other language, script, or mixed-language
+text anywhere in your response.
