@@ -5,6 +5,7 @@ import CombatGrid from '../components/CombatGrid'
 import NarrationFeed from '../components/NarrationFeed'
 import SceneImagePanel from '../components/SceneImagePanel'
 import { buildActorColorMap } from '../utils/actorColors'
+import { computeResourceQuickActions } from '../utils/resourceQuickActions'
 import { useSessionSocket } from '../ws/sessionClient'
 
 export default function LivePlay({
@@ -38,6 +39,15 @@ export default function LivePlay({
   const actorColors = useMemo(
     () => (gameState ? buildActorColorMap(gameState.turn_order, gameState.characters) : {}),
     [gameState],
+  )
+  // Issue #27: only meaningful on the player's own actual turn - a resource
+  // usable "right now" means usable this turn, not just non-zero on the
+  // sheet.
+  const me = gameState?.characters[myCharacterId]
+  const characters = gameState?.characters
+  const resourceQuickActions = useMemo(
+    () => (isMyTurn && me && characters ? computeResourceQuickActions(me, characters) : []),
+    [isMyTurn, me, characters],
   )
 
   function handleSubmit(e: FormEvent) {
@@ -109,6 +119,21 @@ export default function LivePlay({
           characters={gameState?.characters ?? {}}
           actorColors={actorColors}
         />
+        {resourceQuickActions.length > 0 && (
+          // Issue #27: a prominent, actionable callout - not the passive
+          // sidebar stat list - naming exactly what to type. Clicking fills
+          // the input rather than submitting outright, since some of these
+          // (Flurry of Blows' target, Wild Shape's beast, Bardic
+          // Inspiration's ally) are just one reasonable suggestion the
+          // player may want to change first.
+          <div className="resource-quick-actions">
+            {resourceQuickActions.map((qa) => (
+              <button key={qa.key} type="button" onClick={() => setDraft(qa.suggestedText)}>
+                {qa.label} ({qa.remaining} left)
+              </button>
+            ))}
+          </div>
+        )}
         <form className="action-form" onSubmit={handleSubmit}>
           <input
             value={draft}

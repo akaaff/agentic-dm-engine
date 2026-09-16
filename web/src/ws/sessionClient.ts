@@ -70,6 +70,12 @@ export interface LiveCharacter {
   // recomputed by turn_engine._resolve_equip whenever either changes.
   equipped_armor: string | null
   equipped_shield: string | null
+  // New for issue #27's resource quick-actions - already on the wire via
+  // Character.model_dump() (same "data already on the wire" pattern as the
+  // rest of this interface), needed to tell "wild-shaped right now" apart
+  // from "Wild Shape available" without re-deriving it from class_resources
+  // alone (a Druid can have wild_shape uses left while already shaped).
+  wild_shape_beast_index: string | null
 }
 
 export type TerrainType = 'floor' | 'wall' | 'difficult' | 'hazard'
