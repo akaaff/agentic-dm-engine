@@ -31,6 +31,7 @@ ActionVerb = Literal[
     "flurry_of_blows",
     "wild_shape",
     "revert_wild_shape",
+    "bardic_inspiration",
     "end_turn",
     "invalid",
 ]
@@ -63,7 +64,9 @@ class ParsedAction(BaseModel):
     `wild_shape` (Druid, issue #24) carries `params["beast_index"] = str`
     (an SRD monster index, e.g. "wolf") - no target, it transforms the
     actor. `revert_wild_shape` needs nothing at all - it only makes sense
-    while already transformed."""
+    while already transformed. `bardic_inspiration` (Bard, issue #25)
+    needs only `target` (like `attack`/`help`) - the ally who receives the
+    banked die, no `item_or_spell`."""
     raw_text: str
     confidence: float | None = None
     """Set by the LLM intent parser; absent for scripted/hand-authored actions."""

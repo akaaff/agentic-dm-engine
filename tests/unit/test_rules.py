@@ -6,6 +6,7 @@ from src.engine.rules import (
     ability_modifier,
     apply_damage,
     armor_ac,
+    bardic_inspiration_die_sides,
     class_equipment_options,
     condition_attack_advantage,
     condition_attack_disadvantage,
@@ -151,6 +152,47 @@ def test_natural_20_crits_and_doubles_damage_dice_not_bonus() -> None:
     assert result.hit is True
     assert result.critical is True
     assert result.damage == 5 + 7 + 3
+
+
+def test_resolve_attack_bardic_inspiration_die_can_turn_a_miss_into_a_hit() -> None:
+    # Issue #25: attack_bonus 2, natural 10 -> total 12, below AC 15 -
+    # would normally miss, but a banked 1d6 rolling 5 adds on top -> 17,
+    # clears the AC. Added *before* the hit/miss check, matching how the
+    # bonus works in real play.
+    rng = _FixedRandom([10, 5, 3])  # attack roll, bardic die, then damage die
+    result = resolve_attack(
+        defender_ac=15,
+        attack_bonus=2,
+        damage_dice_count=1,
+        damage_dice_sides=8,
+        damage_bonus=0,
+        damage_type="slashing",
+        rng=rng,  # type: ignore[arg-type]
+        bardic_die_sides=6,
+    )
+    assert result.attack_roll.total == 17
+    assert result.hit is True
+    assert result.damage == 3
+
+
+def test_resolve_attack_bardic_inspiration_die_still_consumed_on_a_natural_1() -> None:
+    # A natural 1 is still an automatic miss regardless of any bonus, per
+    # SRD - but the die is still rolled/added to the recorded total, since
+    # real SRD has no "only if it helps" clause (you spend it the moment
+    # you choose to add it, whether or not it turns out to matter).
+    rng = _FixedRandom([1, 4])  # attack roll, then the bardic die
+    result = resolve_attack(
+        defender_ac=5,
+        attack_bonus=10,
+        damage_dice_count=1,
+        damage_dice_sides=8,
+        damage_bonus=0,
+        damage_type="slashing",
+        rng=rng,  # type: ignore[arg-type]
+        bardic_die_sides=6,
+    )
+    assert result.hit is False
+    assert result.attack_roll.total == 15  # 1 + 10 + 4, shown even though it still missed
 
 
 def test_apply_damage_clamps_at_zero_and_returns_actual_loss() -> None:
@@ -395,6 +437,12 @@ def test_is_monk_weapon_matches_real_srd_data() -> None:
     assert is_monk_weapon(srd.equipment["quarterstaff"]) is True
     assert is_monk_weapon(srd.equipment["longsword"]) is False  # Martial, no "monk" tag
     assert is_monk_weapon(srd.equipment["longbow"]) is False  # ranged
+
+
+def test_bardic_inspiration_die_sides_scales_at_level_5() -> None:
+    assert bardic_inspiration_die_sides(1) == 6
+    assert bardic_inspiration_die_sides(4) == 6
+    assert bardic_inspiration_die_sides(5) == 8
 
 
 def test_max_wild_shape_cr_rises_at_level_4() -> None:

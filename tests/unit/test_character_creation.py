@@ -2,6 +2,7 @@ import pytest
 
 from src.engine.character_creation import (
     CharacterCreationError,
+    arcane_recovery_slot_budget,
     create_character,
     validate_standard_array,
 )
@@ -318,8 +319,27 @@ def test_barbarian_gets_rage_uses_and_fighter_gets_second_wind_use() -> None:
     )
     assert barbarian.class_resources == {"rage": 2}
 
-    # A class with no Phase 9I resource (e.g. Wizard) gets an empty dict,
-    # not a missing key or an error.
+    # A class with no such resource at all (e.g. Rogue - Wizard has one
+    # now, issue #25's Arcane Recovery) gets an empty dict, not a missing
+    # key or an error.
+    fenwick = create_character(
+        character_id="fenwick",
+        name="Fenwick",
+        race_index="halfling",
+        class_index="rogue",
+        background_index="acolyte",
+        base_ability_scores={"STR": 8, "DEX": 15, "CON": 12, "INT": 10, "WIS": 13, "CHA": 14},
+        chosen_skills=[
+            "skill-stealth",
+            "skill-sleight-of-hand",
+            "skill-acrobatics",
+            "skill-deception",
+        ],
+    )
+    assert fenwick.class_resources == {}
+
+
+def test_wizard_gets_one_arcane_recovery_use_at_creation() -> None:
     elrond = create_character(
         character_id="elrond",
         name="Elrond",
@@ -329,7 +349,57 @@ def test_barbarian_gets_rage_uses_and_fighter_gets_second_wind_use() -> None:
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
     )
-    assert elrond.class_resources == {}
+    assert elrond.class_resources == {"arcane_recovery": 1}
+
+
+def test_arcane_recovery_slot_budget_rounds_up() -> None:
+    assert arcane_recovery_slot_budget(1) == 1
+    assert arcane_recovery_slot_budget(2) == 1
+    assert arcane_recovery_slot_budget(3) == 2
+    assert arcane_recovery_slot_budget(4) == 2
+    assert arcane_recovery_slot_budget(5) == 3
+
+
+def test_bard_gets_bardic_inspiration_uses_equal_to_cha_modifier() -> None:
+    pip = create_character(
+        character_id="pip",
+        name="Pip",
+        race_index="halfling",
+        class_index="bard",
+        background_index="acolyte",
+        # CHA 15, no racial CHA bonus (halfling's is DEX) -> mod +2.
+        base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 10, "WIS": 13, "CHA": 15},
+        chosen_skills=[
+            "skill-performance",
+            "skill-persuasion",
+            "skill-deception",
+            "skill-acrobatics",
+            "skill-history",
+            "skill-insight",
+        ],
+    )
+    assert pip.class_resources["bardic_inspiration"] == 2
+
+
+def test_bard_bardic_inspiration_uses_floor_at_one_for_a_low_cha() -> None:
+    pip = create_character(
+        character_id="pip",
+        name="Pip",
+        race_index="halfling",
+        class_index="bard",
+        background_index="acolyte",
+        # CHA 8 -> mod -1, floored at a minimum of 1 use per SRD.
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=[
+            "skill-performance",
+            "skill-persuasion",
+            "skill-deception",
+            "skill-acrobatics",
+            "skill-history",
+            "skill-insight",
+        ],
+    )
+    assert pip.class_resources["bardic_inspiration"] == 1
 
 
 # --- Racial traits (issue #23) -------------------------------------------------

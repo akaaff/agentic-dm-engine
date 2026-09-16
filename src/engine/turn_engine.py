@@ -136,6 +136,7 @@ from src.engine.rules import (
     ability_modifier,
     apply_damage,
     armor_ac,
+    bardic_inspiration_die_sides,
     condition_attack_advantage,
     condition_attack_disadvantage,
     condition_check_disadvantage,
@@ -613,6 +614,13 @@ def _resolve_single_attack(
     # treatment the earlier one didn't.
     already_unconscious = has_condition(target, "unconscious")
 
+    # Bardic Inspiration (issue #25): banked on the actor by an earlier
+    # bardic_inspiration action (see Character.bardic_inspiration_die's own
+    # docstring for why this is narrowed to attack rolls only) - captured
+    # before the call since resolve_attack itself has no Character to clear
+    # it on.
+    bardic_die_sides = actor.bardic_inspiration_die
+
     result = resolve_attack(
         defender_ac=target.ac,
         attack_bonus=params.attack_bonus,
@@ -629,7 +637,10 @@ def _resolve_single_attack(
         or condition_attack_disadvantage(actor, target, distance),
         force_critical=already_unconscious,
         lucky=has_lucky_trait(actor),
+        bardic_die_sides=bardic_die_sides,
     )
+    if bardic_die_sides:
+        actor.bardic_inspiration_die = None
 
     state.events.append(
         Event(
@@ -645,6 +656,7 @@ def _resolve_single_attack(
                 "target_ac": target.ac,
                 "hit": result.hit,
                 "critical": result.critical,
+                **({"bardic_inspiration_die_sides": bardic_die_sides} if bardic_die_sides else {}),
             },
         )
     )
@@ -1667,6 +1679,44 @@ def _resolve_help(state: GameState, actor: Character, action: ParsedAction) -> N
     )
 
 
+def _resolve_bardic_inspiration(state: GameState, actor: Character, action: ParsedAction) -> bool:
+    """Bard's Bardic Inspiration (issue #25): a bonus action, same gate
+    shape as Second Wind (_use_class_resource + bonus_action_used). Real
+    SRD text is "a creature other than yourself" - rejects self-targeting
+    outright. Banks a die on the target, consumed by their next attack
+    roll only - see Character.bardic_inspiration_die's own docstring for
+    why this is narrower than full SRD scope (checks/saves too). Returns
+    False (doesn't end the turn)."""
+    if actor.class_index != "bard":
+        raise TurnEngineError(f"{actor.id} doesn't have Bardic Inspiration")
+    if actor.bonus_action_used:
+        raise TurnEngineError(
+            f"{actor.id} has already used their bonus action this turn - "
+            "cannot use Bardic Inspiration"
+        )
+    if action.target is None:
+        raise TurnEngineError("bardic_inspiration action requires a target")
+    if action.target == actor.id:
+        raise TurnEngineError("Bardic Inspiration can only target a creature other than yourself")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown bardic_inspiration target: {action.target}")
+
+    _use_class_resource(actor, "bardic_inspiration")
+    target.bardic_inspiration_die = bardic_inspiration_die_sides(actor.level)
+    actor.bonus_action_used = True
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="bardic_inspiration",
+            payload={"target": target.id, "die_sides": target.bardic_inspiration_die},
+        )
+    )
+    return False
+
+
 def _grapple_shove_contest(
     actor: Character, target: Character, rng: random.Random
 ) -> tuple[int, int]:
@@ -1895,6 +1945,10 @@ def _cast_attack_spell_at_target(
 
     already_unconscious = has_condition(target, "unconscious")
 
+    # Bardic Inspiration (issue #25) - see _resolve_single_attack's
+    # identical handling for why this is captured before the call.
+    bardic_die_sides = actor.bardic_inspiration_die
+
     result = resolve_attack(
         defender_ac=target.ac,
         attack_bonus=params.attack_bonus,
@@ -1907,7 +1961,10 @@ def _cast_attack_spell_at_target(
         disadvantage=target.is_dodging or condition_attack_disadvantage(actor, target, distance),
         force_critical=already_unconscious,
         lucky=has_lucky_trait(actor),
+        bardic_die_sides=bardic_die_sides,
     )
+    if bardic_die_sides:
+        actor.bardic_inspiration_die = None
 
     state.events.append(
         Event(
@@ -1922,6 +1979,7 @@ def _cast_attack_spell_at_target(
                 "roll_total": result.attack_roll.total,
                 "hit": result.hit,
                 "critical": result.critical,
+                **({"bardic_inspiration_die_sides": bardic_die_sides} if bardic_die_sides else {}),
             },
         )
     )
@@ -2763,6 +2821,8 @@ def resolve_action(
         ends_turn = _resolve_wild_shape(state, actor, action, rng, srd)
     elif action.verb == "revert_wild_shape":
         ends_turn = _resolve_revert_wild_shape(state, actor)
+    elif action.verb == "bardic_inspiration":
+        ends_turn = _resolve_bardic_inspiration(state, actor, action)
     elif action.verb == "use_item":
         _resolve_use_item(state, actor, action, rng)
     elif action.verb == "death_save":

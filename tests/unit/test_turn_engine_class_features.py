@@ -893,3 +893,121 @@ def test_flurry_of_blows_rejected_if_bonus_action_already_used() -> None:
     )
     with pytest.raises(TurnEngineError, match="already used their bonus action"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+# --- Bardic Inspiration (issue #25) ---------------------------------------------
+
+
+def _bard(position: Position | None = None) -> Character:
+    # Human's +1-to-every-ability bonus: CHA15->16 (mod+3) -> 3 uses.
+    return create_character(
+        character_id="pip",
+        name="Pip",
+        race_index="human",
+        class_index="bard",
+        background_index="acolyte",
+        base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 10, "WIS": 13, "CHA": 15},
+        chosen_skills=[
+            "skill-performance",
+            "skill-persuasion",
+            "skill-deception",
+            "skill-acrobatics",
+            "skill-history",
+            "skill-insight",
+        ],
+        position=position,
+    )
+
+
+def test_bardic_inspiration_die_boosts_an_allys_next_attack_roll_once() -> None:
+    # Thorin (STR16->mod3, proficient longsword -> attack_bonus 5) vs a
+    # goblin AC15. Natural 8 -> total 13 < 15 -> would normally miss, but
+    # Pip's banked 1d6 rolling 4 pushes it to 17 -> hit. Damage die 5 +
+    # STR mod 3 = 8.
+    pip = _bard(Position(x=0, y=0))
+    thorin = _fighter(Position(x=1, y=0))
+    goblin = _goblin("goblin_1", Position(x=1, y=0))
+    state = _make_state(pip, thorin, goblin)
+    inspire_action = ParsedAction(
+        actor="pip",
+        verb="bardic_inspiration",
+        target="thorin",
+        raw_text="I offer Thorin a rousing verse",
+    )
+    resolve_action(state, inspire_action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert thorin.bardic_inspiration_die == 6
+    assert pip.class_resources["bardic_inspiration"] == 2
+    assert pip.bonus_action_used is True
+    assert state.turn_order[state.current_turn] == "pip"  # bonus action, still pip's turn
+
+    state.current_turn = state.turn_order.index("thorin")
+    attack_action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="longsword",
+        raw_text="I attack",
+    )
+    resolve_action(state, attack_action, _FixedRandom([8, 4, 5]))  # type: ignore[arg-type]
+
+    attack_events = [e for e in state.events if e.type == "attack_roll"]
+    assert attack_events[-1].payload["roll_total"] == 17
+    assert attack_events[-1].payload["hit"] is True
+    assert attack_events[-1].payload["bardic_inspiration_die_sides"] == 6
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 8
+    assert thorin.bardic_inspiration_die is None  # consumed
+
+    # A second attack, no fresh inspiration - no more bonus applied.
+    state.current_turn = state.turn_order.index("thorin")
+    resolve_action(state, attack_action, _FixedRandom([8, 5]))
+    second_attack_event = [e for e in state.events if e.type == "attack_roll"][-1]
+    assert second_attack_event.payload["roll_total"] == 13  # 8 + 5, no bardic bonus this time
+    assert "bardic_inspiration_die_sides" not in second_attack_event.payload
+
+
+def test_bardic_inspiration_rejects_targeting_self() -> None:
+    pip = _bard(Position(x=0, y=0))
+    state = _make_state(pip, _goblin("goblin_1", Position(x=9, y=9)))
+    action = ParsedAction(
+        actor="pip", verb="bardic_inspiration", target="pip", raw_text="I inspire myself"
+    )
+    with pytest.raises(TurnEngineError, match="other than yourself"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_bardic_inspiration_rejects_a_non_bard() -> None:
+    thorin = _fighter(Position(x=0, y=0))
+    ally = _fighter(Position(x=1, y=0))
+    ally.id = "ally"
+    state = _make_state(thorin, ally)
+    action = ParsedAction(
+        actor="thorin", verb="bardic_inspiration", target="ally", raw_text="I try to inspire"
+    )
+    with pytest.raises(TurnEngineError, match="doesn't have Bardic Inspiration"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_bardic_inspiration_rejects_with_no_uses_remaining() -> None:
+    pip = _bard(Position(x=0, y=0))
+    pip.class_resources["bardic_inspiration"] = 0
+    thorin = _fighter(Position(x=1, y=0))
+    state = _make_state(pip, thorin)
+    action = ParsedAction(
+        actor="pip", verb="bardic_inspiration", target="thorin", raw_text="I try to inspire"
+    )
+    with pytest.raises(TurnEngineError, match="no bardic inspiration uses remaining"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_bardic_inspiration_rejected_if_bonus_action_already_used() -> None:
+    pip = _bard(Position(x=0, y=0))
+    pip.bonus_action_used = True
+    thorin = _fighter(Position(x=1, y=0))
+    state = _make_state(pip, thorin)
+    action = ParsedAction(
+        actor="pip", verb="bardic_inspiration", target="thorin", raw_text="I try to inspire"
+    )
+    with pytest.raises(TurnEngineError, match="already used their bonus action"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]

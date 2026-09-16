@@ -25,6 +25,7 @@ import random
 from src.engine.character_creation import (
     CLASS_RESOURCES_AT_LEVEL_1,
     SPELL_SLOTS_BY_LEVEL,
+    arcane_recovery_slot_budget,
 )
 from src.engine.dice import roll
 from src.engine.rules import ability_modifier, set_exhaustion_level
@@ -71,13 +72,41 @@ def apply_short_rest(party: list[Character], rng: random.Random) -> None:
     that's only available from level 2 on. A character with no hit dice
     remaining (already spent this long-rest cycle) still gets their
     short-rest class resources restored - those are two independent SRD
-    mechanics, not the same budget.
+    mechanics, not the same budget. A Wizard with an unspent Arcane
+    Recovery (issue #25) also gets it triggered here automatically - real
+    SRD makes it optional, but this engine has no "decline a beneficial
+    rest effect" interaction anywhere else either, so auto-triggering it
+    whenever available is consistent, not a new kind of simplification.
     """
     for character in party:
         max_resources = _max_class_resources(character.class_index, character.level)
         for resource in _SHORT_REST_RESOURCES:
             if resource in max_resources:
                 character.class_resources[resource] = max_resources[resource]
+
+        # Arcane Recovery (issue #25, Wizard): once/day, recover spell
+        # slots with a combined level up to arcane_recovery_slot_budget
+        # (level). SRD lets the player choose which slots; this engine has
+        # no per-slot choice UI anywhere (same documented gap as equipment/
+        # skill option-trees), so it fills the lowest missing slot level
+        # first, deterministically, until the budget or every slot is full.
+        if (
+            character.class_index == "wizard"
+            and character.class_resources.get("arcane_recovery", 0) > 0
+        ):
+            character.class_resources["arcane_recovery"] -= 1
+            full_slots = SPELL_SLOTS_BY_LEVEL.get("wizard", {}).get(character.level, {})
+            budget = arcane_recovery_slot_budget(character.level)
+            for spell_level in sorted(full_slots):
+                if budget <= 0:
+                    break
+                missing = full_slots[spell_level] - character.spell_slots.get(spell_level, 0)
+                recovered = min(missing, budget // spell_level)
+                if recovered > 0:
+                    character.spell_slots[spell_level] = (
+                        character.spell_slots.get(spell_level, 0) + recovered
+                    )
+                    budget -= recovered * spell_level
 
         if character.hit_dice_remaining <= 0:
             continue

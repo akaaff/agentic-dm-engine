@@ -263,3 +263,39 @@ def test_monk_ac_recomputes_on_an_asi_that_boosts_wis() -> None:
     assert kai.level == 4
     assert kai.stats["WIS"] == 17  # 15 -> 17
     assert kai.ac == 16  # WIS mod 2 -> 3, AC 15 -> 16
+
+
+def _bard() -> Character:
+    # Human's +1-to-every-ability bonus: CHA13->14 (mod+2).
+    return create_character(
+        character_id="pip",
+        name="Pip",
+        race_index="human",
+        class_index="bard",
+        background_index="acolyte",
+        base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 10, "WIS": 13, "CHA": 15},
+        chosen_skills=[
+            "skill-performance",
+            "skill-persuasion",
+            "skill-deception",
+            "skill-acrobatics",
+            "skill-history",
+            "skill-insight",
+        ],
+    )
+
+
+def test_bardic_inspiration_uses_recompute_on_an_asi_that_boosts_cha() -> None:
+    # Issue #25: uses = CHA modifier (minimum 1), the one class_resource in
+    # this project keyed off an ability score - an ASI raising CHA should
+    # actually grant more uses, unlike Ki/Wild Shape's uses (which only
+    # change with level, not with any particular stat). CHA 15 -> 16 after
+    # Human's +1-to-every-ability bonus -> mod+3 at creation.
+    srd = load_srd()
+    pip = _bard()
+    assert pip.class_resources["bardic_inspiration"] == 3
+    for i in range(3):
+        level_up(pip, srd, ability_score_increase={"CHA": 2} if i == 2 else None)
+    assert pip.level == 4
+    assert pip.stats["CHA"] == 18  # 16 -> 18
+    assert pip.class_resources["bardic_inspiration"] == 4  # mod+3 -> mod+4

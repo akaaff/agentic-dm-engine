@@ -36,6 +36,7 @@ EventType = Literal[
     "relentless_endurance",
     "wild_shape",
     "wild_shape_ended",
+    "bardic_inspiration",
 ]
 
 

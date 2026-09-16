@@ -190,14 +190,26 @@ pass is scoped to roughly levels 1-5 (see CLAUDE.md Phase 9J), so only level
 CLASS_RESOURCES_AT_LEVEL_1: dict[str, dict[str, int]] = {
     "fighter": {"second_wind": 1},
     "barbarian": {"rage": 2},
+    "wizard": {"arcane_recovery": 1},
 }
-"""Phase 9I, tier 1 - uses/day for the two class features that need a
-limited resource (Second Wind, Rage), at level 1. Not in the vendored SRD
-JSON any more than LEVEL_1_SPELL_SLOTS is (level tables live behind a
-separate API endpoint) - hardcoded SRD 5.1 facts, same precedent. Fixed at
-their level-1 value through level_up (Phase 9J) rather than scaling with
-level - a documented simplification for this tier-1 pass, not silently
-wrong; real Rage uses do scale (2 at 1-2, 3 at 3-5)."""
+"""Phase 9I, tier 1 - uses/day for the class features that need a limited
+resource (Second Wind, Rage, and issue #25's Arcane Recovery), at level 1.
+Not in the vendored SRD JSON any more than LEVEL_1_SPELL_SLOTS is (level
+tables live behind a separate API endpoint) - hardcoded SRD 5.1 facts, same
+precedent. Fixed at their level-1 value through level_up (Phase 9J) rather
+than scaling with level - a documented simplification for this tier-1 pass,
+not silently wrong; real Rage uses do scale (2 at 1-2, 3 at 3-5). Arcane
+Recovery genuinely never scales (always exactly once/day, real SRD - only
+the *slot budget* it grants scales with level, computed fresh each use via
+arcane_recovery_slot_budget rather than stored)."""
+
+
+def arcane_recovery_slot_budget(level: int) -> int:
+    """Wizard's Arcane Recovery (issue #25): half your wizard level, rounded
+    up - the combined spell level of slots recoverable in one use. `-(-x //
+    2)` is ceiling division without importing math.ceil, for an int input."""
+    return -(-level // 2)
+
 
 VALID_FIGHTING_STYLES = {"archery", "defense", "dueling"}
 """Phase 9I only implements the mechanical effect of these three SRD
@@ -451,6 +463,14 @@ def create_character(
         s["index"].upper() for s in cls.get("saving_throws", [])
     ]
 
+    # Bardic Inspiration uses (issue #25, Bard): the one class_resource in
+    # this project keyed off an ability score instead of a flat per-level
+    # table - real SRD is "your Charisma modifier, minimum of once", not a
+    # fixed number the way Second Wind/Rage/Arcane Recovery all are.
+    class_resources = dict(CLASS_RESOURCES_AT_LEVEL_1.get(class_index, {}))
+    if class_index == "bard":
+        class_resources["bardic_inspiration"] = max(1, ability_modifier(final_scores["CHA"]))
+
     return Character(
         id=character_id,
         name=name,
@@ -478,7 +498,7 @@ def create_character(
         class_index=class_index,
         race_index=race_index,
         hit_die_sides=cls["hit_die"],
-        class_resources=dict(CLASS_RESOURCES_AT_LEVEL_1.get(class_index, {})),
+        class_resources=class_resources,
         fighting_style=fighting_style,
         gender=gender,
     )
@@ -626,6 +646,15 @@ def level_up(
             srd.equipment,
             class_index=character.class_index,
             wis_mod=ability_modifier(character.stats["WIS"]),
+        )
+
+    # Bardic Inspiration uses (issue #25, Bard): recomputed after the ASI
+    # block above (not before, unlike Ki/Wild Shape) since CHA - the one
+    # thing this resource's count actually depends on - could itself be
+    # the ability an ASI just raised.
+    if character.class_index == "bard":
+        character.class_resources["bardic_inspiration"] = max(
+            1, ability_modifier(character.stats["CHA"])
         )
 
     return character

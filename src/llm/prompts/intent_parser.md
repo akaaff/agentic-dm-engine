@@ -21,6 +21,7 @@ Valid verbs and what they mean:
 - "flurry_of_blows": the player (a Monk) spends a bonus action and a ki point to unleash a flurry of unarmed strikes, e.g. "I follow up with a flurry of blows" / "I unleash a flurry of punches and kicks". Set "target" to who they're striking.
 - "wild_shape": the player (a Druid) transforms into a beast, e.g. "I wild shape into a wolf" / "I transform into a wolf". Set params.beast_index to the beast's name/index (e.g. "wolf"). No target.
 - "revert_wild_shape": the player (a Druid) reverts from their beast form back to their normal shape, e.g. "I revert to my normal form" / "I shift back to myself". No target.
+- "bardic_inspiration": the player (a Bard) inspires an ally with a bonus-action performance, e.g. "I inspire my ally with a rousing verse" / "I offer words of encouragement to bolster them". Set "target" to the ally being inspired (never the player themselves).
 - "end_turn": the player explicitly says they're done / pass / end their turn with no other action.
 - "invalid": use this for anything nonsensical, out of scope for the game, referencing a character that isn't listed below, or that doesn't fit any verb above.
 

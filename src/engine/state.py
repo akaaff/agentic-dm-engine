@@ -126,6 +126,14 @@ class Character(BaseModel):
     """Set by another character resolving "help" targeting this one;
     consumed (cleared) by this character's next attack or skill check,
     whichever comes first."""
+    bardic_inspiration_die: int | None = None
+    """Bardic Inspiration (issue #25, Bard) - die sides currently banked on
+    this character (a Bard targeting an ally, mirroring has_help_advantage's
+    "set by one actor targeting another" shape), added to and consumed by
+    this character's next attack roll. Real SRD also lets it apply to an
+    ability check or saving throw of the holder's choice - narrowed to
+    attack rolls only here (a documented, smaller first cut rather than
+    re-threading every d20 call site the way issue #23's Lucky trait did)."""
     bonus_action_used: bool = False
     """Phase 9H: True once this character has cast a bonus-action spell
     (SRD casting_time "1 bonus action", e.g. Healing Word) this turn.

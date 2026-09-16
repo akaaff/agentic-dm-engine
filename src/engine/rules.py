@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from src.engine.conditions import has_condition
 from src.engine.dice import RollResult, roll, roll_d20
@@ -39,6 +39,7 @@ def resolve_attack(
     disadvantage: bool = False,
     force_critical: bool = False,
     lucky: bool = False,
+    bardic_die_sides: int | None = None,
 ) -> AttackResult:
     """A natural 1 always misses, a natural 20 always hits and doubles the
     damage dice (not the flat bonus), per SRD rules.
@@ -53,7 +54,19 @@ def resolve_attack(
     its own to make that check itself.
 
     `lucky` (Halfling's Lucky trait, issue #23) rerolls a natural 1 on the
-    attack roll itself - see dice.roll_d20's own reroll_on_natural_1."""
+    attack roll itself - see dice.roll_d20's own reroll_on_natural_1.
+
+    `bardic_die_sides` (Bardic Inspiration, issue #25) rolls one extra die
+    and adds it to the attack roll's total *before* the natural-1/hit
+    checks below - a boosted total really can turn a would-be miss into a
+    hit, matching how the bonus works in real play (you add it not knowing
+    yet whether the total will clear the target's AC). Rolled and added
+    unconditionally whenever a caller passes it, even on a natural 1 that's
+    still an automatic miss regardless - real SRD has no "only if it would
+    have helped" clause; the die is spent the moment you choose to add it.
+    This module has no Character to mutate, so *clearing* the banked die on
+    the caster's side is the caller's job (turn_engine.py), not this
+    function's."""
     attack_roll = roll_d20(
         modifier=attack_bonus,
         rng=rng,
@@ -62,6 +75,10 @@ def resolve_attack(
         reroll_on_natural_1=lucky,
     )
     natural = attack_roll.kept[0]
+
+    if bardic_die_sides:
+        bonus = rng.randint(1, bardic_die_sides)
+        attack_roll = replace(attack_roll, total=attack_roll.total + bonus)
 
     if natural == 1:
         return AttackResult(attack_roll, hit=False, critical=False, damage=None, damage_type=None)
@@ -488,6 +505,15 @@ def monk_martial_arts_die_sides(level: int) -> int:
     roughly-level-1-5 scope (PROFICIENCY_BONUS_BY_LEVEL/SPELL_SLOTS_BY_LEVEL
     precedent), so only the one tier boundary within that range matters."""
     return 6 if level >= 5 else 4
+
+
+def bardic_inspiration_die_sides(level: int) -> int:
+    """Bardic Inspiration's scaling die (issue #25, Bard) - 1d6 through
+    level 4, 1d8 from level 5 on. Same two-tier shape as
+    monk_martial_arts_die_sides, for the same reason: the real table keeps
+    scaling further (1d10 at 10, 1d12 at 15, 1d20 at 20), out of this
+    project's roughly-level-1-5 scope."""
+    return 8 if level >= 5 else 6
 
 
 def is_monk_weapon(weapon: SrdEntry) -> bool:

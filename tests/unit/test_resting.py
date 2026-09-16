@@ -188,6 +188,63 @@ def test_apply_short_rest_restores_wild_shape_but_not_ki() -> None:
     assert monk.class_resources["ki"] == 0  # untouched - Ki isn't a short-rest resource
 
 
+def test_apply_short_rest_triggers_arcane_recovery_for_a_wizard() -> None:
+    # Issue #25: level-3 Wizard, budget = ceil(3/2) = 2. Recovers the
+    # lowest missing slot level first (this engine has no per-slot choice
+    # UI - see apply_short_rest's own docstring) - 2 first-level slots cost
+    # 2 budget points, exhausting it before the 2nd-level slot is touched.
+    character = _character(
+        class_index="wizard",
+        level=3,
+        spell_slots={1: 0, 2: 0},
+        class_resources={"arcane_recovery": 1},
+        hit_dice_remaining=0,
+    )
+
+    apply_short_rest([character], _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert character.spell_slots == {1: 2, 2: 0}
+    assert character.class_resources["arcane_recovery"] == 0
+
+
+def test_apply_short_rest_arcane_recovery_only_triggers_once_per_day() -> None:
+    character = _character(
+        class_index="wizard",
+        level=3,
+        spell_slots={1: 0, 2: 0},
+        class_resources={"arcane_recovery": 0},  # already used today
+        hit_dice_remaining=0,
+    )
+
+    apply_short_rest([character], _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert character.spell_slots == {1: 0, 2: 0}  # untouched
+
+
+def test_apply_short_rest_does_not_trigger_arcane_recovery_for_a_non_wizard() -> None:
+    character = _character(
+        class_index="fighter",
+        spell_slots={1: 0},
+        class_resources={"arcane_recovery": 1},
+        hit_dice_remaining=0,
+    )
+
+    apply_short_rest([character], _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert character.spell_slots == {1: 0}
+    assert character.class_resources["arcane_recovery"] == 1  # untouched
+
+
+def test_apply_long_rest_restores_arcane_recovery() -> None:
+    character = _character(
+        class_index="wizard", spell_slots={}, class_resources={"arcane_recovery": 0}
+    )
+
+    apply_long_rest([character])
+
+    assert character.class_resources == {"arcane_recovery": 1}
+
+
 def test_apply_long_rest_reduces_exhaustion_by_one() -> None:
     character = _character(exhaustion_level=3)
 
