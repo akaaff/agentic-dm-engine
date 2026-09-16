@@ -140,7 +140,9 @@ from src.engine.rules import (
     condition_check_disadvantage,
     condition_save_disadvantage,
     effective_speed,
+    has_lucky_trait,
     has_non_proficient_armor,
+    has_relentless_endurance,
     is_class_proficient_with,
     monster_action_range_feet,
     monster_damage_multiplier,
@@ -573,6 +575,7 @@ def _resolve_single_attack(
         or engaged_disadvantage
         or condition_attack_disadvantage(actor, target, distance),
         force_critical=already_unconscious,
+        lucky=has_lucky_trait(actor),
     )
 
     state.events.append(
@@ -855,7 +858,9 @@ def _check_concentration_break(
         return
     dc = max(10, damage // 2)
     save_bonus = _target_saving_throw_bonus(character, "CON", srd)
-    result, success = resolve_saving_throw(save_bonus=save_bonus, dc=dc, rng=rng)
+    result, success = resolve_saving_throw(
+        save_bonus=save_bonus, dc=dc, rng=rng, lucky=has_lucky_trait(character)
+    )
     state.events.append(
         Event(
             round=state.round,
@@ -901,6 +906,32 @@ def _apply_damage_and_handle_downing(
     # "resistance halves damage, rounded down" for the 0.5 case.
     damage = int(damage * monster_damage_multiplier(target, damage_type, srd))
     actual_loss = apply_damage(target, damage)
+
+    # Half-Orc's Relentless Endurance (issue #23): reduced to 0 HP, not
+    # already unconscious from an earlier hit this fight (that "already
+    # down" check mirrors the one further below - a second hit against an
+    # already-downed Half-Orc shouldn't re-trigger this), not used since
+    # their last long rest. Applied before the damage_dealt event below so
+    # its target_hp_remaining reflects the real outcome (1, not 0).
+    if (
+        target.hp == 0
+        and target.is_pc
+        and not has_condition(target, "unconscious")
+        and has_relentless_endurance(target)
+        and not target.used_relentless_endurance_this_rest
+    ):
+        target.hp = 1
+        target.used_relentless_endurance_this_rest = True
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=target.id,
+                type="relentless_endurance",
+                payload={"target": target.id},
+            )
+        )
+
     state.events.append(
         Event(
             round=state.round,
@@ -1181,6 +1212,7 @@ def _resolve_skill_check(
         rng=rng,
         advantage=advantage,
         disadvantage=disadvantage,
+        lucky=has_lucky_trait(actor),
     )
     state.events.append(
         Event(
@@ -1435,7 +1467,10 @@ def _grapple_shove_contest(
     reach check on the attempt (grapple/shove are SRD melee-only, but
     nothing here enforces adjacency), and a successful shove never
     implements the optional "push 5ft away" - it only ever knocks prone.
-    """
+    Halfling's Lucky trait (issue #23) is also deliberately not wired in
+    here, unlike every other d20 roll in this engine - a reroll would
+    consume an extra, conditional d20, breaking this function's own fixed
+    "always exactly 3 d20s" contract that callers/tests rely on."""
     actor_modifier = ability_check_modifier(
         actor, "STR", proficient="skill-athletics" in actor.skill_proficiencies
     )
@@ -1644,6 +1679,7 @@ def _cast_attack_spell_at_target(
         advantage=advantage,
         disadvantage=target.is_dodging or condition_attack_disadvantage(actor, target, distance),
         force_critical=already_unconscious,
+        lucky=has_lucky_trait(actor),
     )
 
     state.events.append(
@@ -1752,6 +1788,10 @@ def _cast_save_spell_at_target(
         # call site until now - the only saving throw previously rolled
         # (death saves) is deliberately flat/unmodified per SRD.
         disadvantage=condition_save_disadvantage(target),
+        # Lucky (issue #23) applies to any saving throw the target makes,
+        # including one forced on them by an enemy's spell - not just their
+        # own actions.
+        lucky=has_lucky_trait(target),
     )
     state.events.append(
         Event(
@@ -2180,7 +2220,8 @@ def _resolve_death_save(state: GameState, actor: Character, rng: random.Random) 
         raise TurnEngineError(f"{actor.id} is already stable - no death save needed")
 
     # Flat d20, no modifiers, no advantage/disadvantage support - per SRD.
-    result, _ = resolve_saving_throw(save_bonus=0, dc=10, rng=rng)
+    # Lucky (issue #23) still applies - a death save is a saving throw.
+    result, _ = resolve_saving_throw(save_bonus=0, dc=10, rng=rng, lucky=has_lucky_trait(actor))
     natural = result.kept[0]
 
     if natural == 20:
@@ -2265,7 +2306,12 @@ def _resolve_stabilize(
     disadvantage = condition_check_disadvantage(actor)
 
     result, success = resolve_skill_check(
-        modifier=modifier, dc=10, rng=rng, advantage=advantage, disadvantage=disadvantage
+        modifier=modifier,
+        dc=10,
+        rng=rng,
+        advantage=advantage,
+        disadvantage=disadvantage,
+        lucky=has_lucky_trait(actor),
     )
     state.events.append(
         Event(

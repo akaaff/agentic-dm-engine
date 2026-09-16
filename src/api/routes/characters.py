@@ -133,6 +133,10 @@ class CreateCharacterRequest(BaseModel):
     """create_character has accepted fighting_style since Phase 9I, but this
     request model never exposed it - a pre-existing gap, closed here while
     the wizard is being touched anyway for the portrait-selection fields."""
+    chosen_racial_skills: list[str] | None = None
+    """Only meaningful (and required) for a Half-Elf - Skill Versatility
+    (issue #23), 2 skills of the player's choice. create_character itself
+    rejects it for any other race."""
 
 
 def _race_ability_bonuses(race: dict[str, Any]) -> dict[str, int]:
@@ -289,6 +293,7 @@ def create_character_endpoint(body: CreateCharacterRequest, db: DbSession) -> Ch
             chosen_equipment=body.chosen_equipment,
             gender=body.gender,
             fighting_style=body.fighting_style,
+            chosen_racial_skills=body.chosen_racial_skills,
         )
     except CharacterCreationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

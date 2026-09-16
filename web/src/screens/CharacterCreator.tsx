@@ -137,6 +137,10 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   const [classDetail, setClassDetail] = useState<ClassDetail | null>(null)
   const [fightingStyle, setFightingStyle] = useState('')
   const [chosenSkills, setChosenSkills] = useState<string[]>([])
+  // Half-Elf's Skill Versatility (issue #23): 2 skills of the player's
+  // choice, any skill - unlike chosenSkills, not gated by the class's own
+  // skill_options.
+  const [chosenRacialSkills, setChosenRacialSkills] = useState<string[]>([])
   const [assignments, setAssignments] = useState<Record<AbilityScore, number | ''>>({
     STR: '',
     DEX: '',
@@ -235,13 +239,24 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     })
   }
 
+  function toggleRacialSkill(skill: string) {
+    setChosenRacialSkills((prev) => {
+      if (prev.includes(skill)) return prev.filter((s) => s !== skill)
+      if (prev.length >= 2) return prev
+      return [...prev, skill]
+    })
+  }
+
   function toggleEquipment(index: string) {
     setChosenEquipment((prev) =>
       prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index],
     )
   }
 
-  const canProceedFromBasics = name.trim().length > 0 && raceIndex !== ''
+  const canProceedFromBasics =
+    name.trim().length > 0 &&
+    raceIndex !== '' &&
+    (raceIndex !== 'half-elf' || chosenRacialSkills.length === 2)
   const canProceedFromClass =
     classIndex !== '' && classDetail !== null && chosenSkills.length === classDetail.skill_choose
   const canProceedFromAbilities = allAbilitiesAssigned
@@ -266,6 +281,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         chosen_equipment: chosenEquipment,
         gender: gender || undefined,
         fighting_style: fightingStyle || undefined,
+        chosen_racial_skills: raceIndex === 'half-elf' ? chosenRacialSkills : undefined,
       })
       setCreated(character)
       setStep(5)
@@ -343,6 +359,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               setClassIndex('')
               setFightingStyle('')
               setChosenSkills([])
+              setChosenRacialSkills([])
               setChosenEquipment([])
             }}
           >
@@ -378,7 +395,13 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
             </label>
             <label>
               Race
-              <select value={raceIndex} onChange={(e) => setRaceIndex(e.target.value)}>
+              <select
+                value={raceIndex}
+                onChange={(e) => {
+                  setRaceIndex(e.target.value)
+                  setChosenRacialSkills([])
+                }}
+              >
                 <option value="">Choose a race...</option>
                 {races.map((r) => (
                   <option key={r.index} value={r.index}>
@@ -420,6 +443,24 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                   </span>
                 ))}
               </div>
+            )}
+            {raceIndex === 'half-elf' && (
+              <fieldset>
+                <legend>
+                  Skill Versatility - choose 2 skills ({chosenRacialSkills.length}/2 selected)
+                </legend>
+                {skills.map((skill) => (
+                  <label key={skill.index} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={chosenRacialSkills.includes(skill.index)}
+                      onChange={() => toggleRacialSkill(skill.index)}
+                    />
+                    {skillLabel(skill.index)}
+                    <InfoTip text={skill.desc} />
+                  </label>
+                ))}
+              </fieldset>
             )}
             <div className="wizard-nav">
               <button type="button" disabled={!canProceedFromBasics} onClick={() => setStep(1)}>

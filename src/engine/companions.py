@@ -32,6 +32,11 @@ class CompanionSpec(BaseModel):
     every companion needs a real portrait, so every companion YAML must
     author this (one of character_creation.VALID_GENDERS) explicitly rather
     than leaving it to default to None."""
+    chosen_racial_skills: list[str] | None = None
+    """Only meaningful (and required by create_character) for a Half-Elf
+    companion - Skill Versatility (issue #23), 2 skills of the author's
+    choice. No vendored companion is currently half-elf, but this keeps the
+    YAML spec able to author one."""
 
 
 def load_companion_spec(
@@ -84,4 +89,5 @@ def build_companion(spec: CompanionSpec, srd: SrdIndex | None = None) -> Charact
         persona=spec.persona,
         srd=srd,
         gender=spec.gender,
+        chosen_racial_skills=spec.chosen_racial_skills,
     )

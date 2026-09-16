@@ -32,6 +32,7 @@ from src.engine.rules import (
     ability_modifier,
     armor_ac,
     class_equipment_options,
+    normalize_skill_name,
     weapon_combo_is_legal,
 )
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
@@ -253,6 +254,7 @@ def create_character(
     srd: SrdIndex | None = None,
     fighting_style: str | None = None,
     gender: str | None = None,
+    chosen_racial_skills: list[str] | None = None,
 ) -> Character:
     srd = srd or load_srd()
     chosen_equipment = chosen_equipment or []
@@ -272,6 +274,27 @@ def create_character(
 
     if gender is not None and gender not in VALID_GENDERS:
         raise CharacterCreationError(f"Unknown gender: {gender!r} (valid: {sorted(VALID_GENDERS)})")
+
+    # Half-Elf's Skill Versatility (issue #23): proficiency in two skills of
+    # the player's choice, any skill - unlike a class's chosen_skills, SRD
+    # places no restriction on which ones. Validated the same way
+    # fighting_style is above: required (and only meaningful) exactly for
+    # the one race that has it, not silently accepted/ignored for any other.
+    if race_index == "half-elf":
+        if chosen_racial_skills is None or len(chosen_racial_skills) != 2:
+            raise CharacterCreationError(
+                "Half-Elf's Skill Versatility requires chosen_racial_skills with exactly "
+                "2 skill proficiencies"
+            )
+        if len(set(chosen_racial_skills)) != 2:
+            raise CharacterCreationError("chosen_racial_skills must name 2 different skills")
+        for skill in chosen_racial_skills:
+            if normalize_skill_name(skill) not in srd.skills:
+                raise CharacterCreationError(f"Unknown skill: {skill!r}")
+    elif chosen_racial_skills is not None:
+        raise CharacterCreationError(
+            f"{race_index} doesn't choose racial skills (only half-elf does)"
+        )
 
     race = srd.races.get(race_index)
     if race is None:
@@ -392,7 +415,17 @@ def create_character(
     # Deduplicated (via dict.fromkeys, which preserves order) since a class
     # skill choice and a background's fixed proficiency can genuinely
     # overlap - e.g. Pip Larkspur (Bard, Acolyte) chooses skill-insight
-    # *and* Acolyte grants it automatically.
+    # *and* Acolyte grants it automatically. Racial skill grants (issue
+    # #23) are folded into the same dedup: Elf's Keen Senses always grants
+    # Perception, Half-Elf's Skill Versatility grants chosen_racial_skills
+    # (already validated to be exactly 2 real skills above) - either can
+    # also genuinely overlap with a class/background pick the same way.
+    racial_skills: list[str] = []
+    if race_index == "elf":
+        racial_skills.append("skill-perception")
+    elif chosen_racial_skills:
+        racial_skills.extend(f"skill-{normalize_skill_name(s)}" for s in chosen_racial_skills)
+
     skill_proficiencies = list(
         dict.fromkeys(
             [s for s in chosen_skills if s.startswith("skill-")]
@@ -401,6 +434,7 @@ def create_character(
                 for p in background.get("starting_proficiencies", [])
                 if p["index"].startswith("skill-")
             ]
+            + racial_skills
         )
     )
 

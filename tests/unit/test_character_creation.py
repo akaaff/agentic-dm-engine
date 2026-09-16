@@ -124,8 +124,10 @@ def test_create_elf_wizard_end_to_end() -> None:
     assert sorted(character.inventory) == sorted(
         ["spellbook", "clothes-common", "pouch", "potion-of-healing"]
     )
+    # Issue #23: Elf's Keen Senses always grants Perception, on top of the
+    # chosen class skills and Acolyte's own fixed proficiencies.
     assert sorted(character.skill_proficiencies) == sorted(
-        ["skill-arcana", "skill-history", "skill-insight", "skill-religion"]
+        ["skill-arcana", "skill-history", "skill-insight", "skill-religion", "skill-perception"]
     )
 
 
@@ -328,3 +330,89 @@ def test_barbarian_gets_rage_uses_and_fighter_gets_second_wind_use() -> None:
         chosen_skills=["skill-arcana", "skill-history"],
     )
     assert elrond.class_resources == {}
+
+
+# --- Racial traits (issue #23) -------------------------------------------------
+
+
+def test_elf_keen_senses_always_grants_perception_proficiency() -> None:
+    fighter = create_character(
+        character_id="silvana",
+        name="Silvana",
+        race_index="elf",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-survival"],  # Perception not chosen
+    )
+    assert "skill-perception" in fighter.skill_proficiencies
+
+
+def test_half_elf_skill_versatility_requires_exactly_two_racial_skills() -> None:
+    with pytest.raises(CharacterCreationError, match="Skill Versatility"):
+        create_character(
+            character_id="pip",
+            name="Pip",
+            race_index="half-elf",
+            class_index="bard",
+            background_index="acolyte",
+            base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 10, "WIS": 10, "CHA": 15},
+            chosen_skills=["skill-performance"],
+        )
+
+
+def test_half_elf_skill_versatility_rejects_a_duplicate_skill() -> None:
+    with pytest.raises(CharacterCreationError, match="2 different skills"):
+        create_character(
+            character_id="pip",
+            name="Pip",
+            race_index="half-elf",
+            class_index="bard",
+            background_index="acolyte",
+            base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 10, "WIS": 10, "CHA": 15},
+            chosen_skills=["skill-performance"],
+            chosen_racial_skills=["skill-perception", "skill-perception"],
+        )
+
+
+def test_half_elf_skill_versatility_rejects_an_unknown_skill() -> None:
+    with pytest.raises(CharacterCreationError, match="Unknown skill"):
+        create_character(
+            character_id="pip",
+            name="Pip",
+            race_index="half-elf",
+            class_index="bard",
+            background_index="acolyte",
+            base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 10, "WIS": 10, "CHA": 15},
+            chosen_skills=["skill-performance"],
+            chosen_racial_skills=["skill-perception", "skill-not-a-real-skill"],
+        )
+
+
+def test_racial_skills_rejected_for_a_race_that_does_not_choose_them() -> None:
+    with pytest.raises(CharacterCreationError, match="doesn't choose racial skills"):
+        create_character(
+            character_id="thorin",
+            name="Thorin",
+            race_index="human",
+            class_index="fighter",
+            background_index="acolyte",
+            base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+            chosen_skills=["skill-athletics", "skill-perception"],
+            chosen_racial_skills=["skill-insight", "skill-religion"],
+        )
+
+
+def test_half_elf_gains_proficiency_in_both_chosen_racial_skills() -> None:
+    pip = create_character(
+        character_id="pip",
+        name="Pip",
+        race_index="half-elf",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-survival"],
+        chosen_racial_skills=["skill-intimidation", "skill-nature"],
+    )
+    assert "skill-intimidation" in pip.skill_proficiencies
+    assert "skill-nature" in pip.skill_proficiencies

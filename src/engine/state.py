@@ -198,6 +198,12 @@ class Character(BaseModel):
     maintenance conditions (1 minute, ends early if you don't attack or
     take damage) - a documented simplification, not silent - it persists
     until explicitly cleared by a rest (src/engine/resting.py)."""
+    used_relentless_endurance_this_rest: bool = False
+    """Half-Orc's Relentless Endurance trait (issue #23) - True once this
+    character has dropped to 1 HP instead of 0 this way, until their next
+    long rest (see resting.apply_long_rest and rules.has_relentless_
+    endurance). Always False for anyone but a Half-Orc PC/companion, since
+    nothing ever sets it otherwise."""
     sneak_attack_used_this_turn: bool = False
     """Phase 9I: True once this character's Sneak Attack (Rogue) has
     triggered this turn - SRD allows it once per turn, only on an actual

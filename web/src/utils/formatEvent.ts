@@ -98,6 +98,13 @@ export function formatEvent(
     }
     case 'death':
       return { key: event.id, color, label: `${actorName} has fallen` }
+    case 'relentless_endurance':
+      return {
+        key: event.id,
+        color,
+        label: `${actorName} refuses to fall - Relentless Endurance!`,
+        highlight: { text: '1 HP', color: HEAL_COLOR },
+      }
     case 'condition_applied': {
       const condition = typeof p.condition === 'string' ? p.condition : 'a condition'
       const targetId = typeof p.target === 'string' ? p.target : event.actor

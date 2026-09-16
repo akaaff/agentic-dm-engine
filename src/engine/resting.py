@@ -76,10 +76,11 @@ def apply_long_rest(party: list[Character]) -> None:
     restored to its level-1 max (short-rest ones like Second Wind recover
     here too - a long rest is a superset of a short rest's benefits, per
     SRD - real leveling, Phase 9J, doesn't scale these resources yet, so
-    "level-1 max" is still the only max there is), and Rage ends
+    "level-1 max" is still the only max there is), Rage ends
     (Character.is_raging - this engine doesn't model rage's real mid-combat
     duration/maintenance conditions, so "clears on any rest" is the
-    documented substitute, not a silent omission)."""
+    documented substitute, not a silent omission), and a Half-Orc's
+    Relentless Endurance (issue #23) becomes available again."""
     for character in party:
         character.hp = character.max_hp
         character.spell_slots = dict(
@@ -91,3 +92,4 @@ def apply_long_rest(party: list[Character]) -> None:
             CLASS_RESOURCES_AT_LEVEL_1.get(character.class_index or "", {})
         )
         character.is_raging = False
+        character.used_relentless_endurance_this_rest = False

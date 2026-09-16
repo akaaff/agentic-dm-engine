@@ -11,7 +11,9 @@ from src.engine.rules import (
     condition_attack_disadvantage,
     condition_check_disadvantage,
     effective_speed,
+    has_lucky_trait,
     has_non_proficient_armor,
+    has_relentless_endurance,
     is_class_proficient_with,
     monster_action_range_feet,
     monster_damage_multiplier,
@@ -52,6 +54,7 @@ def _make_character(
     saving_throw_proficiencies: list[AbilityScore] | None = None,
     exhaustion_level: int = 0,
     char_id: str = "thorin",
+    race_index: str | None = None,
 ) -> Character:
     return Character(
         id=char_id,
@@ -72,6 +75,7 @@ def _make_character(
         conditions=[Condition(name=c) for c in (conditions or [])],
         saving_throw_proficiencies=saving_throw_proficiencies or [],
         exhaustion_level=exhaustion_level,
+        race_index=race_index,
     )
 
 
@@ -359,6 +363,18 @@ def test_spell_mechanic_classifies_real_srd_spells() -> None:
 def test_normalize_spell_name() -> None:
     assert normalize_spell_name("Ray of Enfeeblement") == "ray-of-enfeeblement"
     assert normalize_spell_name("fire-bolt") == "fire-bolt"
+
+
+def test_has_lucky_trait_matches_race_index() -> None:
+    assert has_lucky_trait(_make_character(race_index="halfling")) is True
+    assert has_lucky_trait(_make_character(race_index="human")) is False
+    assert has_lucky_trait(_make_character(race_index=None)) is False  # monster/unset
+
+
+def test_has_relentless_endurance_matches_race_index() -> None:
+    assert has_relentless_endurance(_make_character(race_index="half-orc")) is True
+    assert has_relentless_endurance(_make_character(race_index="human")) is False
+    assert has_relentless_endurance(_make_character(race_index=None)) is False
 
 
 def test_armor_ac_unarmored_is_10_plus_dex() -> None:

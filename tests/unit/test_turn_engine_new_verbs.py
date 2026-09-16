@@ -128,8 +128,10 @@ def test_skill_check_ignores_armor_proficiency_for_non_str_dex_skills() -> None:
     resolve_action(state, action, _FixedRandom([10]))  # type: ignore[arg-type]
 
     event = state.events[-1]
-    # WIS13 -> mod1, not skill-proficient in Perception -> modifier 1.
-    assert event.payload["roll_total"] == 11
+    # WIS13 -> mod1. Elrond is an Elf - Keen Senses (issue #23) always
+    # grants Perception proficiency, so +2 proficiency bonus applies too:
+    # modifier 3.
+    assert event.payload["roll_total"] == 13
 
 
 def test_skill_check_requires_skill_param() -> None:

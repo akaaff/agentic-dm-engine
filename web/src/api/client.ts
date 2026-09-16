@@ -99,6 +99,7 @@ export interface CreateCharacterRequest {
   chosen_equipment: string[]
   gender?: string
   fighting_style?: string
+  chosen_racial_skills?: string[]
 }
 
 export interface Character {

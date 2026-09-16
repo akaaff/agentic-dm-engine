@@ -128,6 +128,16 @@ def test_apply_long_rest_gives_a_non_caster_empty_spell_slots() -> None:
     assert character.spell_slots == {}
 
 
+def test_apply_long_rest_refreshes_relentless_endurance() -> None:
+    # Issue #23 (Half-Orc's Relentless Endurance): available again after a
+    # long rest, once it's been used.
+    character = _character(used_relentless_endurance_this_rest=True)
+
+    apply_long_rest([character])
+
+    assert character.used_relentless_endurance_this_rest is False
+
+
 def test_apply_long_rest_reduces_exhaustion_by_one() -> None:
     character = _character(exhaustion_level=3)
 

@@ -38,6 +38,7 @@ def resolve_attack(
     advantage: bool = False,
     disadvantage: bool = False,
     force_critical: bool = False,
+    lucky: bool = False,
 ) -> AttackResult:
     """A natural 1 always misses, a natural 20 always hits and doubles the
     damage dice (not the flat bonus), per SRD rules.
@@ -49,9 +50,16 @@ def resolve_attack(
     defender_ac is still a miss even with force_critical set. Callers decide
     when it applies (turn_engine checks the target's `unconscious` condition
     before calling this); this module has no Condition/GameState coupling of
-    its own to make that check itself."""
+    its own to make that check itself.
+
+    `lucky` (Halfling's Lucky trait, issue #23) rerolls a natural 1 on the
+    attack roll itself - see dice.roll_d20's own reroll_on_natural_1."""
     attack_roll = roll_d20(
-        modifier=attack_bonus, rng=rng, advantage=advantage, disadvantage=disadvantage
+        modifier=attack_bonus,
+        rng=rng,
+        advantage=advantage,
+        disadvantage=disadvantage,
+        reroll_on_natural_1=lucky,
     )
     natural = attack_roll.kept[0]
 
@@ -86,8 +94,17 @@ def resolve_saving_throw(
     rng: random.Random,
     advantage: bool = False,
     disadvantage: bool = False,
+    lucky: bool = False,
 ) -> tuple[RollResult, bool]:
-    result = roll_d20(modifier=save_bonus, rng=rng, advantage=advantage, disadvantage=disadvantage)
+    """`lucky` (Halfling's Lucky trait, issue #23) rerolls a natural 1 - see
+    dice.roll_d20's own reroll_on_natural_1."""
+    result = roll_d20(
+        modifier=save_bonus,
+        rng=rng,
+        advantage=advantage,
+        disadvantage=disadvantage,
+        reroll_on_natural_1=lucky,
+    )
     return result, result.total >= dc
 
 
@@ -97,8 +114,17 @@ def resolve_skill_check(
     rng: random.Random,
     advantage: bool = False,
     disadvantage: bool = False,
+    lucky: bool = False,
 ) -> tuple[RollResult, bool]:
-    result = roll_d20(modifier=modifier, rng=rng, advantage=advantage, disadvantage=disadvantage)
+    """`lucky` (Halfling's Lucky trait, issue #23) rerolls a natural 1 - see
+    dice.roll_d20's own reroll_on_natural_1."""
+    result = roll_d20(
+        modifier=modifier,
+        rng=rng,
+        advantage=advantage,
+        disadvantage=disadvantage,
+        reroll_on_natural_1=lucky,
+    )
     return result, result.total >= dc
 
 
@@ -164,6 +190,24 @@ def monster_saving_throw_bonus(monster_data: SrdEntry, ability: AbilityScore) ->
         if prof.get("proficiency", {}).get("index") == ability_key:
             return int(prof["value"])
     return ability_modifier(monster_data[_MONSTER_ABILITY_FIELDS[ability]])
+
+
+def has_lucky_trait(character: Character) -> bool:
+    """Halfling's Lucky trait (issue #23): reroll a natural 1 on an attack
+    roll, ability check, or saving throw - see resolve_attack/
+    resolve_saving_throw/resolve_skill_check's own `lucky` param. Always
+    False for a monster (race_index is a PC/companion-only field - see its
+    docstring)."""
+    return character.race_index == "halfling"
+
+
+def has_relentless_endurance(character: Character) -> bool:
+    """Half-Orc's Relentless Endurance trait (issue #23): when reduced to 0
+    HP by damage that doesn't kill outright, drop to 1 HP instead, once per
+    long rest - see turn_engine._apply_damage_and_handle_downing and
+    Character.used_relentless_endurance_this_rest. Always False for a
+    monster, same reasoning as has_lucky_trait."""
+    return character.race_index == "half-orc"
 
 
 def normalize_skill_name(raw: str) -> str:
