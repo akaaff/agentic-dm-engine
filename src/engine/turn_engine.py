@@ -145,16 +145,19 @@ from src.engine.rules import (
     monster_action_range_feet,
     monster_damage_multiplier,
     monster_has_pack_tactics,
+    monster_innate_spellcasting,
     monster_is_immune_to_condition,
     monster_is_undead_or_fiend,
     monster_saving_throw_bonus,
     multiattack_sub_actions,
     normalize_skill_name,
+    normalize_spell_name,
     resolve_attack,
     resolve_saving_throw,
     resolve_skill_check,
     saving_throw_bonus,
     skill_ability,
+    spell_mechanic,
     spell_range_feet,
     weapon_combo_is_legal,
     weapon_range_feet,
@@ -1576,30 +1579,6 @@ def _spellcasting_ability_mod(actor: Character, srd: SrdIndex) -> tuple[AbilityS
     return ability, ability_modifier(actor.stats[ability])
 
 
-def _spell_mechanic(spell: SrdEntry) -> str:
-    """Classifies a spell into one of the three mechanics cast_spell
-    resolves (Phase 9D): "attack" (SRD `attack_type` present - e.g. Fire
-    Bolt, Guiding Bolt), "save" (`dc` present - e.g. Fireball, Hold Person),
-    or "heal" (`heal_at_slot_level` present - e.g. Cure Wounds). Checked in
-    this order since a real SRD spell only ever has one of the three shapes
-    (confirmed by inspecting several of each directly via load_srd()).
-    Anything else - a no-roll, non-heal effect like Magic Missile's
-    automatic-hit force damage, or a pure buff/utility spell with none of
-    these fields - is still out of scope and raises the same clear rejection
-    Day 14 always has for an unsupported spell."""
-    if spell.get("attack_type"):
-        return "attack"
-    if spell.get("dc"):
-        return "save"
-    if spell.get("heal_at_slot_level"):
-        return "heal"
-    raise TurnEngineError(
-        f"{spell['name']} is not supported - cast_spell resolves attack-roll, save-based, "
-        "and heal spells (Phase 9D); other no-roll effects (e.g. Magic Missile's automatic "
-        "hits) aren't implemented"
-    )
-
-
 def _spell_attack_params(
     actor: Character, spell: SrdEntry, spell_level: int, srd: SrdIndex
 ) -> AttackParams:
@@ -1621,7 +1600,7 @@ def _spell_attack_params(
         # 5e spell damage doesn't add the spellcasting ability modifier
         # (unlike weapon damage) - only whatever bonus is in the notation
         # itself (e.g. Magic Missile's embedded "+3", not applicable here
-        # since it's a no-roll spell excluded by _spell_mechanic; attack-roll
+        # since it's a no-roll spell excluded by rules.spell_mechanic; attack-roll
         # spells in the SRD generally have none).
         damage_bonus=notation_bonus,
         damage_type=damage_info["damage_type"]["index"],
@@ -1898,15 +1877,157 @@ def _is_bonus_action_spell(spell: SrdEntry) -> bool:
     return str(spell.get("casting_time", "")) == "1 bonus action"
 
 
+def _monster_innate_attack_params(
+    innate: SrdEntry, spell: SrdEntry, spell_level: int, range_normal_feet: int
+) -> AttackParams:
+    """AttackParams for a monster's Innate Spellcasting attack-roll spell
+    (issue #22) - mirrors _spell_attack_params's shape/level-lookup exactly,
+    but the attack bonus is the monster's own precomputed `modifier` field
+    (rules.monster_innate_spellcasting) rather than an ability score +
+    proficiency bonus derivation, since a monster has no class_index for
+    that PC-only formula to use."""
+    attack_bonus = innate.get("modifier")
+    if attack_bonus is None:
+        raise TurnEngineError(f"{spell['name']} has no spell attack modifier in this stat block")
+    damage_info = spell.get("damage")
+    if not damage_info:
+        raise TurnEngineError(f"{spell['name']} isn't supported - no damage data to resolve")
+    notation = (
+        damage_info["damage_at_character_level"]["1"]
+        if spell_level == 0
+        else damage_info["damage_at_slot_level"][str(spell_level)]
+    )
+    dice_count, dice_sides, notation_bonus = parse_dice_notation(notation)
+    return AttackParams(
+        attack_bonus=attack_bonus,
+        damage_dice_count=dice_count,
+        damage_dice_sides=dice_sides,
+        damage_bonus=notation_bonus,
+        damage_type=damage_info["damage_type"]["index"],
+        source_name=spell["name"],
+        range_normal_feet=range_normal_feet,
+        range_long_feet=None,
+    )
+
+
+def _monster_innate_save_params(
+    innate: SrdEntry, spell: SrdEntry, spell_level: int
+) -> SaveSpellParams:
+    """SaveSpellParams for a monster's Innate Spellcasting save-based spell
+    (issue #22) - mirrors _spell_save_params's shape/level-lookup exactly,
+    but the DC is the monster's own precomputed `dc` field rather than
+    8 + proficiency bonus + ability modifier, for the same reason
+    _monster_innate_attack_params's attack_bonus is."""
+    dc_info = spell["dc"]
+    damage_info = spell.get("damage")
+    if damage_info:
+        notation = (
+            damage_info["damage_at_character_level"]["1"]
+            if spell_level == 0
+            else damage_info["damage_at_slot_level"][str(spell_level)]
+        )
+        dice_count, dice_sides, notation_bonus = parse_dice_notation(notation)
+        damage_type: str | None = damage_info["damage_type"]["index"]
+    else:
+        dice_count = dice_sides = notation_bonus = 0
+        damage_type = None
+    return SaveSpellParams(
+        dc=innate["dc"],
+        dc_ability=dc_info["dc_type"]["index"].upper(),
+        dc_success=dc_info["dc_success"],
+        damage_dice_count=dice_count,
+        damage_dice_sides=dice_sides,
+        damage_bonus=notation_bonus,
+        damage_type=damage_type,
+        source_name=spell["name"],
+    )
+
+
+def _resolve_monster_innate_spell(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> bool:
+    """A monster's Innate Spellcasting entry point for the `cast_spell` verb
+    (issue #22, "start narrow" scope: Innate Spellcasting only, not a full
+    slot-tracked prepared caster like Cult Fanatic - see
+    rules.monster_innate_spellcasting). Reuses the exact same
+    _cast_attack_spell_at_target/_cast_save_spell_at_target a PC's cast
+    already resolves through - only how the params are built differs.
+    Always ends the turn (True) - every CR<=5 Innate Spellcasting monster in
+    this project's curated roster casts as its Action, never a bonus
+    action, so there's no PC-style ends_turn=False case to handle here."""
+    if actor.monster_index is None:
+        raise TurnEngineError(f"{actor.id} is not a monster (no monster_index)")
+    if not action.item_or_spell:
+        raise TurnEngineError("cast_spell action requires item_or_spell (the spell name)")
+    monster_data = srd.monsters.get(actor.monster_index)
+    innate = monster_innate_spellcasting(monster_data) if monster_data else None
+    if innate is None:
+        raise TurnEngineError(f"{actor.id} has no Innate Spellcasting")
+
+    normalized = normalize_spell_name(action.item_or_spell)
+    spell_ref = next(
+        (s for s in innate.get("spells", []) if normalize_spell_name(s["name"]) == normalized),
+        None,
+    )
+    if spell_ref is None:
+        raise TurnEngineError(
+            f"{actor.id} doesn't know an innate spell named {action.item_or_spell!r}"
+        )
+
+    spell = srd.spells.get(normalized)
+    if spell is None:
+        raise TurnEngineError(f"Unknown spell: {spell_ref['name']!r}")
+    mechanic = spell_mechanic(spell)
+    if mechanic not in ("attack", "save"):
+        raise TurnEngineError(
+            f"{spell_ref['name']} isn't an attack-roll or save-based spell - monster Innate "
+            "Spellcasting only resolves those (issue #22's scope)"
+        )
+
+    if action.target is None:
+        raise TurnEngineError("cast_spell action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown spell target: {action.target}")
+    _validate_attack_target(actor, target)
+
+    range_normal_feet = spell_range_feet(str(spell.get("range", "")))
+    distance = distance_feet(actor.position, target.position)
+    if distance > range_normal_feet:
+        raise TurnEngineError(
+            f"{target.id} is {distance}ft away - out of range for {spell['name']} "
+            f"(max {range_normal_feet}ft)"
+        )
+
+    usage = spell_ref.get("usage", {})
+    if usage.get("type") == "per day":
+        remaining = actor.innate_spell_uses_remaining.get(normalized, 0)
+        if remaining <= 0:
+            raise TurnEngineError(f"{actor.id} has no uses of {spell_ref['name']} remaining today")
+        actor.innate_spell_uses_remaining[normalized] = remaining - 1
+
+    spell_level = spell_ref["level"]
+    if mechanic == "attack":
+        attack_params = _monster_innate_attack_params(innate, spell, spell_level, range_normal_feet)
+        _cast_attack_spell_at_target(state, actor, target, attack_params, spell_level, rng, srd)
+    else:
+        save_params = _monster_innate_save_params(innate, spell, spell_level)
+        _cast_save_spell_at_target(state, actor, target, save_params, rng, srd)
+
+    return True
+
+
 def _resolve_cast_spell(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> bool:
     """Returns whether this action ends the actor's turn - True for an
     ordinary (action) spell, False for a bonus-action spell that resolved
     successfully (the actor still has their main action left this turn)."""
+    if actor.monster_index is not None:
+        return _resolve_monster_innate_spell(state, actor, action, rng, srd)
     if not action.item_or_spell:
         raise TurnEngineError("cast_spell action requires item_or_spell (the spell name)")
-    normalized = action.item_or_spell.strip().lower().replace(" ", "-")
+    normalized = normalize_spell_name(action.item_or_spell)
     spell = srd.spells.get(normalized)
     if spell is None:
         raise TurnEngineError(f"Unknown spell: {action.item_or_spell!r}")
@@ -1926,7 +2047,13 @@ def _resolve_cast_spell(
     if not target_ids:
         raise TurnEngineError("cast_spell action requires a target")
 
-    mechanic = _spell_mechanic(spell)
+    mechanic = spell_mechanic(spell)
+    if mechanic is None:
+        raise TurnEngineError(
+            f"{spell['name']} is not supported - cast_spell resolves attack-roll, save-based, "
+            "and heal spells (Phase 9D); other no-roll effects (e.g. Magic Missile's automatic "
+            "hits) aren't implemented"
+        )
 
     targets: list[Character] = []
     for target_id in target_ids:

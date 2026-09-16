@@ -22,7 +22,15 @@ project's small, mostly-open battle maps. The approach path also avoids
 squares already occupied by another living character (a snapshot taken
 once per monster turn, see _approach_path's docstring) - added live after
 two monsters converging on the same target ended up stacked on the exact
-same square, invisible as two separate tokens on the combat grid."""
+same square, invisible as two separate tokens on the combat grid.
+
+Issue #22: before falling back to a plain weapon attack, this heuristic now
+checks whether the actor has a currently-castable Innate Spellcasting spell
+(see _choose_innate_spell) - the highest-priority stat-block spell that's a
+resolvable mechanic (attack/save), still available (at-will, or a "per day"
+one with uses left), and has the target in range, cast instead of melee.
+Still deterministic and still just a heuristic (first-in-list, not
+tactical), same spirit as the rest of this module."""
 
 from __future__ import annotations
 
@@ -34,8 +42,15 @@ from src.engine.position import (
     chebyshev_distance,
     distance_feet,
 )
-from src.engine.rules import effective_speed, monster_action_range_feet
-from src.engine.srd_loader import load_srd
+from src.engine.rules import (
+    effective_speed,
+    monster_action_range_feet,
+    monster_innate_spellcasting,
+    normalize_spell_name,
+    spell_mechanic,
+    spell_range_feet,
+)
+from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
 
 
@@ -119,6 +134,46 @@ def _approach_path(
     return path
 
 
+def _choose_innate_spell(actor: Character, target: Character, srd: SrdIndex) -> ParsedAction | None:
+    """The first of `actor`'s Innate Spellcasting spells (stat-block order)
+    that's currently castable against `target` right now - a resolvable
+    mechanic (attack/save; skips heal/utility, the same scope
+    turn_engine._resolve_monster_innate_spell enforces), still available
+    (at-will, or a "per day" one with uses left), and within its range - or
+    None if no such spell exists (most monsters, or a caster who's used up
+    today's options). Not tactical (doesn't weigh save-vs-attack odds or
+    pick the "best" spell) - first-castable-in-list, same deliberately
+    simple spirit as the rest of this heuristic."""
+    if actor.monster_index is None:
+        return None
+    monster_data = srd.monsters.get(actor.monster_index)
+    innate = monster_innate_spellcasting(monster_data) if monster_data else None
+    if innate is None:
+        return None
+    distance = distance_feet(actor.position, target.position)
+    for spell_ref in innate.get("spells", []):
+        normalized = normalize_spell_name(spell_ref["name"])
+        spell = srd.spells.get(normalized)
+        if spell is None or spell_mechanic(spell) not in ("attack", "save"):
+            continue
+        usage = spell_ref.get("usage", {})
+        if (
+            usage.get("type") == "per day"
+            and actor.innate_spell_uses_remaining.get(normalized, 0) <= 0
+        ):
+            continue
+        if distance > spell_range_feet(str(spell.get("range", ""))):
+            continue
+        return ParsedAction(
+            actor=actor.id,
+            verb="cast_spell",
+            target=target.id,
+            item_or_spell=spell_ref["name"],
+            raw_text=f"{actor.name} casts {spell_ref['name']} at {target.name}.",
+        )
+    return None
+
+
 def choose_monster_action(game_state: GameState, actor: Character) -> ParsedAction:
     living_targets = [
         c for c in game_state.characters.values() if c.is_pc and not c.is_dead and c.id != actor.id
@@ -131,6 +186,11 @@ def choose_monster_action(game_state: GameState, actor: Character) -> ParsedActi
     target = min(
         living_targets, key=lambda c: (chebyshev_distance(actor.position, c.position), c.id)
     )
+
+    spell_action = _choose_innate_spell(actor, target, load_srd())
+    if spell_action is not None:
+        return spell_action
+
     range_feet = _monster_range_feet(actor)
 
     if (

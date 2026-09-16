@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from src.engine.events import Event
 from src.engine.position import BattleMap, Position
-from src.engine.rules import ability_modifier
+from src.engine.rules import ability_modifier, monster_innate_spellcasting, normalize_spell_name
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character, GameState
 from src.engine.turn_order import roll_initiative
@@ -93,6 +93,19 @@ def monster_to_character(monster: SrdEntry, character_id: str, position: Positio
         "WIS": monster["wisdom"],
         "CHA": monster["charisma"],
     }
+    # Issue #22: seed today's uses for each "N/day" innate spell (an "at
+    # will" one is never tracked here at all - unlimited, no key, checked
+    # directly in turn_engine._resolve_monster_innate_spell).
+    innate_spell_uses_remaining: dict[str, int] = {}
+    innate = monster_innate_spellcasting(monster)
+    if innate is not None:
+        for spell_ref in innate.get("spells", []):
+            usage = spell_ref.get("usage", {})
+            if usage.get("type") == "per day":
+                innate_spell_uses_remaining[normalize_spell_name(spell_ref["name"])] = usage[
+                    "times"
+                ]
+
     return Character(
         id=character_id,
         name=_display_name(monster["name"], character_id),
@@ -108,6 +121,7 @@ def monster_to_character(monster: SrdEntry, character_id: str, position: Positio
         class_="Monster",
         background="",
         monster_index=monster["index"],
+        innate_spell_uses_remaining=innate_spell_uses_remaining,
     )
 
 

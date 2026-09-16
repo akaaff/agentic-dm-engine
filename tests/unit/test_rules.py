@@ -16,16 +16,19 @@ from src.engine.rules import (
     monster_action_range_feet,
     monster_damage_multiplier,
     monster_has_pack_tactics,
+    monster_innate_spellcasting,
     monster_is_immune_to_condition,
     monster_is_undead_or_fiend,
     multiattack_sub_actions,
     normalize_skill_name,
+    normalize_spell_name,
     resolve_attack,
     resolve_saving_throw,
     resolve_skill_check,
     saving_throw_bonus,
     set_exhaustion_level,
     skill_ability,
+    spell_mechanic,
     spell_range_feet,
     weapon_range_feet,
 )
@@ -329,6 +332,33 @@ def test_monster_is_undead_or_fiend_matches_real_srd_data() -> None:
 
     wolf = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=0, y=0))
     assert monster_is_undead_or_fiend(wolf, srd) is False  # type "beast"
+
+
+def test_monster_innate_spellcasting_matches_real_srd_data() -> None:
+    srd = load_srd()
+    assert monster_innate_spellcasting(srd.monsters["goblin"]) is None  # no such ability at all
+
+    drow_innate = monster_innate_spellcasting(srd.monsters["drow"])
+    assert drow_innate is not None
+    assert drow_innate["dc"] == 11
+    assert [s["name"] for s in drow_innate["spells"]] == [
+        "Dancing Lights",
+        "Darkness",
+        "Faerie Fire",
+    ]
+
+
+def test_spell_mechanic_classifies_real_srd_spells() -> None:
+    srd = load_srd()
+    assert spell_mechanic(srd.spells["fire-bolt"]) == "attack"
+    assert spell_mechanic(srd.spells["vicious-mockery"]) == "save"
+    assert spell_mechanic(srd.spells["cure-wounds"]) == "heal"
+    assert spell_mechanic(srd.spells["dancing-lights"]) is None  # pure utility, no roll at all
+
+
+def test_normalize_spell_name() -> None:
+    assert normalize_spell_name("Ray of Enfeeblement") == "ray-of-enfeeblement"
+    assert normalize_spell_name("fire-bolt") == "fire-bolt"
 
 
 def test_armor_ac_unarmored_is_10_plus_dex() -> None:

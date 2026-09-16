@@ -53,6 +53,14 @@ class Character(BaseModel):
     conditions: list[Condition] = []
     spell_slots: dict[int, int] = {}
     """Spell level -> slots remaining."""
+    innate_spell_uses_remaining: dict[str, int] = {}
+    """Issue #22 (monster Innate Spellcasting): normalized spell index (e.g.
+    "ray-of-enfeeblement") -> uses left today, populated at creation (see
+    encounter.monster_to_character) from the monster's SRD stat block for
+    each "N/day" innate spell only - an "at will" one is never tracked here
+    at all (unlimited, no key). Empty for PCs/companions, which spend
+    `spell_slots` instead - a monster's innate spells are a completely
+    separate SRD mechanic with no slot concept of their own."""
     inventory: list[str] = []
     stats: dict[AbilityScore, int]
     proficiency_bonus: int

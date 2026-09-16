@@ -176,6 +176,54 @@ def test_move_path_avoids_a_square_already_occupied_by_another_character() -> No
     assert all((p["x"], p["y"]) != (5, 0) for p in action.params["path"])
 
 
+def test_casts_an_available_innate_spell_instead_of_attacking_when_in_range() -> None:
+    # Green-hag (CR3, Innate Spellcasting: Vicious Mockery at-will, 60ft
+    # range) - issue #22's whole point: a spellcasting monster shouldn't
+    # always walk up and swing regardless of its stat block.
+    hag = _make_character(
+        "hag_1", is_pc=False, position=Position(x=0, y=0), monster_index="green-hag"
+    )
+    thorin = _make_character("thorin", is_pc=True, position=Position(x=10, y=0))  # 50ft
+    state = _make_state([hag, thorin], battle_map=_open_map(20, 20))
+
+    action = choose_monster_action(state, hag)
+
+    assert action.verb == "cast_spell"
+    assert action.item_or_spell == "Vicious Mockery"
+    assert action.target == "thorin"
+
+
+def test_falls_back_to_closing_distance_when_no_innate_spell_is_in_range() -> None:
+    # Same hag, but the target is beyond Vicious Mockery's 60ft range (and
+    # far beyond melee too) - closes distance instead of casting or
+    # attacking blindly, same as a non-caster monster would.
+    hag = _make_character(
+        "hag_1", is_pc=False, position=Position(x=0, y=0), monster_index="green-hag"
+    )
+    thorin = _make_character("thorin", is_pc=True, position=Position(x=20, y=0))  # 100ft
+    state = _make_state([hag, thorin], battle_map=_open_map(30, 30))
+
+    action = choose_monster_action(state, hag)
+
+    assert action.verb == "move"
+
+
+def test_falls_back_to_melee_when_the_only_per_day_innate_spell_is_exhausted() -> None:
+    # Magma-mephit's only innate spell (Heat Metal) is 1/day - with 0 uses
+    # left, it should fall back to a plain attack instead of erroring or
+    # trying to cast anyway.
+    mephit = _make_character(
+        "mephit_1", is_pc=False, position=Position(x=0, y=0), monster_index="magma-mephit"
+    )
+    mephit.innate_spell_uses_remaining = {"heat-metal": 0}
+    thorin = _make_character("thorin", is_pc=True, position=Position(x=1, y=0))
+    state = _make_state([mephit, thorin], battle_map=_open_map(10, 10))
+
+    action = choose_monster_action(state, mephit)
+
+    assert action.verb == "attack"
+
+
 def test_attacks_anyway_when_movement_is_impossible() -> None:
     # No battle_map at all (e.g. an ad-hoc test GameState) - can't compute
     # a path, so fall back to the pre-existing "just attack" behavior

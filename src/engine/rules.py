@@ -172,6 +172,39 @@ def normalize_skill_name(raw: str) -> str:
     return raw.strip().lower().replace(" ", "-").removeprefix("skill-")
 
 
+def spell_mechanic(spell: SrdEntry) -> str | None:
+    """Classifies a spell into one of the three mechanics cast_spell
+    resolves (Phase 9D): "attack" (SRD `attack_type` present - e.g. Fire
+    Bolt, Guiding Bolt), "save" (`dc` present - e.g. Fireball, Hold Person),
+    or "heal" (`heal_at_slot_level` present - e.g. Cure Wounds). Checked in
+    this order since a real SRD spell only ever has one of the three shapes
+    (confirmed by inspecting several of each directly via load_srd()). None
+    for anything else - a no-roll, non-heal effect like Magic Missile's
+    automatic-hit force damage, or a pure buff/utility spell with none of
+    these fields - still out of scope for cast_spell to resolve. Moved here
+    from turn_engine (issue #22) so monster_ai's innate-spell selection can
+    share the same classification a PC's/monster's actual cast later uses,
+    rather than a second, potentially drifting copy - this module has no
+    TurnEngineError of its own, so a caller that needs a resolved spell
+    (not just a probe) raises its own clear rejection for None."""
+    if spell.get("attack_type"):
+        return "attack"
+    if spell.get("dc"):
+        return "save"
+    if spell.get("heal_at_slot_level"):
+        return "heal"
+    return None
+
+
+def normalize_spell_name(raw: str) -> str:
+    """ "Ray of Enfeeblement" -> "ray-of-enfeeblement" (srd.spells' bare-index
+    form) - the same normalization turn_engine._resolve_cast_spell already
+    applies inline to a PC's item_or_spell text, shared here (issue #22) so
+    monster_innate_spellcasting's own spell-name lookups use the identical
+    rule rather than a second, potentially drifting copy."""
+    return raw.strip().lower().replace(" ", "-")
+
+
 def skill_ability(skill_name: str, srd: SrdIndex) -> AbilityScore:
     """Moved here from turn_engine (Day 22) so campaign_runner's out-of-combat
     skill challenges can share the same skill->governing-ability lookup
@@ -355,6 +388,26 @@ def monster_is_undead_or_fiend(target: Character, srd: SrdIndex) -> bool:
     if monster is None:
         return False
     return monster.get("type") in ("undead", "fiend")
+
+
+def monster_innate_spellcasting(monster_data: SrdEntry) -> SrdEntry | None:
+    """The raw "Innate Spellcasting" special_ability entry's `spellcasting`
+    sub-object (issue #22) - {ability, dc, modifier?, spells: [{name, level,
+    usage: {type, times?}}, ...]}. `dc`/`modifier` are flat numbers the SRD
+    stat block already computed, not derived from an ability score +
+    proficiency bonus the way a PC's cast_spell path computes them (see
+    turn_engine._spellcasting_ability_mod) - a monster's own numbers are
+    used as-is; `modifier` (the spell attack bonus) is only present on
+    casters whose innate list actually includes an attack-roll spell.
+    Returns None if this monster has no Innate Spellcasting (most monsters,
+    and full "Spellcasting" casters like Cult Fanatic, which use a real
+    slot-tracked spell list - out of this issue's "start narrow" scope)."""
+    for ability in monster_data.get("special_abilities", []) or []:
+        spellcasting = ability.get("spellcasting")
+        if ability.get("name") == "Innate Spellcasting" and spellcasting:
+            result: SrdEntry = spellcasting
+            return result
+    return None
 
 
 def armor_ac(
