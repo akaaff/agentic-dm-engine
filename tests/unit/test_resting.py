@@ -101,6 +101,25 @@ def test_apply_long_rest_fully_restores_hp_spell_slots_and_hit_dice() -> None:
     assert character.hit_dice_remaining == 1
 
 
+def test_apply_long_rest_restores_slots_and_hit_dice_for_the_characters_real_level() -> None:
+    # Issue #20 regression: a level-5 wizard's slots are {1:4, 2:3, 3:2} per
+    # SPELL_SLOTS_BY_LEVEL["wizard"][5], not the level-1 row {1:2}, and they
+    # get 5 hit dice back, not 1.
+    character = _character(
+        hp=1,
+        max_hp=40,
+        class_index="wizard",
+        level=5,
+        hit_dice_remaining=0,
+        spell_slots={1: 0, 2: 0, 3: 0},
+    )
+
+    apply_long_rest([character])
+
+    assert character.spell_slots == {1: 4, 2: 3, 3: 2}
+    assert character.hit_dice_remaining == 5
+
+
 def test_apply_long_rest_gives_a_non_caster_empty_spell_slots() -> None:
     character = _character(class_index="fighter", spell_slots={})
 

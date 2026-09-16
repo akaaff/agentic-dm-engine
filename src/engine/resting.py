@@ -5,25 +5,27 @@ mutations with no scene/campaign-chain knowledge of their own (campaign_runner
 just calls them when it walks past a rest scene), and rules.py is reserved for
 the deterministic combat/check math turn_engine consumes - resting is neither.
 
-Level-1-only project (Phase 9J is what adds real leveling, not this phase):
-every character has exactly one hit die, sized per their class
-(Character.hit_die_sides, populated at creation from the SRD class's
-`hit_die` - see character_creation.create_character) and tracked via
-Character.hit_dice_remaining (starts at 1).
-
-A long rest's "full spell slots" is deliberately looked up fresh each time
-from character_creation.LEVEL_1_SPELL_SLOTS via class_index, rather than
-snapshotting a `max_spell_slots` field onto Character at creation time - the
-level-1 table is fixed for the life of a level-1-only character, so a second
-stored copy would just be one more place for the two to drift, for no benefit
-this project needs yet.
+Written when this was still a level-1-only project, before Phase 9J added
+real leveling (roughly levels 1-5) - and never revisited afterward, which
+was a real bug (issue #20, SRD mechanics audit): apply_long_rest restored
+spell slots from the level-1-only LEVEL_1_SPELL_SLOTS table and hardcoded
+hit_dice_remaining back to 1, regardless of the character's actual level.
+A level 3-5 caster who rested was silently reset to their level-1 slot
+layout. Fixed to read character.level via character_creation.
+SPELL_SLOTS_BY_LEVEL and set hit_dice_remaining = character.level instead -
+a long rest's "full spell slots"/"full hit dice" are looked up/computed
+fresh each time rather than snapshotting a max onto Character at creation,
+so there's no second stored copy to drift out of sync with level_up.
 """
 
 from __future__ import annotations
 
 import random
 
-from src.engine.character_creation import CLASS_RESOURCES_AT_LEVEL_1, LEVEL_1_SPELL_SLOTS
+from src.engine.character_creation import (
+    CLASS_RESOURCES_AT_LEVEL_1,
+    SPELL_SLOTS_BY_LEVEL,
+)
 from src.engine.dice import roll
 from src.engine.rules import ability_modifier, set_exhaustion_level
 from src.engine.state import Character
@@ -66,19 +68,24 @@ def apply_short_rest(party: list[Character], rng: random.Random) -> None:
 
 
 def apply_long_rest(party: list[Character]) -> None:
-    """Full HP, full spell slots (per class_index via LEVEL_1_SPELL_SLOTS,
-    empty for non-casters/monsters), hit dice reset to 1 (level 1 = 1 hit
-    die), exhaustion reduced by one level (rules.set_exhaustion_level
-    already floors at 0), every class_resource restored to its level-1 max
-    (short-rest ones like Second Wind recover here too - a long rest is a
-    superset of a short rest's benefits, per SRD), and Rage ends
+    """Full HP, full spell slots (per class_index and the character's real
+    level via SPELL_SLOTS_BY_LEVEL, empty for non-casters/monsters/levels
+    with no entry), hit dice reset to one per character level (issue #20 -
+    was hardcoded to 1 regardless of level), exhaustion reduced by one level
+    (rules.set_exhaustion_level already floors at 0), every class_resource
+    restored to its level-1 max (short-rest ones like Second Wind recover
+    here too - a long rest is a superset of a short rest's benefits, per
+    SRD - real leveling, Phase 9J, doesn't scale these resources yet, so
+    "level-1 max" is still the only max there is), and Rage ends
     (Character.is_raging - this engine doesn't model rage's real mid-combat
     duration/maintenance conditions, so "clears on any rest" is the
     documented substitute, not a silent omission)."""
     for character in party:
         character.hp = character.max_hp
-        character.spell_slots = dict(LEVEL_1_SPELL_SLOTS.get(character.class_index or "", {}))
-        character.hit_dice_remaining = 1
+        character.spell_slots = dict(
+            SPELL_SLOTS_BY_LEVEL.get(character.class_index or "", {}).get(character.level, {})
+        )
+        character.hit_dice_remaining = character.level
         set_exhaustion_level(character, character.exhaustion_level - 1)
         character.class_resources = dict(
             CLASS_RESOURCES_AT_LEVEL_1.get(character.class_index or "", {})
