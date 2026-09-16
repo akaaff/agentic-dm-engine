@@ -132,6 +132,15 @@ export interface NarrationEntry {
    * useSessionSocket stitches them back together by tracking how many
    * events existed before each narration arrived. */
   events?: LiveEvent[]
+  /** The game_state that arrived alongside this entry's state_update -
+   * applied to the live `gameState` only when this entry is actually
+   * revealed (see drainNext below), not when the WS message arrives. Found
+   * live: once the human PC goes unconscious the backend auto-plays every
+   * remaining turn (including the human's own forced death saves) in one
+   * unbroken burst, so without this the sidebar/HP/defeat banner would jump
+   * straight to the final outcome while the paced log was still slowly
+   * revealing everything that led there. */
+  gameStateSnapshot?: LiveGameState
 }
 
 const WS_BASE_URL = 'ws://localhost:8000'
@@ -211,6 +220,9 @@ export function useSessionSocket(sessionId: string) {
         const entry = entryQueueRef.current.shift()
         if (entry) {
           setNarrationLog((prev) => [...prev, entry])
+          // Apply the state this entry belongs to now, not when it arrived -
+          // keeps the sidebar/HP/banner in lockstep with the paced log.
+          if (entry.gameStateSnapshot) setGameState(entry.gameStateSnapshot)
           lastRevealTimeRef.current = performance.now()
         }
         scheduleDrain() // schedules the next one, or marks caught up if none left
@@ -241,13 +253,23 @@ export function useSessionSocket(sessionId: string) {
       const message = JSON.parse(event.data) as ServerMessage
       switch (message.type) {
         case 'state_update': {
-          setGameState(message.game_state)
           const newEvents = message.game_state.events.slice(lastEventCountRef.current)
           lastEventCountRef.current = message.game_state.events.length
           const pendingText = pendingNarrationRef.current
           pendingNarrationRef.current = null
           if (pendingText || newEvents.length > 0) {
-            enqueueEntry({ text: pendingText ?? '', kind: 'action', events: newEvents })
+            // Held back until this entry is actually revealed (drainNext) -
+            // see NarrationEntry.gameStateSnapshot's docstring.
+            enqueueEntry({
+              text: pendingText ?? '',
+              kind: 'action',
+              events: newEvents,
+              gameStateSnapshot: message.game_state,
+            })
+          } else {
+            // Nothing queued for this update (no narration, no new events) -
+            // nothing paces it, so apply it right away.
+            setGameState(message.game_state)
           }
           break
         }
