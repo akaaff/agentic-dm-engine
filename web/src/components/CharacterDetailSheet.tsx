@@ -227,13 +227,14 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
       {inventoryCounts.size > 0 && (
         <div>
           <strong>Inventory:</strong>
-          <p className="companion-meta">
-            {[...inventoryCounts.entries()]
-              .map(([idx, count]) =>
-                count > 1 ? `${nameWithDetail(idx)} x${count}` : nameWithDetail(idx),
-              )
-              .join(', ')}
-          </p>
+          <ul className="detail-action-list">
+            {[...inventoryCounts.entries()].map(([idx, count]) => (
+              <li key={idx}>
+                {nameWithDetail(idx)}
+                {count > 1 && ` x${count}`}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
