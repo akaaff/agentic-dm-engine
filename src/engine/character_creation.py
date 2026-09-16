@@ -23,6 +23,7 @@ already hardcodes, for the same reason.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -302,6 +303,33 @@ def create_character(
     inventory.extend(chosen_equipment)
     inventory.extend(DEFAULT_STARTING_CONSUMABLES)
 
+    # chosen_equipment is already a sub-multiset of inventory (appended into
+    # it a few lines up) - naively scanning "chosen_equipment, then
+    # inventory" as two back-to-back ranges (the original approach) visits
+    # each chosen item's own inventory slot a second time. Harmless for the
+    # armor loop below (a plain "first one wins" assignment), but a real bug
+    # for the weapon loop's *accumulating* candidate list: a single owned
+    # light weapon named in chosen_equipment would satisfy weapon_combo_is_
+    # legal's "2 weapons, both light" check against itself, leaving
+    # equipped_weapons = [idx, idx] - shown wielding two copies of a weapon
+    # actually owned once. A plain dedup (e.g. dict.fromkeys) would overcorrect
+    # though: a class kit that legitimately grants 2 real daggers (inventory
+    # has two separate "dagger" entries) must still offer both as candidates.
+    # So this reorders inventory - chosen_equipment's own contributed slots
+    # first, the rest following - without changing how many times any index
+    # appears, tracking with a Counter which specific occurrences are the
+    # ones chosen_equipment already accounts for.
+    chosen_remaining = Counter(chosen_equipment)
+    equip_candidates: list[str] = []
+    _rest: list[str] = []
+    for idx in inventory:
+        if chosen_remaining[idx] > 0:
+            equip_candidates.append(idx)
+            chosen_remaining[idx] -= 1
+        else:
+            _rest.append(idx)
+    equip_candidates += _rest
+
     # Auto-populate a legal starting weapon loadout (Phase C: equipped-weapon
     # tracking) - greedily takes weapon-category items, stopping once a 2nd
     # item wouldn't form a legal combo (rules.weapon_combo_is_legal) or 2 are
@@ -313,7 +341,7 @@ def create_character(
     # with javelins equipped by default just because javelins happen to be
     # listed first in the class's fixed kit.
     equipped_weapons: list[str] = []
-    for idx in [*chosen_equipment, *inventory]:
+    for idx in equip_candidates:
         item = srd.equipment.get(idx)
         if not item or not item.get("weapon_category"):
             continue
@@ -331,7 +359,7 @@ def create_character(
     # between them the way two weapons do, so no combo check is needed).
     equipped_armor: str | None = None
     equipped_shield: str | None = None
-    for idx in [*chosen_equipment, *inventory]:
+    for idx in equip_candidates:
         item = srd.equipment.get(idx)
         if not item or not item.get("armor_category"):
             continue

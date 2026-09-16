@@ -7,6 +7,48 @@ from src.engine.character_creation import (
 )
 
 
+def test_equip_auto_populate_does_not_double_count_a_single_chosen_light_weapon() -> None:
+    # Real bug caught live: chosen_equipment gets appended into inventory,
+    # so a naive "chosen_equipment, then inventory" scan visited a single
+    # chosen dagger twice, satisfying weapon_combo_is_legal's "2 weapons,
+    # both light" check against itself - equipped_weapons ended up
+    # ["dagger", "dagger"] for a character who owns exactly one.
+    character = create_character(
+        character_id="thorin",
+        name="Thorin",
+        race_index="human",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+        chosen_equipment=["dagger"],
+    )
+    assert character.inventory.count("dagger") == 1
+    assert character.equipped_weapons == ["dagger"]
+
+
+def test_equip_auto_populate_still_equips_both_of_a_classs_genuine_two_daggers() -> None:
+    # Rogue's own fixed starting_equipment grants 2 real daggers (quantity
+    # 2) - the fix for the bug above must not collapse genuine duplicates,
+    # only the artificial one from re-scanning chosen_equipment.
+    character = create_character(
+        character_id="fenwick",
+        name="Fenwick",
+        race_index="halfling",
+        class_index="rogue",
+        background_index="acolyte",
+        base_ability_scores={"STR": 8, "DEX": 15, "CON": 13, "INT": 12, "WIS": 10, "CHA": 14},
+        chosen_skills=[
+            "skill-acrobatics",
+            "skill-stealth",
+            "skill-sleight-of-hand",
+            "skill-deception",
+        ],
+    )
+    assert character.inventory.count("dagger") == 2
+    assert character.equipped_weapons == ["dagger", "dagger"]
+
+
 def test_validate_standard_array_accepts_a_permutation() -> None:
     validate_standard_array({"STR": 8, "DEX": 15, "CON": 10, "INT": 14, "WIS": 13, "CHA": 12})
 
