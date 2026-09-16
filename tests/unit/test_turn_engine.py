@@ -6,7 +6,7 @@ from src.engine.character_creation import create_character
 from src.engine.encounter import build_encounter_state, monster_to_character
 from src.engine.position import Position
 from src.engine.srd_loader import load_srd
-from src.engine.state import Character
+from src.engine.state import Character, GameState
 from src.engine.turn_engine import (
     TurnEngineError,
     _monster_attack_params,
@@ -290,6 +290,60 @@ def test_attack_damage_zeroed_by_monster_immunity() -> None:
     damage_event = next(e for e in state.events if e.type == "damage_dealt")
     assert damage_event.payload["amount"] == 0
     assert ghost.hp == ghost.max_hp  # untouched
+
+
+def test_pack_tactics_grants_advantage_when_an_ally_is_adjacent_to_the_target() -> None:
+    # Issue #19. Two wolves both within 5ft of Thorin - wolf_1 (the
+    # attacker) qualifies for Pack Tactics because wolf_2 (an ally) is also
+    # adjacent to the shared target. Thorin's AC is set absurdly high so
+    # the attack always misses regardless of the roll, avoiding any damage-
+    # die RNG the test doesn't care about. Advantage means 2 d20s are
+    # rolled and the higher is kept - feeding [5, 18] and asserting the
+    # recorded natural is 18 proves advantage actually applied (without it,
+    # only the first value would ever be consumed/kept).
+    srd = load_srd()
+    thorin = _two_person_party()[0]
+    thorin.position = Position(x=0, y=0)
+    thorin.ac = 99
+    wolf_1 = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=1, y=0))
+    wolf_2 = monster_to_character(srd.monsters["wolf"], "wolf_2", Position(x=0, y=1))
+    state = GameState(
+        encounter_id="pack_tactics_test",
+        characters={"thorin": thorin, "wolf_1": wolf_1, "wolf_2": wolf_2},
+        turn_order=["wolf_1", "wolf_2", "thorin"],
+        current_turn=0,
+        round=1,
+    )
+    action = ParsedAction(actor="wolf_1", verb="attack", target="thorin", raw_text="the wolf bites")
+    resolve_action(state, action, _FixedRandom([5, 18]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["natural"] == 18
+
+
+def test_pack_tactics_gives_no_advantage_without_an_adjacent_ally() -> None:
+    # Same setup, but wolf_2 is far away - no Pack Tactics advantage, so
+    # only a single d20 is ever consumed. Feeding a second, unused value
+    # would desync _FixedRandom and fail loudly on the next roll rather
+    # than silently passing - so this only passes if exactly one is used.
+    srd = load_srd()
+    thorin = _two_person_party()[0]
+    thorin.position = Position(x=0, y=0)
+    thorin.ac = 99
+    wolf_1 = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=1, y=0))
+    wolf_2 = monster_to_character(srd.monsters["wolf"], "wolf_2", Position(x=9, y=9))
+    state = GameState(
+        encounter_id="pack_tactics_test",
+        characters={"thorin": thorin, "wolf_1": wolf_1, "wolf_2": wolf_2},
+        turn_order=["wolf_1", "wolf_2", "thorin"],
+        current_turn=0,
+        round=1,
+    )
+    action = ParsedAction(actor="wolf_1", verb="attack", target="thorin", raw_text="the wolf bites")
+    resolve_action(state, action, _FixedRandom([5]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["natural"] == 5
 
 
 def test_attack_gets_disadvantage_from_non_proficient_armor() -> None:

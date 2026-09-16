@@ -15,6 +15,7 @@ from src.engine.rules import (
     is_class_proficient_with,
     monster_action_range_feet,
     monster_damage_multiplier,
+    monster_has_pack_tactics,
     monster_is_immune_to_condition,
     multiattack_sub_actions,
     normalize_skill_name,
@@ -300,6 +301,18 @@ def test_monster_is_immune_to_condition_matches_real_srd_data() -> None:
 
     wolf = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=0, y=0))
     assert monster_is_immune_to_condition(wolf, "prone", srd) is False
+
+
+def test_monster_has_pack_tactics_matches_real_srd_data() -> None:
+    srd = load_srd()
+    pc = _make_character()
+    assert monster_has_pack_tactics(pc, srd) is False  # non-monster always False
+
+    wolf = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=0, y=0))
+    assert monster_has_pack_tactics(wolf, srd) is True
+
+    goblin = monster_to_character(srd.monsters["goblin"], "goblin_1", Position(x=0, y=0))
+    assert monster_has_pack_tactics(goblin, srd) is False
 
 
 def test_armor_ac_unarmored_is_10_plus_dex() -> None:

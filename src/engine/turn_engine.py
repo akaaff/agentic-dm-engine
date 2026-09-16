@@ -144,6 +144,7 @@ from src.engine.rules import (
     is_class_proficient_with,
     monster_action_range_feet,
     monster_damage_multiplier,
+    monster_has_pack_tactics,
     monster_is_immune_to_condition,
     monster_saving_throw_bonus,
     multiattack_sub_actions,
@@ -504,7 +505,17 @@ def _resolve_single_attack(
     # while shooting, and SRD condition effects (Phase 9A -
     # blinded/prone/restrained/invisible/etc. on either side) are further
     # independent sources.
-    advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
+    # Issue #19: Pack Tactics (Wolf and 16 other CR<=5 monsters) - advantage
+    # when an ally is within 5ft of the shared target, the exact same
+    # adjacency check Sneak Attack's own alternate trigger already uses.
+    pack_tactics_advantage = monster_has_pack_tactics(actor, srd) and _ally_adjacent_to(
+        state, actor, target
+    )
+    advantage = (
+        actor.has_help_advantage
+        or condition_attack_advantage(actor, target, distance)
+        or pack_tactics_advantage
+    )
     actor.has_help_advantage = False
 
     # Phase 9C: per SRD, any hit against an unconscious creature is a

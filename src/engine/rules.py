@@ -325,6 +325,24 @@ def monster_is_immune_to_condition(
     return any(c["index"] == condition_name for c in monster.get("condition_immunities", []))
 
 
+def monster_has_pack_tactics(character: Character, srd: SrdIndex) -> bool:
+    """True if this monster's SRD stat block has the "Pack Tactics" special
+    ability (issue #19, e.g. Wolf) - always False for a non-monster.
+    `special_abilities` entries are {name, desc, ...} free-text traits, not
+    a closed/indexed vocabulary like condition_immunities, so this matches
+    on the exact `name` string SRD data actually uses rather than assuming
+    an index form exists. Doesn't itself check whether an ally is actually
+    adjacent to the shared target - callers combine this with
+    turn_engine._ally_adjacent_to, the same helper Sneak Attack's identical
+    "an ally is within 5ft of the target" trigger already uses."""
+    if character.monster_index is None:
+        return False
+    monster = srd.monsters.get(character.monster_index)
+    if monster is None:
+        return False
+    return any(a.get("name") == "Pack Tactics" for a in monster.get("special_abilities", []))
+
+
 def armor_ac(
     equipped_armor: str | None,
     equipped_shield: str | None,
