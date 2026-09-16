@@ -50,6 +50,28 @@ def test_equip_auto_populate_still_equips_both_of_a_classs_genuine_two_daggers()
     assert character.equipped_weapons == ["dagger", "dagger"]
 
 
+def test_equip_auto_populate_does_not_equip_a_shield_when_two_hands_are_already_full() -> None:
+    # Issue #26 - the exact live bug report: a Human Fighter with a dagger,
+    # handaxe, and shield all chosen ended up with all three equipped
+    # simultaneously (3 hands' worth of gear). The weapon loop runs first
+    # and legitimately fills both hands with the 2 light weapons - the
+    # shield should be left unequipped (still owned, just not worn), not
+    # silently squeezed in on top.
+    character = create_character(
+        character_id="thorin",
+        name="Thorin",
+        race_index="human",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+        chosen_equipment=["dagger", "handaxe", "shield"],
+    )
+    assert character.equipped_weapons == ["dagger", "handaxe"]
+    assert character.equipped_shield is None
+    assert "shield" in character.inventory  # still owned, just not worn
+
+
 def test_validate_standard_array_accepts_a_permutation() -> None:
     validate_standard_array({"STR": 8, "DEX": 15, "CON": 10, "INT": 14, "WIS": 13, "CHA": 12})
 

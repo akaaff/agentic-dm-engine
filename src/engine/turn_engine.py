@@ -1619,11 +1619,26 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
                 raise TurnEngineError("Cannot equip two suits of armor at once")
             resolved_armor = item["index"]
 
-    if resolved_weapons and not weapon_combo_is_legal(resolved_weapons, srd.equipment):
-        names = ", ".join(srd.equipment[idx]["name"] for idx in resolved_weapons)
+    # Issue #26: validated as one combined loadout, not weapons and shield
+    # independently - a live bug found this exact call resolving just
+    # `params["items"] = ["shield"]` (weapons untouched from whatever was
+    # already equipped) and equipping the shield with zero cross-check
+    # against the 2 one-handed weapons already worn, ending up with 3
+    # hands' worth of gear. `final_weapons`/`final_shield` fold in whatever
+    # this call *isn't* touching (unchanged from the actor's current
+    # loadout) so the check always covers the real resulting state, not
+    # just what's newly named in this one call.
+    final_weapons = resolved_weapons if resolved_weapons else actor.equipped_weapons
+    final_shield = resolved_shield if resolved_shield is not None else actor.equipped_shield
+    if not weapon_combo_is_legal(
+        final_weapons, srd.equipment, shield_equipped=final_shield is not None
+    ):
+        names = ", ".join(srd.equipment[idx]["name"] for idx in final_weapons)
+        shield_note = f" plus {srd.equipment[final_shield]['name']}" if final_shield else ""
         raise TurnEngineError(
-            f"Cannot equip {names} together - at most 2 weapons, a two-handed "
-            "weapon must be alone, and 2 weapons together must both be light"
+            f"Cannot equip {names}{shield_note} together - at most 2 hands' worth of "
+            "weapons/shield: a two-handed weapon needs both hands, 2 one-handed weapons "
+            "must both be light, and a shield takes a hand of its own"
         )
 
     changed_items: list[str] = list(resolved_weapons)

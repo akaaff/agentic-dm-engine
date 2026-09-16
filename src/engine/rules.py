@@ -580,7 +580,9 @@ def armor_ac(
     return base + shield_bonus + defense_bonus
 
 
-def weapon_combo_is_legal(weapon_indices: list[str], equipment: dict[str, SrdEntry]) -> bool:
+def weapon_combo_is_legal(
+    weapon_indices: list[str], equipment: dict[str, SrdEntry], shield_equipped: bool = False
+) -> bool:
     """Whether this set of weapon indices is legal to have simultaneously
     equipped, per a deliberately simplified subset of SRD's real rules: at
     most 2 weapons; a "two-handed"-property weapon must be the only one
@@ -591,7 +593,18 @@ def weapon_combo_is_legal(weapon_indices: list[str], equipment: dict[str, SrdEnt
     one-handed-with-a-shield case specially) - lives here, not
     character_creation.py or turn_engine.py, since both need it: creation
     auto-populates a legal starting loadout, turn_engine's "equip" action
-    validates a player-chosen one against the same rule."""
+    validates a player-chosen one against the same rule.
+
+    `shield_equipped` (issue #26) folds hand-occupancy into the same check
+    rather than a separate one: a shield uses one of a character's two
+    hands, same as any one-handed weapon does. 2 already-legal one-handed
+    weapons plus a shield would be 3 hands - illegal, even though the pair
+    of weapons alone is fine; a single two-handed weapon plus a shield is
+    also illegal (it already needs both hands by itself); a single
+    one-handed weapon plus a shield is fine (1 + 1 = 2). Found live: a
+    character ending up with 2 one-handed weapons *and* a shield
+    simultaneously equipped, since equipped_weapons and equipped_shield had
+    never been cross-validated against each other at all."""
     if len(weapon_indices) > 2:
         return False
     found = [equipment.get(idx) for idx in weapon_indices]
@@ -604,6 +617,12 @@ def weapon_combo_is_legal(weapon_indices: list[str], equipment: dict[str, SrdEnt
             return False
         if not all("light" in props for props in properties):
             return False
+        if shield_equipped:
+            return False  # 2 one-handed weapons + a shield = 3 hands
+    elif len(items) == 1 and shield_equipped:
+        single_weapon_properties = {p["index"] for p in (items[0].get("properties") or [])}
+        if "two-handed" in single_weapon_properties:
+            return False  # a two-handed weapon already needs both hands
     return True
 
 

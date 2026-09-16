@@ -36,6 +36,7 @@ from src.engine.rules import (
     skill_ability,
     spell_mechanic,
     spell_range_feet,
+    weapon_combo_is_legal,
     weapon_range_feet,
     wild_shape_beast_is_allowed,
 )
@@ -718,3 +719,35 @@ def test_set_exhaustion_level_clamps_and_kills_at_six() -> None:
 
     set_exhaustion_level(character, -2)  # clamps to 0
     assert character.exhaustion_level == 0
+
+
+def test_weapon_combo_is_legal_unaffected_by_shield_equipped_default() -> None:
+    # Regression guard: every pre-existing call site omits shield_equipped
+    # (defaults False) - behavior must be identical to before issue #26.
+    srd = load_srd()
+    assert weapon_combo_is_legal(["dagger", "dagger"], srd.equipment) is True
+    assert weapon_combo_is_legal(["longsword"], srd.equipment) is True
+    assert weapon_combo_is_legal(["greataxe"], srd.equipment) is True
+    assert weapon_combo_is_legal(["longsword", "shortsword"], srd.equipment) is False
+
+
+def test_weapon_combo_is_legal_two_light_weapons_plus_a_shield_is_illegal() -> None:
+    # Issue #26: the exact live bug - 2 one-handed weapons is legal alone
+    # (2 hands), but adding a shield makes it 3.
+    srd = load_srd()
+    assert weapon_combo_is_legal(["dagger", "dagger"], srd.equipment, shield_equipped=True) is False
+
+
+def test_weapon_combo_is_legal_one_weapon_plus_a_shield_is_legal() -> None:
+    srd = load_srd()
+    assert weapon_combo_is_legal(["longsword"], srd.equipment, shield_equipped=True) is True
+
+
+def test_weapon_combo_is_legal_two_handed_weapon_plus_a_shield_is_illegal() -> None:
+    srd = load_srd()
+    assert weapon_combo_is_legal(["greataxe"], srd.equipment, shield_equipped=True) is False
+
+
+def test_weapon_combo_is_legal_no_weapons_plus_a_shield_is_legal() -> None:
+    srd = load_srd()
+    assert weapon_combo_is_legal([], srd.equipment, shield_equipped=True) is True

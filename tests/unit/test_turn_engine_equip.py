@@ -431,3 +431,80 @@ def test_equip_rejects_two_suits_of_armor_at_once() -> None:
     )
     with pytest.raises(TurnEngineError, match="Cannot equip two suits of armor"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+# ------------------------------------------- hand-occupancy: weapons + shield (#26)
+
+
+def test_equip_shield_rejected_when_two_light_weapons_already_equipped() -> None:
+    # The exact bug found live: 2 one-handed weapons already equipped, then
+    # a shield equipped on its own - params["items"] = ["shield"] never
+    # names any weapon, so the old code path had zero cross-check against
+    # the weapons already worn.
+    thorin = _fighter()
+    thorin.inventory += ["dagger", "dagger", "shield"]
+    thorin.equipped_weapons = ["dagger", "dagger"]
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin", verb="equip", params={"items": ["shield"]}, raw_text="I raise my shield"
+    )
+    with pytest.raises(TurnEngineError, match="Cannot equip"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+    assert thorin.equipped_shield is None  # rejected outright, not partially applied
+
+
+def test_equip_shield_succeeds_with_only_one_weapon_equipped() -> None:
+    thorin = _fighter()  # longsword already equipped (1 hand) - a shield fits (2 hands total)
+    thorin.inventory.append("shield")
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin", verb="equip", params={"items": ["shield"]}, raw_text="I raise my shield"
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert thorin.equipped_shield == "shield"
+    assert thorin.equipped_weapons == ["longsword"]
+
+
+def test_equip_two_weapons_rejected_when_a_shield_is_already_equipped() -> None:
+    thorin = _fighter()
+    thorin.inventory += ["dagger", "dagger", "shield"]
+    thorin.equipped_shield = "shield"
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="equip",
+        params={"items": ["dagger", "dagger"]},
+        raw_text="I draw two daggers",
+    )
+    with pytest.raises(TurnEngineError, match="Cannot equip"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+    assert thorin.equipped_weapons == ["longsword"]  # unchanged, not partially applied
+
+
+def test_equip_two_handed_weapon_rejected_when_a_shield_is_already_equipped() -> None:
+    thorin = _fighter()
+    thorin.inventory += ["greataxe", "shield"]
+    thorin.equipped_shield = "shield"
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin", verb="equip", params={"items": ["greataxe"]}, raw_text="I heft my greataxe"
+    )
+    with pytest.raises(TurnEngineError, match="Cannot equip"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_equip_two_weapons_and_a_shield_together_in_one_action_rejected() -> None:
+    # The exact loadout from the live bug report: dagger + handaxe +
+    # shield, all named in one equip call.
+    thorin = _fighter()
+    thorin.inventory += ["dagger", "handaxe", "shield"]
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="equip",
+        params={"items": ["dagger", "handaxe", "shield"]},
+        raw_text="I draw a dagger and handaxe and raise my shield",
+    )
+    with pytest.raises(TurnEngineError, match="Cannot equip"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]

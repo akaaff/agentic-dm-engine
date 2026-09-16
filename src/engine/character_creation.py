@@ -401,9 +401,15 @@ def create_character(
     # Same auto-populate approach as equipped_weapons above, for the two
     # armor slots (issue #13) - chosen_equipment tried first so a player's
     # own deliberate armor pick wins over a class's fixed starting kit, then
-    # the first non-shield armor item found fills equipped_armor and the
-    # first shield fills equipped_shield (SRD has no legality question
-    # between them the way two weapons do, so no combo check is needed).
+    # the first non-shield armor item found fills equipped_armor. A shield
+    # is different (issue #26): it shares hand-occupancy with
+    # equipped_weapons (already finalized above), so the first shield
+    # candidate only actually fills equipped_shield if the weapons already
+    # chosen leave a hand free (rules.weapon_combo_is_legal's
+    # shield_equipped check) - the weapon loop's own pick keeps priority
+    # (a player who explicitly chose 2 daggers wants to dual-wield, not
+    # wear a shield they happened to also be carrying), rather than
+    # reordering these two loops.
     equipped_armor: str | None = None
     equipped_shield: str | None = None
     for idx in equip_candidates:
@@ -411,7 +417,10 @@ def create_character(
         if not item or not item.get("armor_category"):
             continue
         if item["armor_category"] == "Shield":
-            equipped_shield = equipped_shield or idx
+            if equipped_shield is None and weapon_combo_is_legal(
+                equipped_weapons, srd.equipment, shield_equipped=True
+            ):
+                equipped_shield = idx
         else:
             equipped_armor = equipped_armor or idx
         if equipped_armor is not None and equipped_shield is not None:
