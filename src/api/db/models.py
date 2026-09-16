@@ -82,6 +82,45 @@ class CharacterRecord(Base):
     WS session's GameState comes from a *reloaded* character, so these
     always resetting to None would silently make every equip-armor action
     pointless the moment a real session starts."""
+    level: Mapped[int] = mapped_column(default=1, server_default="1")
+    hit_die_sides: Mapped[int] = mapped_column(default=8, server_default="8")
+    """No universal safe default across classes (d6 Wizard through d12
+    Barbarian) - 8 is an arbitrary fallback for the handful of pre-migration
+    rows from this session's own dev testing, not a real game value; every
+    row created after this migration gets its real class's die from
+    create_character, same as before."""
+    hit_dice_remaining: Mapped[int] = mapped_column(default=1, server_default="1")
+    saving_throw_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list)
+    fighting_style: Mapped[str | None] = mapped_column(default=None)
+    class_resources: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
+    used_relentless_endurance_this_rest: Mapped[bool] = mapped_column(default=False)
+    wild_shape_beast_index: Mapped[str | None] = mapped_column(default=None)
+    pre_wild_shape_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    bardic_inspiration_die: Mapped[int | None] = mapped_column(default=None)
+    """Issue #29: found live - none of these 10 fields were ever persisted,
+    despite ~6 of them (level, hit_die_sides, hit_dice_remaining,
+    saving_throw_proficiencies, fighting_style, class_resources) being
+    populated immediately at creation and needed by *every* live session
+    from the moment it starts (the exact same "a live WS session builds its
+    GameState from a *reloaded* character" reasoning already documented
+    above for equipped_weapons/equipped_armor/equipped_shield, just never
+    applied to this batch) - class_resources silently dropping to `{}` on
+    every reload meant Rage/Second Wind/Ki/Wild Shape/Arcane Recovery/
+    Bardic Inspiration were all unusable ("no rage uses remaining" on a
+    fresh Barbarian who'd never raged) the moment a real WS session loaded
+    a character rather than using the in-memory create response directly -
+    caught by live manual testing, not a unit test (pytest builds Character
+    objects directly, never round-tripping through the DB, so this was
+    invisible to the entire test suite). The other 4 (used_relentless_
+    endurance_this_rest, wild_shape_beast_index, pre_wild_shape_snapshot,
+    bardic_inspiration_die) are genuinely rarer mid-transformation/
+    mid-rest-cycle state, but cost nothing extra to fix in the same pass
+    rather than leaving a second copy of this exact bug for later. Every
+    other ~15-field gap the class_index-era comment above still describes
+    (is_dodging, bonus_action_used, death_save_successes, position, etc.)
+    is genuinely combat-turn-scoped and correctly *should* reset to its
+    Pydantic default for a fresh encounter build - not fixed here, and not
+    the same bug shape as this batch."""
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

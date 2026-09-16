@@ -184,6 +184,43 @@ def test_create_character_end_to_end_and_persists(client: TestClient) -> None:
     }
 
 
+def test_create_character_persists_class_resources_and_level_fields(client: TestClient) -> None:
+    # Issue #29 regression: CharacterRecord never had columns for
+    # class_resources/level/hit_die_sides/hit_dice_remaining/
+    # saving_throw_proficiencies at all - found live via a real WS session
+    # (which always reloads a character from the DB, never reuses the
+    # in-memory create response) reporting "no rage uses remaining" on a
+    # freshly-created Barbarian who had never raged. Same bug shape as
+    # test_create_character_end_to_end_and_persists's own class_index/
+    # skill_proficiencies regression guard above, just a second batch of
+    # fields that fell through the same gap.
+    body = {
+        "character_id": "grosh",
+        "name": "Grosh",
+        "race_index": "human",
+        "class_index": "barbarian",
+        "background_index": "acolyte",
+        "base_ability_scores": {"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        "chosen_skills": ["skill-athletics", "skill-intimidation"],
+    }
+    client.post("/characters", json=body)
+
+    fetched = client.get("/characters/grosh").json()
+    assert fetched["level"] == 1
+    assert fetched["hit_die_sides"] == 12
+    assert fetched["hit_dice_remaining"] == 1
+    assert fetched["class_resources"] == {"rage": 2}
+    assert set(fetched["saving_throw_proficiencies"]) == {"STR", "CON"}
+
+
+def test_create_character_persists_fighting_style(client: TestClient) -> None:
+    body = {**_VALID_FIGHTER_BODY, "fighting_style": "dueling"}
+    client.post("/characters", json=body)
+
+    fetched = client.get("/characters/thorin").json()
+    assert fetched["fighting_style"] == "dueling"
+
+
 def test_get_unknown_character_returns_404(client: TestClient) -> None:
     response = client.get("/characters/does-not-exist")
     assert response.status_code == 404

@@ -20,7 +20,7 @@ from src.engine.character_creation import (
 from src.engine.position import Position
 from src.engine.rules import class_equipment_options
 from src.engine.srd_loader import SrdIndex, load_srd
-from src.engine.state import AbilityScore, Character, Condition
+from src.engine.state import AbilityScore, Character, Condition, WildShapeSnapshot
 
 router = APIRouter(prefix="/characters", tags=["characters"])
 
@@ -337,6 +337,20 @@ def _character_to_record(character: Character) -> CharacterRecord:
         equipped_weapons=list(character.equipped_weapons),
         equipped_armor=character.equipped_armor,
         equipped_shield=character.equipped_shield,
+        level=character.level,
+        hit_die_sides=character.hit_die_sides,
+        hit_dice_remaining=character.hit_dice_remaining,
+        saving_throw_proficiencies=list(character.saving_throw_proficiencies),
+        fighting_style=character.fighting_style,
+        class_resources=dict(character.class_resources),
+        used_relentless_endurance_this_rest=character.used_relentless_endurance_this_rest,
+        wild_shape_beast_index=character.wild_shape_beast_index,
+        pre_wild_shape_snapshot=(
+            character.pre_wild_shape_snapshot.model_dump()
+            if character.pre_wild_shape_snapshot
+            else None
+        ),
+        bardic_inspiration_die=character.bardic_inspiration_die,
     )
 
 
@@ -367,4 +381,18 @@ def _record_to_character(record: CharacterRecord) -> Character:
         equipped_weapons=record.equipped_weapons,
         equipped_armor=record.equipped_armor,
         equipped_shield=record.equipped_shield,
+        level=record.level,
+        hit_die_sides=record.hit_die_sides,
+        hit_dice_remaining=record.hit_dice_remaining,
+        saving_throw_proficiencies=record.saving_throw_proficiencies,  # type: ignore[arg-type]
+        fighting_style=record.fighting_style,
+        class_resources=record.class_resources,
+        used_relentless_endurance_this_rest=record.used_relentless_endurance_this_rest,
+        wild_shape_beast_index=record.wild_shape_beast_index,
+        pre_wild_shape_snapshot=(
+            WildShapeSnapshot.model_validate(record.pre_wild_shape_snapshot)
+            if record.pre_wild_shape_snapshot
+            else None
+        ),
+        bardic_inspiration_die=record.bardic_inspiration_die,
     )
