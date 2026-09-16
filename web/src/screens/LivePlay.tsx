@@ -46,6 +46,13 @@ export default function LivePlay({
   }
 
   if (!connected && !gameState) {
+    // A session-setup failure (issue #29) sends an `error` message and
+    // closes the socket before any state_update ever arrives - without this
+    // check that just looks like a still-connecting spinner forever, with
+    // no way to tell a real content/server bug apart from a slow network.
+    if (error) {
+      return <div className="wizard wizard-error">{error}</div>
+    }
     return <div className="wizard">Connecting to the game server...</div>
   }
 

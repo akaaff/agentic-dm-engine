@@ -33,7 +33,7 @@ from src.engine.actions import ParsedAction
 from src.engine.campaign import Campaign, load_campaign
 from src.engine.campaign_runner import advance_to_next_encounter
 from src.engine.companions import build_companion, load_companion_spec_by_character_id
-from src.engine.encounter import build_encounter_state, load_encounter
+from src.engine.encounter import GameStateBuildError, build_encounter_state, load_encounter
 from src.engine.monster_ai import choose_monster_action
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
@@ -460,7 +460,19 @@ async def _handle_client_message(
 @router.websocket("/ws/session/{session_id}")
 async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
-    session = _get_or_create_default_session(session_id)
+    try:
+        session = _get_or_create_default_session(session_id)
+    except GameStateBuildError as exc:
+        # Found live (issue #29): a content bug (an encounter's
+        # party_spawn_points shorter than the actual party size, in
+        # practice) used to propagate straight out of this handler and crash
+        # the whole ASGI connection before create_session ever ran - the
+        # client got no message at all and sat on "Connecting..." forever,
+        # unable to tell a content bug apart from a slow or dead server.
+        # Report it and close cleanly instead.
+        await websocket.send_json({"type": "error", "detail": str(exc)})
+        await websocket.close(code=1011, reason="session setup failed")
+        return
 
     controlled = (
         {session.human_character_id}

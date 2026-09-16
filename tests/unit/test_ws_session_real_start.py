@@ -14,6 +14,7 @@ from collections.abc import Generator
 from typing import Any
 
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -26,7 +27,7 @@ from src.api.ws import session as ws_session_module
 from src.engine.actions import ParsedAction
 from src.engine.campaign import load_campaign
 from src.engine.companions import build_companion, load_companion_spec
-from src.engine.encounter import build_encounter_state, load_encounter
+from src.engine.encounter import GameStateBuildError, build_encounter_state, load_encounter
 from src.engine.srd_loader import load_srd
 from src.graph.graph_builder import build_graph
 from src.graph.state_schema import GraphState
@@ -208,6 +209,34 @@ def test_non_human_turns_auto_resolve_before_awaiting_input(client: TestClient) 
 
     narrations = [m for m in messages if m["type"] == "narration"]
     assert len(narrations) == thorin_index
+
+
+def test_session_setup_failure_reports_error_instead_of_crashing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Issue #29 regression: a content bug in build_encounter_state (in
+    # practice, an encounter's party_spawn_points shorter than the actual
+    # party size - see wolf_den's own live-found fix) used to propagate
+    # straight out of session_websocket and crash the whole ASGI connection
+    # before create_session ever ran. The client got no message at all and
+    # sat on "Connecting..." forever, with no way to tell a content bug
+    # apart from a slow or dead server.
+    session_id = _start_real_session(client)
+
+    def _boom(*args: Any, **kwargs: Any) -> Any:
+        raise GameStateBuildError("not enough party spawn points")
+
+    monkeypatch.setattr(ws_session_module, "build_encounter_state", _boom)
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        msg = ws.receive_json()
+        assert msg == {"type": "error", "detail": "not enough party spawn points"}
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+
+    # A failed setup must not leave a stale/broken entry a later connection
+    # to the same session_id would silently reuse.
+    assert session_id not in ws_session_module._sessions
 
 
 async def test_advance_campaign_after_victory_continues_to_the_next_encounter() -> None:
