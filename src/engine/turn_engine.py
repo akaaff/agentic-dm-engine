@@ -146,6 +146,7 @@ from src.engine.rules import (
     monster_damage_multiplier,
     monster_has_pack_tactics,
     monster_is_immune_to_condition,
+    monster_is_undead_or_fiend,
     monster_saving_throw_bonus,
     multiattack_sub_actions,
     normalize_skill_name,
@@ -241,6 +242,13 @@ class AttackParams:
     """Phase 9I: only ever True from _pc_attack_params, when the weapon is
     melee and STR governs its attack roll (not finesse-as-DEX) - Rage's
     flat melee damage bonus applies only to these, per SRD."""
+    smite_slot_level: int | None = None
+    """Issue #21 (Paladin Divine Smite): only ever set from _pc_attack_params
+    when the player declared a smite on this attack. Not consumed/rolled
+    here - _resolve_single_attack does that, and only if this specific
+    attack roll actually hits and a slot of this level is still available
+    at that moment (an earlier swing in the same Extra Attack action may
+    already have spent it)."""
 
 
 def _match_weapon_by_name(weapon_name: str, candidates: list[SrdEntry]) -> SrdEntry | None:
@@ -272,12 +280,26 @@ def _pc_attack_params(
     weapon_index: str | None,
     srd: SrdIndex,
     include_ability_damage_bonus: bool = True,
+    smite_slot_level: int | None = None,
 ) -> AttackParams:
     """`include_ability_damage_bonus=False` (Two-Weapon Fighting's off-hand
     attack, `_resolve_offhand_attack`) drops the ability modifier from
     `damage_bonus` only - the attack roll itself is unaffected - per SRD's
     "you don't add your ability modifier to the damage of [the off-hand]
-    attack" rule."""
+    attack" rule.
+
+    `smite_slot_level` (issue #21, Divine Smite) is validated eagerly here,
+    at declare-time, even though the slot itself isn't spent until
+    _resolve_single_attack confirms a hit - a Paladin with no such slot, or
+    a non-Paladin, or a ranged-weapon attack should be rejected outright
+    rather than silently doing nothing on a miss-or-hit."""
+    if smite_slot_level is not None:
+        if actor.class_index != "paladin":
+            raise TurnEngineError(f"{actor.id} is not a Paladin and cannot use Divine Smite")
+        if actor.spell_slots.get(smite_slot_level, 0) <= 0:
+            raise TurnEngineError(
+                f"{actor.id} has no level {smite_slot_level} spell slots remaining for Divine Smite"
+            )
     equipped = [item for idx in actor.equipped_weapons if (item := srd.equipment.get(idx))]
     weapon: SrdEntry | None = None
     if weapon_index:
@@ -312,11 +334,14 @@ def _pc_attack_params(
             range_normal_feet=5,
             range_long_feet=None,
             is_melee_str_weapon=True,
+            smite_slot_level=smite_slot_level,
         )
 
     properties = {p["index"] for p in (weapon.get("properties") or [])}
     is_finesse = "finesse" in properties
     is_ranged = weapon.get("weapon_range") == "Ranged"
+    if smite_slot_level is not None and is_ranged:
+        raise TurnEngineError("Divine Smite requires a melee weapon attack")
     if is_finesse:
         ability_mod = max(str_mod, dex_mod)
     elif is_ranged:
@@ -366,6 +391,7 @@ def _pc_attack_params(
         range_long_feet=range_long_feet,
         is_finesse_or_ranged=is_finesse or is_ranged,
         is_melee_str_weapon=is_melee_str_weapon,
+        smite_slot_level=smite_slot_level,
     )
 
 
@@ -583,6 +609,32 @@ def _resolve_single_attack(
         result = replace(result, damage=(result.damage or 0) + sneak_damage)
         state.events[-1].payload["sneak_attack_damage"] = sneak_damage
 
+    # Divine Smite (issue #21, Paladin): declared upfront on the attack (see
+    # ParsedAction.params's docstring for why - this engine has no
+    # mid-resolution pause to ask "it hit, smite now?"), but only actually
+    # spent/rolled if this specific swing hits and a slot of that level is
+    # still available right now - an Extra Attack's second swing can still
+    # smite again as long as another slot of the declared level remains,
+    # even if the first swing already spent one. 2d8 for a 1st-level slot,
+    # +1d8 per slot level above 1st (capped at 5d8), +1 more d8 against
+    # undead/fiends (capped at 6d8 combined, per SRD) - doubled on a crit
+    # like Sneak Attack's own dice above, since it's extra damage on the
+    # same weapon attack, not a separate spell attack roll.
+    if (
+        result.hit
+        and params.smite_slot_level is not None
+        and actor.spell_slots.get(params.smite_slot_level, 0) > 0
+    ):
+        actor.spell_slots[params.smite_slot_level] -= 1
+        smite_dice = min(1 + params.smite_slot_level, 5)
+        if monster_is_undead_or_fiend(target, srd):
+            smite_dice += 1
+        if result.critical:
+            smite_dice *= 2
+        smite_damage = roll(smite_dice, 8, modifier=0, rng=rng).total
+        result = replace(result, damage=(result.damage or 0) + smite_damage)
+        state.events[-1].payload["divine_smite_damage"] = smite_damage
+
     if result.hit and result.damage is not None:
         _apply_damage_and_handle_downing(
             state, actor, target, result.damage, params.damage_type, rng, srd
@@ -682,12 +734,17 @@ def _resolve_attack(
         _resolve_single_attack(state, actor, target, params, rng, srd)
         return
 
-    params = _pc_attack_params(actor, action.item_or_spell, srd)
+    params = _pc_attack_params(
+        actor, action.item_or_spell, srd, smite_slot_level=action.params.get("smite_slot_level")
+    )
     # Extra Attack (Phase 9J): an eligible PC (level 5+ Fighter/Barbarian/
     # Paladin/Ranger) makes two attack rolls for this one `attack` action
     # instead of one - the PC-side equivalent of a monster's Multiattack
     # above, sharing the same _resolve_single_attack per-roll logic. Stops
-    # early if the target dies partway through the second roll.
+    # early if the target dies partway through the second roll. A declared
+    # Divine Smite (issue #21) is eligible on every roll here, not just the
+    # first - _resolve_single_attack only actually spends/rolls it if that
+    # specific swing hits and a slot is still available at that moment.
     num_attacks = 2 if is_eligible_for_extra_attack(actor) else 1
     for _ in range(num_attacks):
         if target.is_dead:
@@ -729,6 +786,39 @@ def _resolve_offhand_attack(
         actor, actor.equipped_weapons[1], srd, include_ability_damage_bonus=False
     )
     _resolve_single_attack(state, actor, target, params, rng, srd)
+    actor.bonus_action_used = True
+    return False
+
+
+def _resolve_cunning_action(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> bool:
+    """Rogue's Cunning Action (issue #21): Dash or Disengage as a bonus
+    action instead of a full action, gated the same way Second Wind/Rage/the
+    off-hand attack are (bonus_action_used), plus SRD's own level-2+ Rogue
+    gate. Hide is deliberately not offered here - this engine has no
+    stealth/hidden-state mechanic at all yet, a separate, bigger feature
+    that issue #21's cheap-add scope explicitly didn't take on. Delegates to
+    the exact same resolvers a full-action `dash`/`disengage` already use
+    (a synthetic verb="dash" copy so _resolve_move's speed-doubling check
+    fires, or _resolve_disengage directly) rather than duplicating either's
+    logic. Returns False (doesn't end the turn), so the actor can still take
+    their real action afterward."""
+    if actor.class_index != "rogue" or actor.level < 2:
+        raise TurnEngineError(f"{actor.id} doesn't have Cunning Action")
+    if actor.bonus_action_used:
+        raise TurnEngineError(
+            f"{actor.id} has already used their bonus action this turn - cannot use Cunning Action"
+        )
+    sub_action = action.params.get("action")
+    if sub_action == "dash":
+        _resolve_move(state, actor, action.model_copy(update={"verb": "dash"}), rng, srd)
+    elif sub_action == "disengage":
+        _resolve_disengage(state, actor)
+    else:
+        raise TurnEngineError(
+            "cunning_action requires params['action'] to be 'dash' or 'disengage'"
+        )
     actor.bonus_action_used = True
     return False
 
@@ -2265,6 +2355,8 @@ def resolve_action(
         ends_turn = _resolve_equip(state, actor, action, srd)
     elif action.verb == "offhand_attack":
         ends_turn = _resolve_offhand_attack(state, actor, action, rng, srd)
+    elif action.verb == "cunning_action":
+        ends_turn = _resolve_cunning_action(state, actor, action, rng, srd)
     elif action.verb == "use_item":
         _resolve_use_item(state, actor, action, rng)
     elif action.verb == "death_save":

@@ -27,6 +27,7 @@ ActionVerb = Literal[
     "rage",
     "equip",
     "offhand_attack",
+    "cunning_action",
     "end_turn",
     "invalid",
 ]
@@ -44,7 +45,16 @@ class ParsedAction(BaseModel):
     `params["skill"] = str`; `equip` carries `params["items"] = [str, ...]`
     (the weapon/armor/shield indices to make the new active equipped set).
     `offhand_attack` needs only `target` (like `attack`) - always resolves
-    against the actor's second equipped weapon, no `item_or_spell`."""
+    against the actor's second equipped weapon, no `item_or_spell`.
+    `attack` may optionally carry `params["smite_slot_level"] = int`
+    (Paladin's Divine Smite, issue #21) - this engine has no mid-resolution
+    "did it hit?" pause to ask the player after the fact, so committing to
+    spending a slot is part of declaring the attack itself; the slot is only
+    actually consumed if the attack lands, matching SRD's real "decide after
+    a hit, before damage" timing closely enough that a miss never costs
+    anything. `cunning_action` (Rogue, issue #21) carries
+    `params["action"] = "dash" | "disengage"`, plus `params["path"]` too
+    when `action == "dash"` (the same shape a plain `dash` action uses)."""
     raw_text: str
     confidence: float | None = None
     """Set by the LLM intent parser; absent for scripted/hand-authored actions."""

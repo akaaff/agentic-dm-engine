@@ -146,6 +146,13 @@ SPELL_SLOTS_BY_LEVEL: dict[str, dict[int, dict[int, int]]] = {
         4: {2: 2},
         5: {3: 2},
     },
+    "paladin": {
+        1: {},
+        2: {1: 2},
+        3: {1: 3},
+        4: {1: 3},
+        5: {1: 4, 2: 2},
+    },
 }
 """Not in the vendored SRD JSON (level tables live behind a separate API
 endpoint) - these are the real PHB full-caster and Pact Magic slot
@@ -157,7 +164,12 @@ first appears at character level 3, a 3rd-level slot at level 5). Warlock is
 the SRD's one exception - Pact Magic grants far fewer slots, but at a higher
 spell level than a full caster would have at the same character level (a
 level-3 Warlock has two 2nd-level slots and nothing else, not one 2nd-level
-plus leftover 1st-level slots)."""
+plus leftover 1st-level slots). Paladin is a half-caster (issue #21, Divine
+Smite): no slots at all until level 2, then the standard half-caster
+progression - deliberately absent from LEVEL_1_SPELL_SLOTS (a level-1
+Paladin really does have zero, per SRD, not a missing-data gap) and only
+added here since level_up is the only path that can ever hand a Paladin a
+slot."""
 
 EXTRA_ATTACK_LEVEL = 5
 """SRD 5.1: Fighter/Barbarian/Paladin/Ranger gain Extra Attack at level 5 -

@@ -17,6 +17,7 @@ from src.engine.rules import (
     monster_damage_multiplier,
     monster_has_pack_tactics,
     monster_is_immune_to_condition,
+    monster_is_undead_or_fiend,
     multiattack_sub_actions,
     normalize_skill_name,
     resolve_attack,
@@ -313,6 +314,21 @@ def test_monster_has_pack_tactics_matches_real_srd_data() -> None:
 
     goblin = monster_to_character(srd.monsters["goblin"], "goblin_1", Position(x=0, y=0))
     assert monster_has_pack_tactics(goblin, srd) is False
+
+
+def test_monster_is_undead_or_fiend_matches_real_srd_data() -> None:
+    srd = load_srd()
+    pc = _make_character()
+    assert monster_is_undead_or_fiend(pc, srd) is False  # non-monster always False
+
+    skeleton = monster_to_character(srd.monsters["skeleton"], "skeleton_1", Position(x=0, y=0))
+    assert monster_is_undead_or_fiend(skeleton, srd) is True  # type "undead"
+
+    imp = monster_to_character(srd.monsters["imp"], "imp_1", Position(x=0, y=0))
+    assert monster_is_undead_or_fiend(imp, srd) is True  # type "fiend"
+
+    wolf = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=0, y=0))
+    assert monster_is_undead_or_fiend(wolf, srd) is False  # type "beast"
 
 
 def test_armor_ac_unarmored_is_10_plus_dex() -> None:

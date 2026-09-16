@@ -343,6 +343,20 @@ def monster_has_pack_tactics(character: Character, srd: SrdIndex) -> bool:
     return any(a.get("name") == "Pack Tactics" for a in monster.get("special_abilities", []))
 
 
+def monster_is_undead_or_fiend(target: Character, srd: SrdIndex) -> bool:
+    """True if this monster's SRD `type` field is "undead" or "fiend"
+    (issue #21, Divine Smite's "+1d8 more against undead/fiends" clause) -
+    always False for a non-monster target. `type` is a plain lowercase
+    string (e.g. "undead", "beast", "humanoid"), not a free-text clause like
+    damage_resistances, so exact equality is correct here."""
+    if target.monster_index is None:
+        return False
+    monster = srd.monsters.get(target.monster_index)
+    if monster is None:
+        return False
+    return monster.get("type") in ("undead", "fiend")
+
+
 def armor_ac(
     equipped_armor: str | None,
     equipped_shield: str | None,

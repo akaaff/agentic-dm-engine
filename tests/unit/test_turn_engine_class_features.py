@@ -430,3 +430,298 @@ def test_sneak_attack_does_not_apply_to_a_non_rogue() -> None:
 
     attack_event = next(e for e in state.events if e.type == "attack_roll")
     assert "sneak_attack_damage" not in attack_event.payload
+
+
+def _monster(index: str, char_id: str, position: Position, hp: int | None = None) -> Character:
+    srd = load_srd()
+    monster = monster_to_character(srd.monsters[index], char_id, position)
+    if hp is not None:
+        monster.hp = monster.max_hp = hp
+    return monster
+
+
+# --- Divine Smite (issue #21) -------------------------------------------------
+
+
+def _paladin(position: Position | None = None) -> Character:
+    position = position or Position(x=0, y=0)
+    paladin = create_character(
+        character_id="thorin",
+        name="Thorin",
+        race_index="human",
+        class_index="paladin",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-persuasion"],
+        chosen_equipment=["longsword"],
+        position=position,
+    )
+    # A level-1 Paladin has zero spell slots at all, per SRD (see
+    # character_creation.SPELL_SLOTS_BY_LEVEL's docstring) - bump straight
+    # to level 2 with a slot to spend, bypassing level_up's HP/proficiency
+    # recompute since these tests are about Divine Smite, not leveling.
+    paladin.level = 2
+    paladin.spell_slots = {1: 2}
+    return paladin
+
+
+def test_divine_smite_adds_radiant_damage_and_spends_a_slot_on_a_hit() -> None:
+    # Thorin (Paladin, STR16->mod3, proficient longsword -> attack_bonus 5)
+    # vs a goblin (AC15, HP boosted so the hit doesn't clamp the reported
+    # amount). Natural 10 -> total 15 >= AC15 -> hit, not a crit. Weapon
+    # damage: die 5 + STR mod 3 = 8. Divine Smite (1st-level slot): 2d8
+    # ([4, 6] -> 10) - goblin isn't undead/fiend, no bonus die. Recorded
+    # damage = 8 + 10 = 18.
+    thorin = _paladin()
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(thorin, goblin)
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="longsword",
+        params={"smite_slot_level": 1},
+        raw_text="I strike and channel divine power through my blade",
+    )
+    resolve_action(state, action, _FixedRandom([10, 5, 4, 6]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["hit"] is True
+    assert attack_event.payload["critical"] is False
+    assert attack_event.payload["divine_smite_damage"] == 10
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 18
+    assert thorin.spell_slots[1] == 1
+
+
+def test_divine_smite_deals_an_extra_die_against_undead_or_fiends() -> None:
+    # Same Paladin vs a zombie (undead, AC8, no slashing resistance) -
+    # natural 6 -> total 11 >= AC8 -> hit, not a crit. Weapon damage: die 3
+    # + STR mod 3 = 6. Smite base dice for a 1st-level slot is 2d8, +1d8 for
+    # the undead target -> 3d8 ([2, 3, 4] -> 9). Recorded damage = 6 + 9 = 15.
+    thorin = _paladin()
+    zombie = _monster("zombie", "zombie_1", Position(x=0, y=0), hp=100)
+    state = _make_state(thorin, zombie)
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="zombie_1",
+        item_or_spell="longsword",
+        params={"smite_slot_level": 1},
+        raw_text="I strike the undead with divine fury",
+    )
+    resolve_action(state, action, _FixedRandom([6, 3, 2, 3, 4]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["divine_smite_damage"] == 9
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 15
+
+
+def test_divine_smite_dice_double_on_a_critical_hit() -> None:
+    # Natural 20 always hits and is always a crit, regardless of AC -
+    # doubles both the weapon's damage dice (existing engine behavior) and
+    # Divine Smite's own dice (issue #21 - it's extra damage on the same
+    # weapon attack, not a separate spell attack roll, same precedent as
+    # Sneak Attack doubling on a crit above). Weapon (1d8, doubled to 2d8):
+    # dice [5, 4] -> 9 + STR mod 3 = 12. Smite base dice for a 1st-level
+    # slot is 2d8, doubled to 4d8 (goblin isn't undead/fiend): dice
+    # [2, 2, 2, 2] -> 8. Recorded damage = 12 + 8 = 20.
+    thorin = _paladin()
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(thorin, goblin)
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="longsword",
+        params={"smite_slot_level": 1},
+        raw_text="I strike true, channeling everything into the blow",
+    )
+    resolve_action(state, action, _FixedRandom([20, 5, 4, 2, 2, 2, 2]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["critical"] is True
+    assert attack_event.payload["divine_smite_damage"] == 8
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 20
+
+
+def test_divine_smite_rejects_a_non_paladin() -> None:
+    thorin = _fighter()
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(thorin, goblin)
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="longsword",
+        params={"smite_slot_level": 1},
+        raw_text="I try to smite",
+    )
+    with pytest.raises(TurnEngineError, match="not a Paladin"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_divine_smite_rejects_when_no_slot_of_that_level_remains() -> None:
+    thorin = _paladin()
+    thorin.spell_slots = {1: 0}
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(thorin, goblin)
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="longsword",
+        params={"smite_slot_level": 1},
+        raw_text="I try to smite",
+    )
+    with pytest.raises(TurnEngineError, match="no level 1 spell slots remaining"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_divine_smite_rejects_a_ranged_weapon() -> None:
+    thorin = _paladin()
+    thorin.inventory.append("shortbow")
+    thorin.equipped_weapons = ["shortbow"]
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(thorin, goblin)
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        params={"smite_slot_level": 1},
+        raw_text="I loose an arrow and try to smite",
+    )
+    with pytest.raises(TurnEngineError, match="requires a melee weapon attack"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_divine_smite_can_trigger_on_each_swing_of_an_extra_attack() -> None:
+    # Level 5 (Extra Attack-eligible) Paladin, two 1st-level slots. Both
+    # swings hit (goblin AC15, natural 10 both times -> total 15) and both
+    # declare a smite - proving the slot check re-reads actor.spell_slots
+    # live on each swing rather than snapshotting availability once for the
+    # whole action.
+    thorin = _paladin()
+    thorin.level = 5
+    thorin.spell_slots = {1: 2}
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(thorin, goblin)
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="longsword",
+        params={"smite_slot_level": 1},
+        raw_text="I strike twice, channeling divine power into both blows",
+    )
+    resolve_action(state, action, _FixedRandom([10, 3, 1, 1, 10, 2, 1, 2]))  # type: ignore[arg-type]
+
+    attack_events = [e for e in state.events if e.type == "attack_roll"]
+    assert len(attack_events) == 2
+    assert attack_events[0].payload["divine_smite_damage"] == 2
+    assert attack_events[1].payload["divine_smite_damage"] == 3
+    assert thorin.spell_slots[1] == 0
+
+
+# --- Cunning Action (issue #21) -------------------------------------------------
+
+
+def test_cunning_action_dash_moves_double_speed_without_ending_the_turn() -> None:
+    # Fenwick (Halfling Rogue) bumped to level 2 for Cunning Action. A
+    # single-step path costs far less than even his base speed, so this
+    # isn't testing the distance math (that's _resolve_move's own job) -
+    # it's proving the verb dispatches through _resolve_move with dash's
+    # speed-doubling semantics, consumes the bonus action, and does NOT end
+    # the turn.
+    fenwick = _rogue()
+    fenwick.level = 2
+    state = _make_state(fenwick, _goblin("goblin_1", Position(x=9, y=9)))
+    action = ParsedAction(
+        actor="fenwick",
+        verb="cunning_action",
+        params={"action": "dash", "path": [{"x": 1, "y": 0}]},
+        raw_text="I dash to the side",
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert fenwick.position == Position(x=1, y=0)
+    assert fenwick.bonus_action_used is True
+    assert state.turn_order[state.current_turn] == "fenwick"  # still his turn
+    assert not any(e.type == "action_invalid" for e in state.events)
+
+
+def test_cunning_action_disengage_sets_the_flag_without_ending_the_turn() -> None:
+    fenwick = _rogue()
+    fenwick.level = 2
+    state = _make_state(fenwick, _goblin("goblin_1", Position(x=0, y=1)))
+    action = ParsedAction(
+        actor="fenwick",
+        verb="cunning_action",
+        params={"action": "disengage"},
+        raw_text="I slip away, disengaging in one smooth motion",
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert fenwick.disengaged_this_turn is True
+    assert fenwick.bonus_action_used is True
+    assert state.turn_order[state.current_turn] == "fenwick"
+
+
+def test_cunning_action_rejects_a_non_rogue() -> None:
+    thorin = _fighter()
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=9, y=9)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="cunning_action",
+        params={"action": "disengage"},
+        raw_text="I try to be nimble",
+    )
+    with pytest.raises(TurnEngineError, match="doesn't have Cunning Action"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_cunning_action_rejects_a_level_1_rogue() -> None:
+    fenwick = _rogue()  # level defaults to 1 at creation - too early for this feature
+    state = _make_state(fenwick, _goblin("goblin_1", Position(x=9, y=9)))
+    action = ParsedAction(
+        actor="fenwick",
+        verb="cunning_action",
+        params={"action": "disengage"},
+        raw_text="I try to slip away",
+    )
+    with pytest.raises(TurnEngineError, match="doesn't have Cunning Action"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_cunning_action_rejected_if_bonus_action_already_used() -> None:
+    fenwick = _rogue()
+    fenwick.level = 2
+    fenwick.bonus_action_used = True
+    state = _make_state(fenwick, _goblin("goblin_1", Position(x=9, y=9)))
+    action = ParsedAction(
+        actor="fenwick",
+        verb="cunning_action",
+        params={"action": "disengage"},
+        raw_text="I try to slip away",
+    )
+    with pytest.raises(TurnEngineError, match="already used their bonus action"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_cunning_action_rejects_an_unknown_sub_action() -> None:
+    # Hide isn't offered (see _resolve_cunning_action's docstring - this
+    # engine has no stealth/hidden-state mechanic at all yet), so it's
+    # rejected the same as any other unrecognized params["action"].
+    fenwick = _rogue()
+    fenwick.level = 2
+    state = _make_state(fenwick, _goblin("goblin_1", Position(x=9, y=9)))
+    action = ParsedAction(
+        actor="fenwick",
+        verb="cunning_action",
+        params={"action": "hide"},
+        raw_text="I try to hide",
+    )
+    with pytest.raises(TurnEngineError, match="'dash' or 'disengage'"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
