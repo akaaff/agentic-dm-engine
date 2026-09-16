@@ -12,6 +12,7 @@ import {
   type SkillSummary,
 } from '../api/client'
 import CharacterPreviewSheet from '../components/CharacterPreviewSheet'
+import { equipmentDetail } from '../utils/equipmentDetail'
 
 // Mirrors character_creation.VALID_GENDERS - portrait-selection only, no
 // mechanical weight (see that module's docstring).
@@ -626,16 +627,20 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               )}
               {proficientEquipment
                 .filter((e) => e.category === 'weapon')
-                .map((item) => (
-                  <label key={item.index} className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={chosenEquipment.includes(item.index)}
-                      onChange={() => toggleEquipment(item.index)}
-                    />
-                    {item.name}
-                  </label>
-                ))}
+                .map((item) => {
+                  const detail = equipmentDetail(item)
+                  return (
+                    <label key={item.index} className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={chosenEquipment.includes(item.index)}
+                        onChange={() => toggleEquipment(item.index)}
+                      />
+                      {item.name}
+                      {detail && <span className="companion-meta"> ({detail})</span>}
+                    </label>
+                  )
+                })}
             </fieldset>
             <fieldset>
               <legend>Armor</legend>
@@ -644,16 +649,20 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               )}
               {proficientEquipment
                 .filter((e) => e.category === 'armor')
-                .map((item) => (
-                  <label key={item.index} className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={chosenEquipment.includes(item.index)}
-                      onChange={() => toggleEquipment(item.index)}
-                    />
-                    {item.name}
-                  </label>
-                ))}
+                .map((item) => {
+                  const detail = equipmentDetail(item)
+                  return (
+                    <label key={item.index} className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={chosenEquipment.includes(item.index)}
+                        onChange={() => toggleEquipment(item.index)}
+                      />
+                      {item.name}
+                      {detail && <span className="companion-meta"> ({detail})</span>}
+                    </label>
+                  )
+                })}
             </fieldset>
             <div className="wizard-nav">
               <button type="button" onClick={() => setStep(3)}>
