@@ -74,6 +74,16 @@ export interface EquipmentSummary {
   index: string
   name: string
   category: 'weapon' | 'armor'
+  // Weapon-only (issue #15) - real SRD damage/property data, previously
+  // computed server-side for actual mechanics but never exposed here.
+  damage_dice: string | null
+  damage_type: string | null
+  properties: string[]
+  // Armor-only (issue #15).
+  ac_base: number | null
+  ac_dex_bonus: boolean
+  ac_max_bonus: number | null
+  stealth_disadvantage: boolean
 }
 
 export type AbilityScore = 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA'

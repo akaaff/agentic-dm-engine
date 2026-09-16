@@ -79,8 +79,38 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
   const hpPct = character.max_hp > 0 ? Math.max(0, (character.hp / character.max_hp) * 100) : 0
   const portrait = portraitUrl(character)
   const resourceEntries = Object.entries(character.class_resources)
-  const equipmentNames = new Map(equipment.map((e) => [e.index, e.name]))
-  const itemName = (idx: string) => equipmentNames.get(idx) ?? NON_SRD_ITEM_NAMES[idx] ?? idx
+  const equipmentByIndex = new Map(equipment.map((e) => [e.index, e]))
+  const itemName = (idx: string) => equipmentByIndex.get(idx)?.name ?? NON_SRD_ITEM_NAMES[idx] ?? idx
+
+  // Real SRD stats for an item (issue #15) - weapon damage/properties or
+  // armor AC/stealth - '' for anything with no equipment-map entry (the
+  // non-SRD potion, plain gear like clothes-common/pouch).
+  const itemDetail = (idx: string): string => {
+    const item = equipmentByIndex.get(idx)
+    if (!item) return ''
+    if (item.category === 'weapon') {
+      const parts: string[] = []
+      if (item.damage_dice) parts.push([item.damage_dice, item.damage_type].filter(Boolean).join(' '))
+      if (item.properties.length > 0) parts.push(item.properties.join(', '))
+      return parts.join(', ')
+    }
+    if (item.ac_base !== null && item.ac_base !== undefined) {
+      const isShield = item.name.toLowerCase().includes('shield')
+      const dexNote = item.ac_dex_bonus
+        ? item.ac_max_bonus !== null
+          ? ` + Dex (max ${item.ac_max_bonus})`
+          : ' + Dex'
+        : ''
+      const parts = [isShield ? `+${item.ac_base} AC${dexNote}` : `AC ${item.ac_base}${dexNote}`]
+      if (item.stealth_disadvantage) parts.push('disadvantage on Stealth')
+      return parts.join(', ')
+    }
+    return ''
+  }
+  const nameWithDetail = (idx: string): string => {
+    const detail = itemDetail(idx)
+    return detail ? `${itemName(idx)} (${detail})` : itemName(idx)
+  }
 
   // Grouped/counted, not a naive listing - the engine's inventory is a flat
   // list of item *instances* (a quiver of 20 arrows is 20 separate "arrow"
@@ -128,9 +158,9 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
       <p className="companion-meta">
         <strong>Equipped:</strong>{' '}
         {[
-          ...character.equipped_weapons.map(itemName),
-          ...(character.equipped_armor ? [itemName(character.equipped_armor)] : []),
-          ...(character.equipped_shield ? [itemName(character.equipped_shield)] : []),
+          ...character.equipped_weapons.map(nameWithDetail),
+          ...(character.equipped_armor ? [nameWithDetail(character.equipped_armor)] : []),
+          ...(character.equipped_shield ? [nameWithDetail(character.equipped_shield)] : []),
         ].join(', ') || 'nothing (unarmed, unarmored)'}
       </p>
 
@@ -199,7 +229,9 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
           <strong>Inventory:</strong>
           <p className="companion-meta">
             {[...inventoryCounts.entries()]
-              .map(([idx, count]) => (count > 1 ? `${itemName(idx)} x${count}` : itemName(idx)))
+              .map(([idx, count]) =>
+                count > 1 ? `${nameWithDetail(idx)} x${count}` : nameWithDetail(idx),
+              )
               .join(', ')}
           </p>
         </div>

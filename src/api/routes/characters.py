@@ -100,6 +100,23 @@ class EquipmentSummary(BaseModel):
     simplification (see character_creation.py's module docstring): the
     SRD's full nested starting-equipment-option trees aren't parsed, so this
     is a flat pick-any-number-of-these list, not a real option-tree UI."""
+    damage_dice: str | None = None
+    damage_type: str | None = None
+    properties: list[str] = []
+    """Weapon-only fields (issue #15) - the same SRD data turn_engine.py's
+    _pc_attack_params already reads for real damage/attack math, just never
+    surfaced to the frontend. `properties` is property names only (e.g.
+    "finesse", "light"), not the full {index,name,url} objects."""
+    ac_base: int | None = None
+    ac_dex_bonus: bool = False
+    ac_max_bonus: int | None = None
+    stealth_disadvantage: bool = False
+    """Armor-only fields (issue #15) - same shape rules.armor_ac already
+    reads. `ac_base` is a shield's flat bonus, not a full AC, when
+    category == "armor" but the SRD item's own armor_category is "Shield"
+    (there's no separate shield category here - shields are folded into
+    "armor" like everywhere else this endpoint's category split already
+    was, before this feature)."""
 
 
 class CreateCharacterRequest(BaseModel):
@@ -228,12 +245,29 @@ def list_equipment() -> list[EquipmentSummary]:
     result = []
     for item in srd.equipment.values():
         if item.get("weapon_category"):
+            damage = item.get("damage") or {}
             result.append(
-                EquipmentSummary(index=item["index"], name=item["name"], category="weapon")
+                EquipmentSummary(
+                    index=item["index"],
+                    name=item["name"],
+                    category="weapon",
+                    damage_dice=damage.get("damage_dice"),
+                    damage_type=(damage.get("damage_type") or {}).get("index"),
+                    properties=[p["index"] for p in (item.get("properties") or [])],
+                )
             )
         elif item.get("armor_category"):
+            ac_info = item.get("armor_class") or {}
             result.append(
-                EquipmentSummary(index=item["index"], name=item["name"], category="armor")
+                EquipmentSummary(
+                    index=item["index"],
+                    name=item["name"],
+                    category="armor",
+                    ac_base=ac_info.get("base"),
+                    ac_dex_bonus=bool(ac_info.get("dex_bonus")),
+                    ac_max_bonus=ac_info.get("max_bonus"),
+                    stealth_disadvantage=bool(item.get("stealth_disadvantage")),
+                )
             )
     return result
 
