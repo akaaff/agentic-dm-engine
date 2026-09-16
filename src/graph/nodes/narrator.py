@@ -9,7 +9,7 @@ from typing import Any
 
 from src.engine.events import Event
 from src.graph.state_schema import GraphState
-from src.llm.providers import chat, load_prompt
+from src.llm.providers import chat_english_only, load_prompt
 
 
 def _event_line(event: Event) -> str:
@@ -23,5 +23,5 @@ def narrator_node(state: GraphState) -> dict[str, Any]:
 
     events_summary = "\n".join(_event_line(e) for e in new_events)
     prompt = load_prompt("narrator").format(events_summary=events_summary)
-    narration = chat(messages=[{"role": "user", "content": prompt}], temperature=0.7)
+    narration = chat_english_only(messages=[{"role": "user", "content": prompt}], temperature=0.7)
     return {"narration": narration.strip()}

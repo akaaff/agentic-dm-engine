@@ -1,8 +1,10 @@
 """player_agent_node (Day 15) generates a companion's own free-text turn via
 the teacher model, then intent_parser (already real since Day 12) parses it
 normally - no separate companion-specific parsing path. These tests stay
-offline by monkeypatching chat() directly, mirroring how test_ws_session.py
-stubs narrator_fn instead of hitting a live model.
+offline by monkeypatching chat_english_only() directly (issue #16's
+English-only retry wrapper around chat() - the module calls this, not chat()
+itself, since Day 15), mirroring how test_ws_session.py stubs narrator_fn
+instead of hitting a live model.
 """
 
 from __future__ import annotations
@@ -76,11 +78,11 @@ def _graph_state(
 
 
 def _explode(*args: Any, **kwargs: Any) -> str:
-    raise AssertionError("chat() should not have been called")
+    raise AssertionError("chat_english_only() should not have been called")
 
 
 def test_bypasses_when_parsed_action_already_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(player_agent_module, "chat", _explode)
+    monkeypatch.setattr(player_agent_module, "chat_english_only", _explode)
     companion = _make_character("companion_grom", is_pc=True, is_companion=True)
     goblin = _make_character("goblin_1", is_pc=False)
     state = _make_state(companion, [goblin])
@@ -92,7 +94,7 @@ def test_bypasses_when_parsed_action_already_set(monkeypatch: pytest.MonkeyPatch
 
 
 def test_bypasses_when_raw_text_already_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(player_agent_module, "chat", _explode)
+    monkeypatch.setattr(player_agent_module, "chat_english_only", _explode)
     companion = _make_character("companion_grom", is_pc=True, is_companion=True)
     goblin = _make_character("goblin_1", is_pc=False)
     state = _make_state(companion, [goblin])
@@ -103,7 +105,7 @@ def test_bypasses_when_raw_text_already_set(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_bypasses_for_a_non_companion_actor(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(player_agent_module, "chat", _explode)
+    monkeypatch.setattr(player_agent_module, "chat_english_only", _explode)
     human_pc = _make_character("thorin", is_pc=True, is_companion=False)
     goblin = _make_character("goblin_1", is_pc=False)
     state = _make_state(human_pc, [goblin])
@@ -120,7 +122,7 @@ def test_generates_raw_text_for_a_companions_empty_turn(monkeypatch: pytest.Monk
         captured["prompt"] = messages[0]["content"]
         return "  I swing my axe at goblin_1.  \n"
 
-    monkeypatch.setattr(player_agent_module, "chat", _fake_chat)
+    monkeypatch.setattr(player_agent_module, "chat_english_only", _fake_chat)
     companion = _make_character(
         "companion_grom", is_pc=True, is_companion=True, persona="Gruff dwarf, loyal to a fault."
     )
@@ -140,7 +142,7 @@ def test_unconscious_companion_is_forced_to_a_death_save(monkeypatch: pytest.Mon
     # the persona LLM that - it kept declaring ordinary actions that
     # turn_engine rejected forever, hanging the encounter. No LLM call
     # should happen at all for this case (it's purely mechanical).
-    monkeypatch.setattr(player_agent_module, "chat", _explode)
+    monkeypatch.setattr(player_agent_module, "chat_english_only", _explode)
     companion = _make_character("companion_grom", is_pc=True, is_companion=True, hp=0)
     goblin = _make_character("goblin_1", is_pc=False)
     state = _make_state(companion, [goblin])
@@ -159,7 +161,7 @@ def test_dead_companion_is_not_forced_to_a_death_save(monkeypatch: pytest.Monkey
     def _fake_chat(messages: list[dict[str, str]], temperature: float = 0.7) -> str:
         return "I lie still."
 
-    monkeypatch.setattr(player_agent_module, "chat", _fake_chat)
+    monkeypatch.setattr(player_agent_module, "chat_english_only", _fake_chat)
     companion = _make_character("companion_grom", is_pc=True, is_companion=True, hp=0, is_dead=True)
     goblin = _make_character("goblin_1", is_pc=False)
     state = _make_state(companion, [goblin])

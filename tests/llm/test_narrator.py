@@ -7,6 +7,7 @@ import pytest
 from src.engine.events import Event
 from src.graph.nodes.narrator import narrator_node
 from src.graph.state_schema import GraphState
+from src.llm.providers import contains_cjk
 
 pytestmark = pytest.mark.llm
 
@@ -64,6 +65,7 @@ def test_narrator_describes_a_hit() -> None:
     assert narration
     assert "17" not in narration  # no leaked roll numbers
     assert "rolled" not in narration.lower()
+    assert not contains_cjk(narration)  # issue #16
 
 
 def test_narrator_describes_a_miss() -> None:
@@ -78,6 +80,7 @@ def test_narrator_describes_a_miss() -> None:
     ]
     narration = _narrate(events)
     assert narration
+    assert not contains_cjk(narration)  # issue #16
 
 
 def test_narrator_returns_empty_for_no_new_events() -> None:
@@ -89,11 +92,14 @@ def test_narrator_returns_empty_for_no_new_events() -> None:
         build_demo_party(),
         demo_initiative_rng(),  # type: ignore[arg-type]
     )
+    # build_encounter_state already populates initiative_rolled events
+    # (issue #14) - "no *new* events" means events_before must account for
+    # those, not assume a freshly-built GameState starts with none.
     state: GraphState = {
         "game_state": game_state,
         "raw_text": "",
         "parsed_action": None,
-        "events_before": 0,
+        "events_before": len(game_state.events),
         "round_before": 1,
         "narration": None,
         "scene_image_url": None,

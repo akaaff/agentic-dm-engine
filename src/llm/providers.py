@@ -25,6 +25,17 @@ from src.config import OLLAMA_BASE_URL, OLLAMA_TEACHER_MODEL
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
+# CJK Unified Ideographs + CJK punctuation/fullwidth forms - narrow on
+# purpose (not "any non-ASCII"), since legitimate English prose can contain
+# curly quotes, em dashes, or accented names that would otherwise trigger
+# needless retries. Issue #16: qwen2.5 (of Chinese origin) occasionally
+# drifts into Chinese despite an explicit English-only prompt instruction.
+_CJK_RE = re.compile(r"[一-鿿　-〿＀-￯]")
+
+
+def contains_cjk(text: str) -> bool:
+    return bool(_CJK_RE.search(text))
+
 
 @cache
 def load_prompt(name: str) -> str:
@@ -74,6 +85,32 @@ def chat(
     )
     response.raise_for_status()
     return str(response.json()["message"]["content"])
+
+
+def chat_english_only(
+    messages: list[dict[str, str]],
+    model: str = OLLAMA_TEACHER_MODEL,
+    temperature: float = 0.7,
+    attempts: int = 3,
+) -> str:
+    """`chat()`, retried up to `attempts` times if the response contains any
+    CJK characters (issue #16). Stripping the offending characters after the
+    fact isn't an option - a sentence can span both languages (e.g. "its
+    步伐轻巧..."), so removing just the non-English part leaves a broken
+    fragment, not a fixed one. A retry is a genuinely independent sample
+    (the drift isn't deterministic, so a retry has real odds of coming back
+    clean), matching the same validate-and-retry shape this project already
+    uses for structured output (chat_structured_best_effort, campaign_
+    generator's own retry loop) - just applied to a plain-text response
+    instead of a schema. Returns the last attempt even if every one still
+    contains CJK text, rather than nothing - a rare flawed narration is
+    still better than a missing one."""
+    result = ""
+    for _ in range(attempts):
+        result = chat(messages=messages, model=model, temperature=temperature)
+        if not contains_cjk(result):
+            return result
+    return result
 
 
 def chat_structured[T: BaseModel](

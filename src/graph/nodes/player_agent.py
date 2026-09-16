@@ -29,7 +29,7 @@ from src.engine.actions import ParsedAction
 from src.engine.state import Character, GameState
 from src.graph.personas import persona_block
 from src.graph.state_schema import GraphState
-from src.llm.providers import chat, load_prompt
+from src.llm.providers import chat_english_only, load_prompt
 
 
 def _character_summary_line(character: Character) -> str:
@@ -84,5 +84,5 @@ def player_agent_node(state: GraphState) -> dict[str, Any]:
         }
 
     prompt = _build_prompt(game_state, actor)
-    utterance = chat(messages=[{"role": "user", "content": prompt}], temperature=0.8)
+    utterance = chat_english_only(messages=[{"role": "user", "content": prompt}], temperature=0.8)
     return {"raw_text": utterance.strip()}

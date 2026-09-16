@@ -36,7 +36,7 @@ from src.engine.campaign import (
 from src.engine.encounter import DEFAULT_ENCOUNTERS_DIR, Encounter, MonsterSpawn
 from src.engine.position import BattleMap, Position, TerrainType
 from src.engine.srd_loader import SrdIndex, load_srd
-from src.llm.providers import chat_structured, load_prompt
+from src.llm.providers import chat_structured, contains_cjk, load_prompt
 
 # Curated, not "every CR<=0.5 SRD monster" (110 of those, including deer and
 # housecats) - kept to monsters comparable in toughness (2-13 HP) to what's
@@ -149,6 +149,22 @@ def _validate_generated(generated: BaseModel, size: CampaignSize) -> list[str]:
             problems.append(
                 f"scene {i} is type=skill_challenge but is missing its skill_challenge payload"
             )
+
+    # Issue #16: qwen2.5 (of Chinese origin) can drift into Chinese despite
+    # campaign_gen.md's explicit English-only instruction - feeds back into
+    # this same retry loop (with a problem description the model can act
+    # on) rather than a separate mechanism, since every generated-text field
+    # already flows through here.
+    if contains_cjk(generated.title) or contains_cjk(generated.description):  # type: ignore[attr-defined]
+        problems.append("title/description contains non-English text")
+    for i, scene in enumerate(scenes):
+        if contains_cjk(scene.narrative_intro):
+            problems.append(f"scene {i}'s narrative_intro contains non-English text")
+        if scene.skill_challenge is not None and (
+            contains_cjk(scene.skill_challenge.success_text)
+            or contains_cjk(scene.skill_challenge.failure_text)
+        ):
+            problems.append(f"scene {i}'s skill_challenge text contains non-English text")
 
     return problems
 
