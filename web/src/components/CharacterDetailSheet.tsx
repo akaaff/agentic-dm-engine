@@ -249,6 +249,8 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
           <li>Grapple / Shove</li>
           <li>Skill Check</li>
           <li>Use Item</li>
+          <li>Stabilize a dying ally</li>
+          <li>Death Save (while unconscious)</li>
           <li className={character.equip_used_this_turn ? 'detail-action-unavailable' : ''}>
             Equip (switch weapons - doesn't cost your turn)
           </li>

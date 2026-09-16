@@ -14,6 +14,7 @@ battle_map:
   spawn_points:
     party_1: { x: 0, y: 2 }
     party_2: { x: 1, y: 3 }
+    party_3: { x: 0, y: 3 }
     wolf_1: { x: 5, y: 1 }
     wolf_2: { x: 6, y: 2 }
     wolf_3: { x: 5, y: 3 }
@@ -29,4 +30,4 @@ monsters:
     character_id: wolf_3
     spawn_point: wolf_3
 
-party_spawn_points: [party_1, party_2]
+party_spawn_points: [party_1, party_2, party_3]
