@@ -34,6 +34,8 @@ EventType = Literal[
     "rage",
     "equip",
     "relentless_endurance",
+    "wild_shape",
+    "wild_shape_ended",
 ]
 
 

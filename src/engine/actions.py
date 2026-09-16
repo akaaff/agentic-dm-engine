@@ -29,6 +29,8 @@ ActionVerb = Literal[
     "offhand_attack",
     "cunning_action",
     "flurry_of_blows",
+    "wild_shape",
+    "revert_wild_shape",
     "end_turn",
     "invalid",
 ]
@@ -57,7 +59,11 @@ class ParsedAction(BaseModel):
     `params["action"] = "dash" | "disengage"`, plus `params["path"]` too
     when `action == "dash"` (the same shape a plain `dash` action uses).
     `flurry_of_blows` (Monk, issue #24) needs only `target` (like `attack`)
-    - always resolves as two unarmed strikes, no `item_or_spell`."""
+    - always resolves as two unarmed strikes, no `item_or_spell`.
+    `wild_shape` (Druid, issue #24) carries `params["beast_index"] = str`
+    (an SRD monster index, e.g. "wolf") - no target, it transforms the
+    actor. `revert_wild_shape` needs nothing at all - it only makes sense
+    while already transformed."""
     raw_text: str
     confidence: float | None = None
     """Set by the LLM intent parser; absent for scripted/hand-authored actions."""

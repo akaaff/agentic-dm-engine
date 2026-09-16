@@ -434,6 +434,33 @@ def monster_is_undead_or_fiend(target: Character, srd: SrdIndex) -> bool:
     return monster.get("type") in ("undead", "fiend")
 
 
+def max_wild_shape_cr(level: int) -> float:
+    """Druid's Wild Shape (issue #24) CR cap by level - 1/4 at levels 2-3,
+    1/2 from level 4 on, matching the real SRD table within this project's
+    roughly-level-1-5 scope (the table keeps rising further - 1 at level 8
+    - out of scope here, same PROFICIENCY_BONUS_BY_LEVEL-style boundary).
+    Callers gate `level < 2` themselves (Wild Shape doesn't exist at all
+    yet at level 1)."""
+    return 0.5 if level >= 4 else 0.25
+
+
+def wild_shape_beast_is_allowed(beast: SrdEntry, level: int) -> bool:
+    """Whether `beast` is a legal Wild Shape target at `level` (issue #24):
+    CR within max_wild_shape_cr, and never a flying speed (real SRD unlocks
+    that at level 8, out of this project's scope entirely) nor a swimming
+    speed below level 4 (real SRD unlocks that at level 4 - which happens
+    to be the same level the CR cap itself rises, per the real table)."""
+    cr = beast.get("challenge_rating", 999)
+    if cr > max_wild_shape_cr(level):
+        return False
+    speed = beast.get("speed", {})
+    if "fly" in speed:
+        return False
+    if "swim" in speed and level < 4:
+        return False
+    return True
+
+
 def monster_innate_spellcasting(monster_data: SrdEntry) -> SrdEntry | None:
     """The raw "Innate Spellcasting" special_ability entry's `spellcasting`
     sub-object (issue #22) - {ability, dc, modifier?, spells: [{name, level,

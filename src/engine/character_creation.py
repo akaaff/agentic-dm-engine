@@ -597,6 +597,14 @@ def level_up(
     if character.class_index == "monk":
         character.class_resources["ki"] = character.level
 
+    # Wild Shape uses (issue #24, Druid): fixed at 2 (unlike Ki, this
+    # doesn't scale further within this project's level 1-5 range - only
+    # *when* it becomes available changes), but still absent below level 2,
+    # mirroring Ki's own "not present at all until the feature exists"
+    # shape rather than a premature 0 entry.
+    if character.class_index == "druid" and character.level >= 2:
+        character.class_resources["wild_shape"] = 2
+
     if character.level in ABILITY_SCORE_IMPROVEMENT_LEVELS and ability_score_increase is not None:
         _validate_ability_score_increase(ability_score_increase)
         for ability, bonus in ability_score_increase.items():

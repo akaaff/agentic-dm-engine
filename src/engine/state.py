@@ -42,6 +42,23 @@ class Condition(BaseModel):
     source: str | None = None
 
 
+class WildShapeSnapshot(BaseModel):
+    """Druid's Wild Shape (issue #24) - exactly what turn_engine._resolve_
+    wild_shape swaps to the beast's own values and _resolve_revert_wild_
+    shape restores, taken the moment a transformation starts. `hp` is the
+    Druid's own hit points at that moment (a *voluntary* revert restores
+    this unchanged, per SRD - only a forced revert from dropping to 0 HP in
+    beast form carries damage over, see _apply_damage_and_handle_downing)."""
+
+    hp: int
+    max_hp: int
+    ac: int
+    stats: dict[AbilityScore, int]
+    speed: int
+    equipped_weapons: list[str]
+    monster_index: str | None
+
+
 class Character(BaseModel):
     id: str
     name: str
@@ -75,6 +92,20 @@ class Character(BaseModel):
     """Set only for monsters (see encounter.monster_to_character) - lets the
     turn engine re-look-up the SRD stat block's actions (attack bonus,
     damage dice) when this character attacks."""
+    wild_shape_beast_index: str | None = None
+    """Druid's Wild Shape (issue #24) - the SRD monster index currently
+    transformed into, or None in normal form. While set, `monster_index` is
+    ALSO temporarily set to this same value (turn_engine._resolve_wild_
+    shape) - a wild-shaped Druid becomes, for attack-resolution purposes,
+    exactly a monster character that still happens to have is_pc=True (see
+    _resolve_attack's existing monster_index-only branch, which never
+    checks is_pc), reusing that whole path for free instead of building a
+    parallel one."""
+    pre_wild_shape_snapshot: WildShapeSnapshot | None = None
+    """The Druid's own hp/max_hp/ac/stats/speed/equipped_weapons/
+    monster_index from the moment `wild_shape_beast_index` was set, restored
+    by turn_engine._resolve_revert_wild_shape (or a forced revert - see
+    _apply_damage_and_handle_downing)."""
     skill_proficiencies: list[str] = []
     """"skill-x" indices (same format as chosen_skills), populated by
     character_creation.py from chosen class skills + the background's fixed

@@ -19,6 +19,8 @@ Valid verbs and what they mean:
 - "offhand_attack": the player makes a bonus-action attack with their second (off-hand) weapon, only after already dual-wielding two light weapons, e.g. "I follow up with my other dagger" / "I stab with my off-hand blade". Set "target" to who they're attacking.
 - "cunning_action": the player (a Rogue) uses their bonus action to Dash or Disengage instead of their full action, e.g. "I use my quickness to dash away" / "I nimbly disengage as a bonus action". Set params.action to "dash" or "disengage" accordingly; if "dash", also set params.path the same way a plain "dash" verb would (a single-element list with the destination square) - only handle a single adjacent-square move, same rule as plain "move"/"dash".
 - "flurry_of_blows": the player (a Monk) spends a bonus action and a ki point to unleash a flurry of unarmed strikes, e.g. "I follow up with a flurry of blows" / "I unleash a flurry of punches and kicks". Set "target" to who they're striking.
+- "wild_shape": the player (a Druid) transforms into a beast, e.g. "I wild shape into a wolf" / "I transform into a wolf". Set params.beast_index to the beast's name/index (e.g. "wolf"). No target.
+- "revert_wild_shape": the player (a Druid) reverts from their beast form back to their normal shape, e.g. "I revert to my normal form" / "I shift back to myself". No target.
 - "end_turn": the player explicitly says they're done / pass / end their turn with no other action.
 - "invalid": use this for anything nonsensical, out of scope for the game, referencing a character that isn't listed below, or that doesn't fit any verb above.
 

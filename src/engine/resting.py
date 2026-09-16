@@ -30,10 +30,30 @@ from src.engine.dice import roll
 from src.engine.rules import ability_modifier, set_exhaustion_level
 from src.engine.state import Character
 
-_SHORT_REST_RESOURCES = {"second_wind"}
-"""Phase 9I: class_resources keys that recover on a short rest, per SRD
-(Second Wind). Everything else in CLASS_RESOURCES_AT_LEVEL_1 (currently
-just "rage") recovers on a long rest instead - see apply_long_rest."""
+_SHORT_REST_RESOURCES = {"second_wind", "wild_shape"}
+"""Phase 9I/issue #24: class_resources keys that recover on a short rest,
+per SRD (Second Wind, Wild Shape). Everything else in
+_max_class_resources's output (currently "rage" and "ki") recovers on a
+long rest instead - see apply_long_rest."""
+
+
+def _max_class_resources(class_index: str | None, level: int) -> dict[str, int]:
+    """Every class_resource's current max for `class_index` at `level` -
+    CLASS_RESOURCES_AT_LEVEL_1's fixed value for Second Wind/Rage (a
+    documented simplification: those don't scale with level in this
+    project), plus the two resources that genuinely do (issue #24): Monk's
+    Ki (= character level, mirroring level_up's own identical formula) and
+    Druid's Wild Shape (fixed at 2 uses, but only available from level 2
+    on - absent below that, same as a level-1 Monk having no "ki" key at
+    all). Used by both rest functions so a long rest's full-dict
+    replacement and a short rest's single-key restore agree on the same
+    numbers, rather than each hardcoding its own copy."""
+    resources = dict(CLASS_RESOURCES_AT_LEVEL_1.get(class_index or "", {}))
+    if class_index == "monk":
+        resources["ki"] = level
+    if class_index == "druid" and level >= 2:
+        resources["wild_shape"] = 2
+    return resources
 
 
 def apply_short_rest(party: list[Character], rng: random.Random) -> None:
@@ -45,18 +65,19 @@ def apply_short_rest(party: list[Character], rng: random.Random) -> None:
     SRD math doesn't rule out), clamped at max_hp. `hit_dice_remaining` is
     left at 0 afterward for anyone who rested.
 
-    Also restores any Phase 9I class_resources that recover on a short rest
-    (Second Wind) to their level-1 max - real leveling (Phase 9J) doesn't
-    scale these resources yet, so "level-1 max" is the only max there is.
-    A character with no hit dice remaining (already spent this long-rest
-    cycle) still gets their short-rest class resources restored - those are
-    two independent SRD mechanics, not the same budget.
+    Also restores any class_resources that recover on a short rest (Second
+    Wind, Wild Shape) to their current max via _max_class_resources - not
+    just a level-1 value, now that issue #24 added a resource (Wild Shape)
+    that's only available from level 2 on. A character with no hit dice
+    remaining (already spent this long-rest cycle) still gets their
+    short-rest class resources restored - those are two independent SRD
+    mechanics, not the same budget.
     """
     for character in party:
+        max_resources = _max_class_resources(character.class_index, character.level)
         for resource in _SHORT_REST_RESOURCES:
-            max_uses = CLASS_RESOURCES_AT_LEVEL_1.get(character.class_index or "", {}).get(resource)
-            if max_uses is not None:
-                character.class_resources[resource] = max_uses
+            if resource in max_resources:
+                character.class_resources[resource] = max_resources[resource]
 
         if character.hit_dice_remaining <= 0:
             continue
@@ -73,14 +94,21 @@ def apply_long_rest(party: list[Character]) -> None:
     with no entry), hit dice reset to one per character level (issue #20 -
     was hardcoded to 1 regardless of level), exhaustion reduced by one level
     (rules.set_exhaustion_level already floors at 0), every class_resource
-    restored to its level-1 max (short-rest ones like Second Wind recover
-    here too - a long rest is a superset of a short rest's benefits, per
-    SRD - real leveling, Phase 9J, doesn't scale these resources yet, so
-    "level-1 max" is still the only max there is), Rage ends
+    restored to its current max via _max_class_resources (short-rest ones
+    like Second Wind/Wild Shape recover here too - a long rest is a
+    superset of a short rest's benefits, per SRD) - issue #24 found and
+    fixed a real bug here: this used to rebuild class_resources from the
+    level-1-only table unconditionally, which would have silently wiped a
+    leveled Monk's Ki back to nothing (a level-1 Monk has no "ki" key at
+    all) every time they took a long rest, the exact same class of bug
+    issue #20 already found and fixed for spell slots/hit dice - Rage ends
     (Character.is_raging - this engine doesn't model rage's real mid-combat
     duration/maintenance conditions, so "clears on any rest" is the
     documented substitute, not a silent omission), and a Half-Orc's
-    Relentless Endurance (issue #23) becomes available again."""
+    Relentless Endurance (issue #23) becomes available again. Doesn't touch
+    a Druid's Wild Shape state either way (issue #24) - resting mid-combat
+    encounter while transformed isn't a scenario campaign_runner's rest
+    flow can actually reach, so it's left alone rather than guessed at."""
     for character in party:
         character.hp = character.max_hp
         character.spell_slots = dict(
@@ -88,8 +116,6 @@ def apply_long_rest(party: list[Character]) -> None:
         )
         character.hit_dice_remaining = character.level
         set_exhaustion_level(character, character.exhaustion_level - 1)
-        character.class_resources = dict(
-            CLASS_RESOURCES_AT_LEVEL_1.get(character.class_index or "", {})
-        )
+        character.class_resources = _max_class_resources(character.class_index, character.level)
         character.is_raging = False
         character.used_relentless_endurance_this_rest = False

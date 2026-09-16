@@ -138,6 +138,56 @@ def test_apply_long_rest_refreshes_relentless_endurance() -> None:
     assert character.used_relentless_endurance_this_rest is False
 
 
+def test_apply_long_rest_does_not_wipe_a_leveled_monks_ki() -> None:
+    # Issue #24 regression: apply_long_rest used to unconditionally rebuild
+    # class_resources from the level-1-only table, which has no "ki" entry
+    # at all - a leveled Monk's Ki would have been silently wiped to
+    # nothing on every long rest, the exact class of bug issue #20 already
+    # found and fixed for spell slots/hit dice.
+    character = _character(class_index="monk", level=3, class_resources={"ki": 1}, spell_slots={})
+
+    apply_long_rest([character])
+
+    assert character.class_resources == {"ki": 3}
+
+
+def test_apply_long_rest_restores_wild_shape_uses_for_a_leveled_druid() -> None:
+    character = _character(
+        class_index="druid", level=4, class_resources={"wild_shape": 0}, spell_slots={}
+    )
+
+    apply_long_rest([character])
+
+    assert character.class_resources == {"wild_shape": 2}
+
+
+def test_apply_long_rest_gives_a_level_1_druid_no_wild_shape_entry() -> None:
+    # SRD: no Wild Shape at all until level 2.
+    character = _character(class_index="druid", level=1, spell_slots={})
+
+    apply_long_rest([character])
+
+    assert character.class_resources == {}
+
+
+def test_apply_short_rest_restores_wild_shape_but_not_ki() -> None:
+    # Wild Shape recovers on a short OR long rest (per SRD); Ki only
+    # recovers on a long rest - a short rest should touch one, not both.
+    character = _character(
+        class_index="druid", level=4, class_resources={"wild_shape": 0}, hit_dice_remaining=0
+    )
+
+    apply_short_rest([character], _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert character.class_resources["wild_shape"] == 2
+
+    monk = _character(class_index="monk", level=3, class_resources={"ki": 0}, hit_dice_remaining=0)
+
+    apply_short_rest([monk], _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert monk.class_resources["ki"] == 0  # untouched - Ki isn't a short-rest resource
+
+
 def test_apply_long_rest_reduces_exhaustion_by_one() -> None:
     character = _character(exhaustion_level=3)
 

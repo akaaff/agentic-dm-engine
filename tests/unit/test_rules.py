@@ -16,6 +16,7 @@ from src.engine.rules import (
     has_relentless_endurance,
     is_class_proficient_with,
     is_monk_weapon,
+    max_wild_shape_cr,
     monk_martial_arts_die_sides,
     monster_action_range_feet,
     monster_damage_multiplier,
@@ -35,6 +36,7 @@ from src.engine.rules import (
     spell_mechanic,
     spell_range_feet,
     weapon_range_feet,
+    wild_shape_beast_is_allowed,
 )
 from src.engine.srd_loader import load_srd
 from src.engine.state import AbilityScore, Character, Condition, ConditionName
@@ -393,6 +395,29 @@ def test_is_monk_weapon_matches_real_srd_data() -> None:
     assert is_monk_weapon(srd.equipment["quarterstaff"]) is True
     assert is_monk_weapon(srd.equipment["longsword"]) is False  # Martial, no "monk" tag
     assert is_monk_weapon(srd.equipment["longbow"]) is False  # ranged
+
+
+def test_max_wild_shape_cr_rises_at_level_4() -> None:
+    assert max_wild_shape_cr(2) == 0.25
+    assert max_wild_shape_cr(3) == 0.25
+    assert max_wild_shape_cr(4) == 0.5
+    assert max_wild_shape_cr(5) == 0.5
+
+
+def test_wild_shape_beast_is_allowed_matches_real_srd_data() -> None:
+    srd = load_srd()
+    wolf = srd.monsters["wolf"]  # CR 0.25, walk only
+    black_bear = srd.monsters["black-bear"]  # CR 0.5, walk + climb
+    snake = srd.monsters["giant-poisonous-snake"]  # CR 0.25, walk + swim
+    owl = srd.monsters["giant-owl"]  # CR 0.25, walk + fly
+
+    assert wild_shape_beast_is_allowed(wolf, 2) is True
+    assert wild_shape_beast_is_allowed(black_bear, 2) is False  # CR 0.5 > max 0.25 at level 2
+    assert wild_shape_beast_is_allowed(black_bear, 4) is True  # CR cap rises to 0.5 at level 4
+    assert wild_shape_beast_is_allowed(snake, 2) is False  # swim speed, too early
+    assert wild_shape_beast_is_allowed(snake, 4) is True  # swim unlocks at level 4
+    assert wild_shape_beast_is_allowed(owl, 2) is False  # fly speed, never allowed in this scope
+    assert wild_shape_beast_is_allowed(owl, 5) is False
 
 
 def test_armor_ac_unarmored_is_10_plus_dex() -> None:

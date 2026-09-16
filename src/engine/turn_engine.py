@@ -127,6 +127,7 @@ from src.engine.actions import ParsedAction
 from src.engine.character_creation import is_eligible_for_extra_attack
 from src.engine.conditions import apply_condition, has_condition, remove_condition, tick_conditions
 from src.engine.dice import roll
+from src.engine.encounter import monster_to_character
 from src.engine.events import Event
 from src.engine.movement import can_afford_move, move_cost_feet
 from src.engine.position import Position, distance_feet
@@ -145,6 +146,7 @@ from src.engine.rules import (
     has_relentless_endurance,
     is_class_proficient_with,
     is_monk_weapon,
+    max_wild_shape_cr,
     monk_martial_arts_die_sides,
     monster_action_range_feet,
     monster_damage_multiplier,
@@ -165,9 +167,17 @@ from src.engine.rules import (
     spell_range_feet,
     weapon_combo_is_legal,
     weapon_range_feet,
+    wild_shape_beast_is_allowed,
 )
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
-from src.engine.state import AbilityScore, Character, Condition, ConditionName, GameState
+from src.engine.state import (
+    AbilityScore,
+    Character,
+    Condition,
+    ConditionName,
+    GameState,
+    WildShapeSnapshot,
+)
 from src.engine.turn_order import next_turn
 
 _DICE_NOTATION_RE = re.compile(r"(\d+)d(\d+)([+-]\d+)?")
@@ -906,6 +916,117 @@ def _resolve_flurry_of_blows(
     return False
 
 
+def _resolve_wild_shape(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> bool:
+    """Druid's Wild Shape (issue #24): transforms into a beast statblock.
+    A full action (ends the turn) - SRD's bonus-action version doesn't
+    unlock until level 20, out of this project's scope. Design: a wild-
+    shaped Druid becomes, for attack-resolution purposes, exactly a
+    monster character that still happens to have is_pc=True - setting
+    `monster_index` to the beast reuses _resolve_attack's entire existing
+    monster-attack path for free (it only ever branches on monster_index,
+    never is_pc), rather than building a parallel one. Duration isn't
+    tracked as real elapsed time (this engine has no hour-granularity clock
+    at all) - it persists until _resolve_revert_wild_shape, a forced revert
+    from dropping to 0 HP (_apply_damage_and_handle_downing), or a rest -
+    the same documented simplification already accepted for Rage's real
+    duration."""
+    del rng  # accepted only so this resolver's signature matches its siblings
+    if actor.class_index != "druid" or actor.level < 2:
+        raise TurnEngineError(f"{actor.id} doesn't have Wild Shape")
+    if actor.wild_shape_beast_index is not None:
+        raise TurnEngineError(f"{actor.id} is already wild-shaped")
+    beast_index = action.params.get("beast_index")
+    if not beast_index:
+        raise TurnEngineError("wild_shape action requires params['beast_index']")
+    beast = srd.monsters.get(beast_index)
+    if beast is None:
+        raise TurnEngineError(f"Unknown monster: {beast_index!r}")
+    if not wild_shape_beast_is_allowed(beast, actor.level):
+        raise TurnEngineError(
+            f"{actor.id} cannot Wild Shape into {beast['name']} at level {actor.level} "
+            f"(max CR {max_wild_shape_cr(actor.level)}, no flying speed, no swimming speed "
+            "below level 4)"
+        )
+
+    _use_class_resource(actor, "wild_shape")
+
+    actor.pre_wild_shape_snapshot = WildShapeSnapshot(
+        hp=actor.hp,
+        max_hp=actor.max_hp,
+        ac=actor.ac,
+        stats=dict(actor.stats),
+        speed=actor.speed,
+        equipped_weapons=list(actor.equipped_weapons),
+        monster_index=actor.monster_index,
+    )
+    beast_character = monster_to_character(beast, actor.id, actor.position)
+    actor.hp = beast_character.hp
+    actor.max_hp = beast_character.max_hp
+    actor.ac = beast_character.ac
+    actor.stats = beast_character.stats
+    actor.speed = beast_character.speed
+    actor.equipped_weapons = []
+    actor.monster_index = beast_index
+    actor.wild_shape_beast_index = beast_index
+
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="wild_shape",
+            payload={"beast": beast["name"]},
+        )
+    )
+    return True
+
+
+def _apply_wild_shape_snapshot(actor: Character) -> None:
+    """Restores everything Wild Shape swapped except hp, which each caller
+    sets on its own first - unchanged for a voluntary revert, overflow-
+    adjusted for a forced one (_resolve_revert_wild_shape /
+    _apply_damage_and_handle_downing)."""
+    snapshot = actor.pre_wild_shape_snapshot
+    assert snapshot is not None
+    actor.max_hp = snapshot.max_hp
+    actor.ac = snapshot.ac
+    actor.stats = snapshot.stats
+    actor.speed = snapshot.speed
+    actor.equipped_weapons = snapshot.equipped_weapons
+    actor.monster_index = snapshot.monster_index
+    actor.wild_shape_beast_index = None
+    actor.pre_wild_shape_snapshot = None
+
+
+def _resolve_revert_wild_shape(state: GameState, actor: Character) -> bool:
+    """Voluntary revert (issue #24) - a bonus action per SRD, restoring
+    hp exactly as it was before transforming (only a forced 0-HP revert
+    carries damage over - see _apply_damage_and_handle_downing)."""
+    if actor.wild_shape_beast_index is None:
+        raise TurnEngineError(f"{actor.id} is not wild-shaped")
+    if actor.bonus_action_used:
+        raise TurnEngineError(
+            f"{actor.id} has already used their bonus action this turn - cannot revert Wild Shape"
+        )
+    snapshot = actor.pre_wild_shape_snapshot
+    assert snapshot is not None
+    actor.hp = snapshot.hp
+    _apply_wild_shape_snapshot(actor)
+    actor.bonus_action_used = True
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="wild_shape_ended",
+            payload={"forced": False},
+        )
+    )
+    return False
+
+
 def _target_saving_throw_bonus(target: Character, ability: AbilityScore, srd: SrdIndex) -> int:
     """The one saving-throw lookup every Phase 9D call site needs (a
     target's own save, whether resisting a spell or resisting concentration
@@ -983,6 +1104,33 @@ def _apply_damage_and_handle_downing(
     # "resistance halves damage, rounded down" for the 0.5 case.
     damage = int(damage * monster_damage_multiplier(target, damage_type, srd))
     actual_loss = apply_damage(target, damage)
+
+    # Druid's Wild Shape (issue #24): the beast form, not the Druid's real
+    # body, just hit 0 HP - force a revert (SRD: "you revert if you drop to
+    # 0 hit points... any excess damage carries over to your normal form"),
+    # using the same damage/actual_loss overflow math issue #23's
+    # Relentless Endurance hook below already needed. Falls through (no
+    # return) rather than handling death/unconsciousness itself - once
+    # reverted, target.monster_index is back to whatever it really was
+    # (None for a PC Druid), so the ordinary is_pc/unconscious logic below,
+    # and even Relentless Endurance right below this if the Druid also
+    # happens to be a Half-Orc, now run correctly against the real,
+    # reverted character rather than the beast.
+    if target.hp == 0 and target.wild_shape_beast_index is not None:
+        overflow = damage - actual_loss
+        snapshot = target.pre_wild_shape_snapshot
+        assert snapshot is not None
+        target.hp = max(0, snapshot.hp - overflow)
+        _apply_wild_shape_snapshot(target)
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=target.id,
+                type="wild_shape_ended",
+                payload={"forced": True, "overflow_damage": overflow},
+            )
+        )
 
     # Half-Orc's Relentless Endurance (issue #23): reduced to 0 HP, not
     # already unconscious from an earlier hit this fight (that "already
@@ -2611,6 +2759,10 @@ def resolve_action(
         ends_turn = _resolve_cunning_action(state, actor, action, rng, srd)
     elif action.verb == "flurry_of_blows":
         ends_turn = _resolve_flurry_of_blows(state, actor, action, rng, srd)
+    elif action.verb == "wild_shape":
+        ends_turn = _resolve_wild_shape(state, actor, action, rng, srd)
+    elif action.verb == "revert_wild_shape":
+        ends_turn = _resolve_revert_wild_shape(state, actor)
     elif action.verb == "use_item":
         _resolve_use_item(state, actor, action, rng)
     elif action.verb == "death_save":
