@@ -336,11 +336,29 @@ def _pc_attack_params(
         if weapon is None:
             weapon = _match_weapon_by_name(weapon_index, equipped)
         if weapon is None:
-            equipped_names = ", ".join(item["name"] for item in equipped) or "nothing (unarmed)"
-            raise TurnEngineError(
-                f"{weapon_index!r} isn't in {actor.id}'s equipped weapon set "
-                f"(currently: {equipped_names}) - use 'equip' to switch weapons first"
-            )
+            # Found live: a ranged-weapon user's own free-text turn (here a
+            # companion Ranger's) is just as likely to name their
+            # *ammunition* ("I nock an arrow and fire") as the bow itself -
+            # intent_parser has no way to know "arrow" isn't a weapon, only
+            # that it's the concrete noun in the sentence. Only reject when
+            # weapon_index resolves to a real SRD entry that's genuinely a
+            # weapon the actor isn't currently holding (the intended "wrong
+            # weapon, equip first" case, e.g. naming a longsword while only
+            # a dagger is equipped) - a real SRD entry that isn't a weapon
+            # at all (ammunition, adventuring gear) falls back to whatever's
+            # equipped instead, same as naming none. Gibberish that matches
+            # no real SRD item either way (e.g. "my fireproof toaster")
+            # keeps raising - that's a genuinely confused declaration, not
+            # a same-hand-different-noun case like ammunition.
+            real_item = srd.equipment.get(weapon_index)
+            if real_item is not None and not real_item.get("weapon_category"):
+                weapon = equipped[0] if equipped else None
+            else:
+                equipped_names = ", ".join(item["name"] for item in equipped) or "nothing (unarmed)"
+                raise TurnEngineError(
+                    f"{weapon_index!r} isn't in {actor.id}'s equipped weapon set "
+                    f"(currently: {equipped_names}) - use 'equip' to switch weapons first"
+                )
     elif equipped:
         weapon = equipped[0]
 

@@ -207,6 +207,58 @@ def test_attack_rejected_with_a_weapon_no_longer_equipped() -> None:
         resolve_action(state, attack_with_longsword, _FixedRandom([]))  # type: ignore[arg-type]
 
 
+def test_attack_naming_ammunition_falls_back_to_the_equipped_ranged_weapon() -> None:
+    # Found live: a companion's own free-text turn ("I nock an arrow and
+    # fire") named the ammunition, not the bow - "arrow" is a real SRD item
+    # (Adventuring Gear/Ammunition, not a weapon), so it isn't actually
+    # naming a different weapon the way "longsword" does in the sibling
+    # test above. Should resolve against the equipped Longbow instead of
+    # rejecting with "use equip first".
+    archer = create_character(
+        character_id="silvana",
+        name="Silvana",
+        race_index="elf",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 10, "DEX": 15, "CON": 13, "INT": 12, "WIS": 14, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+        chosen_equipment=["longbow"],
+        position=Position(x=0, y=0),
+    )
+    goblin = _goblin("goblin_1", Position(x=6, y=0))
+    state = _make_state(archer, goblin)
+
+    action = ParsedAction(
+        actor="silvana",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="arrow",
+        raw_text="I nock an arrow and fire",
+    )
+    resolve_action(state, action, _FixedRandom([10, 3]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["source"] == "Longbow"
+
+
+def test_attack_naming_gibberish_still_rejects() -> None:
+    # Contrast with the ammunition case above - "my fireproof toaster"
+    # isn't a real SRD item at all, so it's a genuinely confused
+    # declaration rather than a same-hand-different-noun case, and should
+    # still surface a clear error rather than silently guessing.
+    thorin = _fighter()
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="my fireproof toaster",
+        raw_text="I attack with my fireproof toaster",
+    )
+    with pytest.raises(TurnEngineError, match="isn't in thorin's equipped weapon set"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
 def test_equip_rejected_a_second_time_in_the_same_turn() -> None:
     thorin = _fighter()
     thorin.inventory += ["dagger", "greataxe"]
