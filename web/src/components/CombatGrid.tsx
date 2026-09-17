@@ -88,8 +88,6 @@ export default function CombatGrid({
     <svg
       className="combat-grid"
       viewBox={`0 0 ${width} ${height}`}
-      width={width}
-      height={height}
       role="img"
       aria-label="Combat grid"
     >
