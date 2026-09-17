@@ -267,9 +267,23 @@ export function useSessionSocket(sessionId: string) {
           lastEventCountRef.current = message.game_state.events.length
           const pendingText = pendingNarrationRef.current
           pendingNarrationRef.current = null
-          if (pendingText || newEvents.length > 0) {
+          if (pendingText || newEvents.length > 0 || entryQueueRef.current.length > 0) {
             // Held back until this entry is actually revealed (drainNext) -
-            // see NarrationEntry.gameStateSnapshot's docstring.
+            // see NarrationEntry.gameStateSnapshot's docstring. The queue
+            // check matters even when THIS update has no text/events of its
+            // own: found live going straight from a campaign's pre-combat
+            // hook into its first fight - the connect flow's own trailing
+            // state_update (sent once encounter setup finishes) can be a
+            // genuine duplicate of one already broadcast moments earlier
+            // (same event count, no new narration), which used to qualify
+            // for the "nothing paces me" fast path below and apply
+            // immediately - flipping gameState (and so the combat-grid-vs-
+            // scene-image panel, which reads battle_map/status straight off
+            // it) to the fully-resolved combat state while the hook
+            // narration ahead of it in the queue was still being revealed
+            // one entry at a time. Whether THIS message needs pacing isn't
+            // the right question - whether anything else is already ahead
+            // of it in the queue is.
             enqueueEntry({
               text: pendingText ?? '',
               kind: 'action',
@@ -277,8 +291,8 @@ export function useSessionSocket(sessionId: string) {
               gameStateSnapshot: message.game_state,
             })
           } else {
-            // Nothing queued for this update (no narration, no new events) -
-            // nothing paces it, so apply it right away.
+            // Nothing of its own to pace, and nothing already queued for it
+            // to jump ahead of - safe to apply right away.
             setGameState(message.game_state)
           }
           break
