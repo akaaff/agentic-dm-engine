@@ -70,6 +70,28 @@ def _invalid_action(state: GraphState) -> ParsedAction:
     return ParsedAction(actor=actor_id, verb="invalid", raw_text=state["raw_text"])
 
 
+def _normalize_cast_spell_target(action: ParsedAction) -> ParsedAction:
+    """Found live: even with the prompt explicitly telling the model to set
+    the top-level "target" field for cast_spell (never nest it in params -
+    see intent_parser.md), it still fairly often answers with
+    params["target"]/params["targets"] instead - a real, fairly consistent
+    quirk of this model on this one field, confirmed by direct repeated
+    testing, not something further prompt wording reliably fixes (a more
+    verbose instruction covering the multi-target case actively made the
+    single-target case *worse*). Promoting a stray params entry here is a
+    deterministic, model-agnostic safety net: the data the model extracted
+    is already correct, it's just in the wrong place in the JSON."""
+    if action.verb != "cast_spell" or action.target or action.targets:
+        return action
+    stray_target = action.params.get("target")
+    stray_targets = action.params.get("targets")
+    if isinstance(stray_target, str):
+        return action.model_copy(update={"target": stray_target})
+    if isinstance(stray_targets, list) and all(isinstance(t, str) for t in stray_targets):
+        return action.model_copy(update={"targets": stray_targets})
+    return action
+
+
 def intent_parser_node(state: GraphState) -> dict[str, Any]:
     if state["parsed_action"] is not None:
         return {"parsed_action": state["parsed_action"]}
@@ -81,7 +103,9 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         from src.llm.local_parser import parse_intent_local
 
         action = parse_intent_local(prompt, config.INTENT_PARSER_ADAPTER_DIR)
-        return {"parsed_action": action or _invalid_action(state)}
+        if action is None:
+            return {"parsed_action": _invalid_action(state)}
+        return {"parsed_action": _normalize_cast_spell_target(action)}
 
     if backend == "finetuned_ollama":
         action = chat_structured_best_effort(
@@ -90,11 +114,13 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
             model=config.INTENT_PARSER_OLLAMA_MODEL,
             temperature=0.2,
         )
-        return {"parsed_action": action or _invalid_action(state)}
+        if action is None:
+            return {"parsed_action": _invalid_action(state)}
+        return {"parsed_action": _normalize_cast_spell_target(action)}
 
     action = chat_structured(
         messages=[{"role": "user", "content": prompt}],
         schema=ParsedAction,
         temperature=0.2,
     )
-    return {"parsed_action": action}
+    return {"parsed_action": _normalize_cast_spell_target(action)}

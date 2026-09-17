@@ -48,6 +48,11 @@ class ParsedAction(BaseModel):
     `params["move_to"] = {"x": int, "y": int}`; `skill_check` carries
     `params["skill"] = str`; `equip` carries `params["items"] = [str, ...]`
     (the weapon/armor/shield indices to make the new active equipped set).
+    `cast_spell` needs `target` (or `targets` for a multi-target cast, e.g.
+    Burning Hands) the same way `attack` does - found live: the intent-
+    parser prompt never actually told the model to set it, so a spell cast
+    naming a real target could still reach turn_engine with neither field
+    set and get rejected as "requires a target."
     `offhand_attack` needs only `target` (like `attack`) - always resolves
     against the actor's second equipped weapon, no `item_or_spell`.
     `attack` may optionally carry `params["smite_slot_level"] = int`

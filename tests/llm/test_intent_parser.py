@@ -41,6 +41,11 @@ def _parse(utterance: str) -> dict[str, Any]:
 GOLDEN_CASES = [
     ("I attack goblin_1 with my sword", "attack", "goblin_1", None),
     ("I attack goblin_2", "attack", "goblin_2", None),
+    # Found live: the model needed an explicit "never nest it inside params"
+    # instruction and a code-level fallback (intent_parser_node's
+    # _normalize_cast_spell_target) before this reliably set "target" at
+    # all - it kept answering with params["target"] instead.
+    ("I cast acid splash at goblin_1", "cast_spell", "goblin_1", None),
     ("I dodge incoming attacks", "dodge", None, None),
     ("I disengage and back away from combat", "disengage", None, None),
     ("I use a healing potion from my inventory", "use_item", None, None),
