@@ -30,59 +30,34 @@ function initials(name: string): string {
     .toUpperCase()
 }
 
-/** One combat-grid token, at local (0,0) - the caller wraps it in a
- * translate(cx,cy) group. Renders the character's portrait clipped to the
- * shared circular clipPath, falling back to the original colored-circle +
- * initials rendering (via React state, not just CSS) whenever portraitUrl
- * returns null - not yet enough data to pick one - or the <image> itself
- * fails to load, which is the expected/common case until the portrait
- * batch job has generated that particular combination. */
-function TokenFace({
-  character,
-  baseColor,
-  stroke,
-  strokeWidth,
-}: {
-  character: LiveCharacter
-  baseColor: string
-  stroke: string
-  strokeWidth: number
-}) {
+/** One combat-grid token's face, at local (0,0) - the caller wraps it in a
+ * translate(cx,cy) group and draws the identity label/turn ring on top (see
+ * CombatGrid's own map call below) so both are visible regardless of which
+ * branch here rendered. Renders the character's portrait clipped to the
+ * shared circular clipPath, falling back to a plain colored circle (via
+ * React state, not just CSS) whenever portraitUrl returns null - not yet
+ * enough data to pick one - or the <image> itself fails to load, which is
+ * the expected/common case until the portrait batch job has generated that
+ * particular combination. */
+function TokenFace({ character, baseColor }: { character: LiveCharacter; baseColor: string }) {
   const [imageFailed, setImageFailed] = useState(false)
   const url = portraitUrl(character)
 
   if (url && !imageFailed) {
     return (
-      <>
-        <image
-          href={url}
-          x={-TOKEN_RADIUS}
-          y={-TOKEN_RADIUS}
-          width={TOKEN_RADIUS * 2}
-          height={TOKEN_RADIUS * 2}
-          clipPath="url(#token-clip)"
-          onError={() => setImageFailed(true)}
-        />
-        <circle cx={0} cy={0} r={TOKEN_RADIUS} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
-      </>
+      <image
+        href={url}
+        x={-TOKEN_RADIUS}
+        y={-TOKEN_RADIUS}
+        width={TOKEN_RADIUS * 2}
+        height={TOKEN_RADIUS * 2}
+        clipPath="url(#token-clip)"
+        onError={() => setImageFailed(true)}
+      />
     )
   }
 
-  return (
-    <>
-      <circle
-        cx={0}
-        cy={0}
-        r={TOKEN_RADIUS}
-        fill={tokenColor(character, baseColor)}
-        stroke={stroke}
-        strokeWidth={strokeWidth}
-      />
-      <text x={0} y={4} textAnchor="middle" fontSize={11} fill="#0d0b12">
-        {initials(character.name)}
-      </text>
-    </>
-  )
+  return <circle cx={0} cy={0} r={TOKEN_RADIUS} fill={tokenColor(character, baseColor)} />
 }
 
 export default function CombatGrid({
@@ -143,14 +118,38 @@ export default function CombatGrid({
         const cx = character.position.x * CELL_SIZE + CELL_SIZE / 2
         const cy = character.position.y * CELL_SIZE + CELL_SIZE / 2
         const isActing = character.id === currentActorId
+        const stroke = isActing ? '#ffd166' : character.id === myCharacterId ? '#ffffff' : 'none'
+        const strokeWidth = isActing ? 3 : 2
         return (
           <g key={character.id} className="grid-token-group" transform={`translate(${cx},${cy})`}>
-            <TokenFace
-              character={character}
-              baseColor={actorColors[character.id] ?? '#ff6b6b'}
-              stroke={isActing ? '#ffd166' : character.id === myCharacterId ? '#ffffff' : 'none'}
-              strokeWidth={isActing ? 3 : 2}
+            <TokenFace character={character} baseColor={actorColors[character.id] ?? '#ff6b6b'} />
+            {stroke !== 'none' && (
+              <circle cx={0} cy={0} r={TOKEN_RADIUS} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+            )}
+            {/* Identity label (found live: same-species tokens - e.g. three
+                wolves - all load the identical portrait image once one's
+                been generated, making them visually indistinguishable
+                without this). Always drawn on top of the portrait, not
+                just the no-portrait fallback. */}
+            <rect
+              x={-TOKEN_RADIUS}
+              y={-TOKEN_RADIUS}
+              width={TOKEN_RADIUS * 2}
+              height={11}
+              rx={3}
+              fill="#0d0b12"
+              fillOpacity={0.85}
             />
+            <text
+              x={0}
+              y={-TOKEN_RADIUS + 8}
+              textAnchor="middle"
+              fontSize={9}
+              fontWeight={700}
+              fill="#ffffff"
+            >
+              {initials(character.name)}
+            </text>
             <rect
               x={-CELL_SIZE / 2 + 3}
               y={CELL_SIZE / 2 - 10}

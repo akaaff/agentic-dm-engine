@@ -30,17 +30,47 @@ from typing import Any
 
 from src import config
 from src.engine.actions import ParsedAction
+from src.engine.position import Position, distance_feet
 from src.engine.state import Character
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_structured, chat_structured_best_effort, load_prompt
 
+_ORDINAL_WORDS = ["closest", "2nd closest", "3rd closest"]
+"""Beyond 3rd, falls back to "Nth closest" (see _rank_label) - a hand-picked
+list rather than a general ordinal-suffix function since English's 1st/2nd/
+3rd/4th... irregularity only matters for the first three anyway, and this
+project's encounters rarely have more than a handful of visible characters."""
 
-def _character_summary_line(character: Character) -> str:
+
+def _rank_label(rank: int) -> str:
+    if rank <= len(_ORDINAL_WORDS):
+        return _ORDINAL_WORDS[rank - 1]
+    return f"{rank}th closest"
+
+
+def _direction_label(actor_pos: Position, other_pos: Position) -> str:
+    """8-way compass direction of `other_pos` relative to `actor_pos`, on
+    this project's own (x right/east, y down/south) grid convention (see
+    position.py/BattleMap's own "y=0 is the top row" comment) - found live:
+    the model had no reliable way to resolve "the enemy to my left" from
+    raw (x, y) pairs alone, so this computes the answer directly instead of
+    asking it to do grid arithmetic in its head."""
+    dx = other_pos.x - actor_pos.x
+    dy = other_pos.y - actor_pos.y
+    ns = "north" if dy < 0 else "south" if dy > 0 else ""
+    ew = "west" if dx < 0 else "east" if dx > 0 else ""
+    direction = ns + ew
+    return f"{direction} of you" if direction else "at your position"
+
+
+def _character_summary_line(character: Character, actor: Character, rank: int) -> str:
     kind = "PC" if character.is_pc else "monster"
     pos = character.position
+    feet = distance_feet(actor.position, pos)
+    direction = _direction_label(actor.position, pos)
     return (
-        f"- {character.id} ({character.name}, {kind}): "
-        f"HP {character.hp}/{character.max_hp}, position ({pos.x}, {pos.y})"
+        f"- {character.id} ({character.name}, {kind}): HP {character.hp}/{character.max_hp}, "
+        f"position ({pos.x}, {pos.y}), {feet}ft away ({_rank_label(rank)}), {direction}"
     )
 
 
@@ -52,7 +82,14 @@ def build_intent_parser_prompt(state: GraphState) -> str:
     game_state = state["game_state"]
     actor = game_state.characters[game_state.turn_order[game_state.current_turn]]
     others = [c for c in game_state.characters.values() if c.id != actor.id]
-    characters_summary = "\n".join(_character_summary_line(c) for c in others)
+    # Sorted by distance (found live: "the closest enemy"/"the enemy to my
+    # left" were unresolvable from raw coordinates alone) - rank is this
+    # sorted position, not list order, so "closest" always means closest
+    # regardless of how game_state.characters happens to be ordered.
+    others.sort(key=lambda c: distance_feet(actor.position, c.position))
+    characters_summary = "\n".join(
+        _character_summary_line(c, actor, rank) for rank, c in enumerate(others, start=1)
+    )
 
     return load_prompt("intent_parser").format(
         actor_id=actor.id,
