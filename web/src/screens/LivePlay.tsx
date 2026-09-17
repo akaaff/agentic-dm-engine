@@ -45,6 +45,15 @@ export default function LivePlay({
   // sheet.
   const me = gameState?.characters[myCharacterId]
   const characters = gameState?.characters
+  // Live-reported layout issue: the grid and the scene image used to share
+  // a row, capping the grid's width to make room for a placeholder that's
+  // usually empty outside of combat. They now occupy the same slot instead
+  // - grid while a fight is actually in progress, scene image otherwise
+  // (before the first encounter, between encounters, and right after
+  // victory/defeat) - so each gets the main column's full width when it's
+  // actually the relevant thing to look at, and both line up with the
+  // narration log below them.
+  const showCombatGrid = Boolean(gameState?.battle_map) && gameState?.status === 'in_progress'
   const resourceQuickActions = useMemo(
     () => (isMyTurn && me && characters ? computeResourceQuickActions(me, characters) : []),
     [isMyTurn, me, characters],
@@ -101,7 +110,7 @@ export default function LivePlay({
           </div>
         )}
         <div className="scene-row">
-          {gameState?.battle_map && (
+          {showCombatGrid && gameState?.battle_map ? (
             <CombatGrid
               battleMap={gameState.battle_map}
               characters={gameState.characters}
@@ -111,8 +120,9 @@ export default function LivePlay({
               onMoveTo={sendPlayerMove}
               actorColors={actorColors}
             />
+          ) : (
+            <SceneImagePanel url={sceneImageUrl} />
           )}
-          <SceneImagePanel url={sceneImageUrl} />
         </div>
         <NarrationFeed
           entries={narrationLog}

@@ -474,17 +474,16 @@ button.secondary {
 }
 
 .scene-image-panel {
-  /* The combat grid (when present - see .combat-grid's own flex: 3 below)
-   * is the more information-dense element and should dominate the row;
-   * this panel shrinks to a companion thumbnail during combat but still
-   * fills the whole row on its own during travel (no grid sibling to
-   * share space with) - found live: the old flex: 1 vs. the grid's fixed
-   * pixel size let this panel's placeholder text dominate the screen
-   * while the grid stayed tiny, exactly backwards from what a fight
-   * needs (spatial awareness) versus what travel needs (atmosphere). */
-  flex: 1;
-  min-width: 200px;
-  max-width: 320px;
+  /* The grid and the scene image no longer share this row - LivePlay.tsx
+   * renders exactly one of them at a time (grid while a fight's actually
+   * in progress, this image otherwise), so each gets the main column's
+   * full width when it's the relevant thing to look at, instead of the
+   * old side-by-side split where the image's flex: 1 could dominate the
+   * screen with an empty placeholder while the grid stayed tiny. Capped
+   * well under the main column's own width so a square image doesn't
+   * read as an oversized empty box before any scene art has generated. */
+  width: 100%;
+  max-width: 480px;
   aspect-ratio: 1;
   border-radius: 8px;
   overflow: hidden;
@@ -493,13 +492,6 @@ button.secondary {
   align-items: center;
   justify-content: center;
   position: relative;
-}
-
-.scene-row:not(:has(.combat-grid)) .scene-image-panel {
-  /* No grid sharing the row (travel/narrative moments) - the image is the
-   * only thing here, so let it actually use the space instead of staying
-   * capped at the combat-companion thumbnail width above. */
-  max-width: 480px;
 }
 
 .scene-image-panel.empty {
@@ -671,19 +663,17 @@ button.secondary {
 .combat-grid {
   /* Found live: this used to render at its exact map-derived pixel size
    * (width/height SVG attrs) with no way to grow, so it stayed small
-   * (e.g. 320px for an 8-square-wide map) no matter how much room the
-   * flex row actually had - meanwhile .scene-image-panel's flex: 1
-   * happily ate the rest for an often-empty placeholder. The SVG itself
-   * now only sets a viewBox (see CombatGrid.tsx); width here is what
-   * actually controls the rendered size, scaling the whole grid
-   * (terrain, tokens, labels, HP bars all together) up to fill its
-   * flex-row share, capped so it doesn't get absurd on a very wide screen.
-   */
+   * (e.g. 320px for an 8-square-wide map) regardless of available room.
+   * The SVG itself now only sets a viewBox (see CombatGrid.tsx); width
+   * here is what actually controls the rendered size. It no longer shares
+   * its row with .scene-image-panel at all (LivePlay.tsx swaps between
+   * the two based on whether a fight's in progress), so it's free to take
+   * the main column's full width - the same width the narration log below
+   * it already uses, so the two visually line up - capped only so it
+   * doesn't get absurd on a very wide screen. */
   display: block;
-  flex: 3;
   width: 100%;
-  min-width: 320px;
-  max-width: 640px;
+  max-width: 900px;
   height: auto;
   border-radius: 8px;
   margin-bottom: 1rem;
