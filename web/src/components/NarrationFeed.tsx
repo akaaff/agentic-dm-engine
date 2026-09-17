@@ -6,10 +6,15 @@ export default function NarrationFeed({
   entries,
   characters,
   actorColors,
+  debugMode = false,
 }: {
   entries: NarrationEntry[]
   characters: Record<string, LiveCharacter>
   actorColors: Record<string, string>
+  /** Issue #38: shows each roll's modifier breakdown (ability mod,
+   * proficiency, etc.) inline, to catch a mechanic gap by eye during play
+   * instead of needing a debug script - see formatEvent.ts's own reasoning. */
+  debugMode?: boolean
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -22,7 +27,7 @@ export default function NarrationFeed({
       {entries.length === 0 && <p className="narration-empty">The adventure is about to begin...</p>}
       {entries.map((entry, i) => {
         const badges = (entry.events ?? [])
-          .map((event) => formatEvent(event, characters, actorColors))
+          .map((event) => formatEvent(event, characters, actorColors, debugMode))
           .filter((badge) => badge !== null)
         return (
           <div key={i}>

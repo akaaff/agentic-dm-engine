@@ -67,6 +67,9 @@ def test_pc_attack_params_non_finesse_melee_uses_strength() -> None:
     assert params.attack_bonus == 5
     assert (params.damage_dice_count, params.damage_dice_sides, params.damage_bonus) == (1, 8, 3)
     assert params.damage_type == "slashing"
+    # Debug-mode breakdown (issue #38): confirms proficiency was actually
+    # applied, not just implied by the total.
+    assert params.attack_bonus_breakdown == [("STR mod", 3), ("proficiency", 2)]
 
 
 def test_pc_attack_params_finesse_uses_better_of_str_or_dex() -> None:
@@ -96,6 +99,9 @@ def test_pc_attack_params_drops_proficiency_bonus_when_not_proficient() -> None:
     wizard.equipped_weapons = ["longsword"]
     params = _pc_attack_params(wizard, "longsword", srd)
     assert params.attack_bonus == -1
+    # Debug-mode breakdown (issue #38): confirms proficiency was correctly
+    # *withheld*, not silently missing.
+    assert params.attack_bonus_breakdown == [("STR mod", -1), ("proficiency (none)", 0)]
 
 
 def test_pc_attack_params_falls_back_to_unarmed_strike() -> None:
@@ -157,6 +163,10 @@ def test_monster_attack_params_defaults_to_first_action() -> None:
     assert params.source_name == "Scimitar"
     assert params.attack_bonus == 4
     assert (params.damage_dice_count, params.damage_dice_sides, params.damage_bonus) == (1, 6, 2)
+    # Debug-mode breakdown (issue #38): a monster's attack bonus is one
+    # precomputed SRD number with no ability-mod/proficiency split available
+    # in the data - reported as a single opaque entry, not fabricated.
+    assert params.attack_bonus_breakdown == [("attack bonus (stat block)", 4)]
 
 
 def test_monster_attack_params_can_select_named_action() -> None:

@@ -74,6 +74,9 @@ def test_skill_check_succeeds_with_proficiency_at_exactly_the_dc() -> None:
     assert event.payload["dc"] == DEFAULT_SKILL_CHECK_DC
     assert event.payload["roll_total"] == 13
     assert event.payload["success"] is True
+    # Debug-mode breakdown (issue #38): confirms proficiency was actually
+    # applied, not just implied by the total matching.
+    assert event.payload["modifier_breakdown"] == [("STR mod", 3), ("proficiency", 2)]
 
 
 def test_skill_check_fails_without_proficiency_same_natural_roll() -> None:
@@ -89,6 +92,9 @@ def test_skill_check_fails_without_proficiency_same_natural_roll() -> None:
     event = state.events[-1]
     assert event.payload["roll_total"] == 10
     assert event.payload["success"] is False
+    # Debug-mode breakdown (issue #38): confirms proficiency was correctly
+    # *withheld*, not silently missing.
+    assert event.payload["modifier_breakdown"] == [("DEX mod", 2), ("proficiency (none)", 0)]
 
 
 def test_skill_check_gets_disadvantage_from_non_proficient_armor_on_dex_check() -> None:

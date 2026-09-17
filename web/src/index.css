@@ -267,6 +267,12 @@ label {
   font-size: 0.9rem;
 }
 
+.debug-mode-toggle {
+  font-size: 0.8rem;
+  color: #9d94ad;
+  margin-bottom: 0.75rem;
+}
+
 input,
 select {
   padding: 0.4rem 0.5rem;

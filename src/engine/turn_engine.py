@@ -121,7 +121,7 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from src.engine.actions import ParsedAction
 from src.engine.character_creation import SPELLS_KNOWN_BY_LEVEL, is_eligible_for_extra_attack
@@ -268,6 +268,18 @@ class AttackParams:
     attack roll actually hits and a slot of this level is still available
     at that moment (an earlier swing in the same Extra Attack action may
     already have spent it)."""
+    attack_bonus_breakdown: list[tuple[str, int]] = field(default_factory=list)
+    """Debug-mode UI aid (issue #38): the named components that sum to
+    `attack_bonus` (e.g. [("DEX mod", 3), ("proficiency", 2), ("archery", 2)]),
+    attached to the attack_roll/spell_cast event payload alongside the roll
+    total so a live combat log can show *why* a roll came out the way it did
+    - specifically to make a dropped/wrongly-included proficiency bonus or
+    class feature visible without re-deriving it from a test fixture, which
+    is how every such gap so far has actually been caught. A monster's own
+    stat-block attack bonus is one precomputed SRD number with no further
+    breakdown available (confirmed - the vendored data has no per-component
+    figure), so _monster_attack_params/_monster_innate_attack_params report
+    it as a single "attack bonus" entry rather than fabricating a split."""
 
 
 def _match_weapon_by_name(weapon_name: str, candidates: list[SrdEntry]) -> SrdEntry | None:
@@ -374,6 +386,7 @@ def _pc_attack_params(
             # 1 bludgeoning damage entirely (not added on top), and DEX can
             # be used instead of STR for both the attack and damage rolls.
             monk_mod = max(str_mod, dex_mod)
+            monk_ability = "DEX" if dex_mod > str_mod else "STR"
             return AttackParams(
                 attack_bonus=monk_mod + actor.proficiency_bonus,
                 damage_dice_count=1,
@@ -385,6 +398,10 @@ def _pc_attack_params(
                 range_long_feet=None,
                 is_melee_str_weapon=True,
                 smite_slot_level=smite_slot_level,
+                attack_bonus_breakdown=[
+                    (f"{monk_ability} mod", monk_mod),
+                    ("proficiency", actor.proficiency_bonus),
+                ],
             )
         # Unarmed strike (PHB): 1 bludgeoning damage + STR mod, no damage die,
         # 5ft reach like any other melee attack.
@@ -399,6 +416,10 @@ def _pc_attack_params(
             range_long_feet=None,
             is_melee_str_weapon=True,
             smite_slot_level=smite_slot_level,
+            attack_bonus_breakdown=[
+                ("STR mod", str_mod),
+                ("proficiency", actor.proficiency_bonus),
+            ],
         )
 
     properties = {p["index"] for p in (weapon.get("properties") or [])}
@@ -413,10 +434,13 @@ def _pc_attack_params(
     is_monk_weapon_for_actor = actor.class_index == "monk" and is_monk_weapon(weapon)
     if is_finesse or is_monk_weapon_for_actor:
         ability_mod = max(str_mod, dex_mod)
+        ability_label = "DEX" if dex_mod > str_mod else "STR"
     elif is_ranged:
         ability_mod = dex_mod
+        ability_label = "DEX"
     else:
         ability_mod = str_mod
+        ability_label = "STR"
     # A plain (non-finesse) melee weapon is the only case Rage's flat melee
     # damage bonus and Sneak Attack's weapon-type check need to tell apart -
     # a finesse weapon numerically using STR (rare - DEX ties or loses) is
@@ -470,6 +494,11 @@ def _pc_attack_params(
         is_finesse_or_ranged=is_finesse or is_ranged,
         is_melee_str_weapon=is_melee_str_weapon,
         smite_slot_level=smite_slot_level,
+        attack_bonus_breakdown=[
+            (f"{ability_label} mod", ability_mod),
+            *([("proficiency", prof_bonus)] if proficient else [("proficiency (none)", 0)]),
+            *([("archery", archery_bonus)] if archery_bonus else []),
+        ],
     )
 
 
@@ -514,6 +543,7 @@ def _monster_attack_params(
         source_name=action["name"],
         range_normal_feet=range_normal_feet,
         range_long_feet=range_long_feet,
+        attack_bonus_breakdown=[("attack bonus (stat block)", action["attack_bonus"])],
     )
 
 
@@ -675,6 +705,7 @@ def _resolve_single_attack(
                 "target_ac": target.ac,
                 "hit": result.hit,
                 "critical": result.critical,
+                "attack_bonus_breakdown": params.attack_bonus_breakdown,
                 **({"bardic_inspiration_die_sides": bardic_die_sides} if bardic_die_sides else {}),
             },
         )
@@ -1071,6 +1102,24 @@ def _target_saving_throw_bonus(target: Character, ability: AbilityScore, srd: Sr
     return saving_throw_bonus(target, ability)
 
 
+def _target_saving_throw_breakdown(
+    target: Character, ability: AbilityScore, srd: SrdIndex
+) -> list[tuple[str, int]]:
+    """Debug-mode UI aid (issue #38), sibling to _target_saving_throw_bonus
+    above (same PC-vs-monster branch) - a monster's stat-block save bonus is
+    one precomputed SRD number with no further breakdown available, same
+    reasoning as AttackParams.attack_bonus_breakdown's monster case."""
+    if target.monster_index is not None:
+        bonus = monster_saving_throw_bonus(srd.monsters[target.monster_index], ability)
+        return [("saving throw (stat block)", bonus)]
+    mod = ability_modifier(target.stats[ability])
+    proficient = ability in target.saving_throw_proficiencies
+    return [
+        (f"{ability} mod", mod),
+        ("proficiency", target.proficiency_bonus) if proficient else ("proficiency (none)", 0),
+    ]
+
+
 def _check_concentration_break(
     state: GameState, character: Character, damage: int, rng: random.Random, srd: SrdIndex
 ) -> None:
@@ -1101,7 +1150,9 @@ def _check_concentration_break(
                 "spell": character.concentrating_on,
                 "dc": dc,
                 "roll_total": result.total,
+                "natural": result.kept[0],
                 "success": success,
+                "modifier_breakdown": _target_saving_throw_breakdown(character, "CON", srd),
             },
         )
     )
@@ -1444,6 +1495,22 @@ def _resolve_move(
         _apply_hazard_damage(state, actor, destination)
 
 
+def _ability_check_breakdown(
+    actor: Character, ability: AbilityScore, proficient: bool
+) -> list[tuple[str, int]]:
+    """Debug-mode UI aid (issue #38), mirrors AttackParams.attack_bonus_
+    breakdown's own reasoning - the named components ability_check_modifier
+    sums into one int, for a skill-check event's payload. Explicit
+    "proficiency (none)" zero-entry when not proficient, same as the weapon-
+    attack breakdown, so a live combat log can distinguish "correctly
+    withheld" from "silently missing"."""
+    mod = ability_modifier(actor.stats[ability])
+    return [
+        (f"{ability} mod", mod),
+        ("proficiency", actor.proficiency_bonus) if proficient else ("proficiency (none)", 0),
+    ]
+
+
 def _resolve_skill_check(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> None:
@@ -1486,7 +1553,9 @@ def _resolve_skill_check(
                 "ability": ability,
                 "dc": DEFAULT_SKILL_CHECK_DC,
                 "roll_total": result.total,
+                "natural": result.kept[0],
                 "success": success,
+                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient),
             },
         )
     )
@@ -1935,7 +2004,7 @@ def _spell_attack_params(
 ) -> AttackParams:
     """Attack-roll spell parameters (e.g. Fire Bolt, Guiding Bolt) - `spell`
     is already looked up and classified by the caller (_resolve_cast_spell)."""
-    _, ability_mod = _spellcasting_ability_mod(actor, srd)
+    ability, ability_mod = _spellcasting_ability_mod(actor, srd)
     damage_info = spell["damage"]
     notation = spell_damage_notation(spell, spell_level)
     dice_count, dice_sides, notation_bonus = parse_dice_notation(notation)
@@ -1954,6 +2023,10 @@ def _spell_attack_params(
         source_name=spell["name"],
         range_normal_feet=spell_range_feet(str(spell.get("range", ""))),
         range_long_feet=None,  # spells have no "beyond normal" disadvantage tier
+        attack_bonus_breakdown=[
+            (f"{ability} mod", ability_mod),
+            ("proficiency", actor.proficiency_bonus),
+        ],
     )
 
 
@@ -2014,6 +2087,7 @@ def _cast_attack_spell_at_target(
                 "roll_total": result.attack_roll.total,
                 "hit": result.hit,
                 "critical": result.critical,
+                "attack_bonus_breakdown": params.attack_bonus_breakdown,
                 **({"bardic_inspiration_die_sides": bardic_die_sides} if bardic_die_sides else {}),
             },
         )
@@ -2126,7 +2200,11 @@ def _cast_save_spell_at_target(
                 "ability": params.dc_ability,
                 "dc": params.dc,
                 "roll_total": result.total,
+                "natural": result.kept[0],
                 "success": success,
+                "modifier_breakdown": _target_saving_throw_breakdown(
+                    target, params.dc_ability, srd
+                ),
             },
         )
     )
@@ -2267,6 +2345,7 @@ def _monster_innate_attack_params(
         source_name=spell["name"],
         range_normal_feet=range_normal_feet,
         range_long_feet=None,
+        attack_bonus_breakdown=[("attack bonus (stat block)", attack_bonus)],
     )
 
 
@@ -2655,8 +2734,10 @@ def _resolve_stabilize(
                 "ability": ability,
                 "dc": 10,
                 "roll_total": result.total,
+                "natural": result.kept[0],
                 "success": success,
                 "target": target.id,
+                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient),
             },
         )
     )

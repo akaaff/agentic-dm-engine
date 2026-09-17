@@ -29,6 +29,30 @@ export default function LivePlay({
     sendContinueCampaign,
   } = useSessionSocket(sessionId)
   const [draft, setDraft] = useState('')
+  // Issue #38: a per-viewer convenience toggle (localStorage, not shared
+  // session state) - shows each attack/skill-check/saving-throw's full
+  // modifier breakdown in the combat log, to catch a mechanic gap (a
+  // proficiency bonus silently missing or wrongly included, a class feature
+  // not applying) by eye during play instead of needing a debug script.
+  const [debugMode, setDebugMode] = useState(() => {
+    try {
+      return localStorage.getItem('dm-debug-mode') === '1'
+    } catch {
+      return false
+    }
+  })
+  function toggleDebugMode() {
+    setDebugMode((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('dm-debug-mode', next ? '1' : '0')
+      } catch {
+        // Private window / blocked storage - the toggle still works for
+        // this session, it just won't be remembered next time.
+      }
+      return next
+    })
+  }
 
   // The server can say it's already your turn before the narration log has
   // finished revealing everything that led up to it (staggered on purpose -
@@ -84,6 +108,10 @@ export default function LivePlay({
           {gameState?.encounter_id.replace(/_/g, ' ') ?? 'Adventure'}
           {gameState && ` - round ${gameState.round}`}
         </h1>
+        <label className="checkbox-row debug-mode-toggle">
+          <input type="checkbox" checked={debugMode} onChange={toggleDebugMode} />
+          Debug mode (show roll breakdowns)
+        </label>
         {gameState?.status !== 'in_progress' && gameState && (
           <p className="wizard-error status-banner">
             {gameState.status === 'victory' && 'Victory! The encounter is over.'}
@@ -128,6 +156,7 @@ export default function LivePlay({
           entries={narrationLog}
           characters={gameState?.characters ?? {}}
           actorColors={actorColors}
+          debugMode={debugMode}
         />
         {resourceQuickActions.length > 0 && (
           // Issue #27: a prominent, actionable callout - not the passive

@@ -22,6 +22,35 @@ function characterName(id: unknown, characters: Record<string, LiveCharacter>): 
   return characters[id]?.name ?? id
 }
 
+/** A [label, value] pair from turn_engine.py's own attack_bonus_breakdown/
+ * modifier_breakdown (issue #38) - Python tuples serialize to 2-element JSON
+ * arrays, so this is read defensively rather than assumed, same as every
+ * other payload field in this file. */
+function isBreakdownEntry(value: unknown): value is [string, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === 'string' &&
+    typeof value[1] === 'number'
+  )
+}
+
+/** Debug-mode roll breakdown, e.g. "14 + STR mod 3 + proficiency 2 = 19" -
+ * appended to a badge's label only when debugMode is on, so ordinary play
+ * stays uncluttered. `natural` is the kept d20 (undefined for a flat/no-
+ * modifier roll like a death save, which also has no breakdown to show). */
+function formatBreakdown(natural: number | null, breakdown: unknown, total: number | null): string {
+  if (!Array.isArray(breakdown) || breakdown.length === 0) return ''
+  const entries = breakdown.filter(isBreakdownEntry)
+  if (entries.length === 0) return ''
+  const parts = [
+    ...(natural !== null ? [String(natural)] : []),
+    ...entries.map(([label, value]) => `${label} ${value}`),
+  ]
+  const totalText = total !== null ? ` = ${total}` : ''
+  return ` [${parts.join(' + ')}${totalText}]`
+}
+
 /**
  * Formats one event into a small colored badge, or null for event types not
  * worth surfacing this way (dodge/disengage/rage/help - payload-empty or low
@@ -38,6 +67,7 @@ export function formatEvent(
   event: LiveEvent,
   characters: Record<string, LiveCharacter>,
   actorColors: Record<string, string>,
+  debugMode: boolean = false,
 ): FormattedEventBadge | null {
   const color = actorColors[event.actor] ?? '#9d94ad'
   const actorName = characterName(event.actor, characters)
@@ -57,6 +87,7 @@ export function formatEvent(
     }
     case 'attack_roll': {
       const natural = typeof p.natural === 'number' ? p.natural : null
+      const rollTotal = typeof p.roll_total === 'number' ? p.roll_total : null
       const hit = p.hit === true
       const target = characterName(p.target, characters)
       const naturalText = natural !== null ? ` (natural ${natural})` : ''
@@ -66,10 +97,13 @@ export function formatEvent(
           : natural === 1
             ? { text: 'Critical Miss!', color: FUMBLE_COLOR }
             : undefined
+      const breakdownText = debugMode
+        ? formatBreakdown(natural, p.attack_bonus_breakdown, rollTotal)
+        : ''
       return {
         key: event.id,
         color,
-        label: `${actorName} attacks ${target} - ${hit ? 'hit' : 'miss'}${naturalText}`,
+        label: `${actorName} attacks ${target} - ${hit ? 'hit' : 'miss'}${naturalText}${breakdownText}`,
         highlight,
       }
     }
@@ -114,19 +148,29 @@ export function formatEvent(
     case 'saving_throw': {
       const kind = typeof p.kind === 'string' ? p.kind : 'save'
       const success = p.success === true
+      const natural = typeof p.natural === 'number' ? p.natural : null
+      const rollTotal = typeof p.roll_total === 'number' ? p.roll_total : null
+      const breakdownText = debugMode
+        ? formatBreakdown(natural, p.modifier_breakdown, rollTotal)
+        : ''
       return {
         key: event.id,
         color,
-        label: `${actorName}'s ${kind.replace(/_/g, ' ')} - ${success ? 'success' : 'fail'}`,
+        label: `${actorName}'s ${kind.replace(/_/g, ' ')} - ${success ? 'success' : 'fail'}${breakdownText}`,
       }
     }
     case 'skill_check': {
       const skill = typeof p.skill === 'string' ? p.skill : 'check'
       const success = p.success === true
+      const natural = typeof p.natural === 'number' ? p.natural : null
+      const rollTotal = typeof p.roll_total === 'number' ? p.roll_total : null
+      const breakdownText = debugMode
+        ? formatBreakdown(natural, p.modifier_breakdown, rollTotal)
+        : ''
       return {
         key: event.id,
         color,
-        label: `${actorName}'s ${skill} check - ${success ? 'success' : 'fail'}`,
+        label: `${actorName}'s ${skill} check - ${success ? 'success' : 'fail'}${breakdownText}`,
       }
     }
     case 'grapple_attempt':
