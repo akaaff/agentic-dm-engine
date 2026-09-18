@@ -147,6 +147,7 @@ from src.engine.rules import (
     has_relentless_endurance,
     is_class_proficient_with,
     is_monk_weapon,
+    magic_missile_dart_count,
     max_wild_shape_cr,
     monk_martial_arts_die_sides,
     monster_action_range_feet,
@@ -2341,6 +2342,79 @@ def _cast_heal_spell_at_target(
     )
 
 
+@dataclass(frozen=True)
+class AutoHitSpellParams:
+    """A no-roll, always-hits spell effect (issue #35) - genuinely
+    different from the attack/save/heal mechanics: there's no d20 roll of
+    any kind, just a fixed per-instance damage roll applied directly.
+    Magic Missile is the only vendored spell this project treats this way
+    - see spell_mechanic's own docstring for why this is an explicit
+    per-spell allowlist rather than an inferred "has damage but no
+    attack_type/dc" bucket (several other SRD spells share that same
+    field shape - scorching-ray, call-lightning, flaming-sphere - but are
+    real attack-roll/save spells whose vendored SRD entry simply lacks
+    the attack_type/dc field, not genuine no-roll effects; auto-including
+    them would silently make them always hit instead of correctly staying
+    unsupported)."""
+
+    dice_count: int
+    dice_sides: int
+    damage_bonus: int
+    damage_type: str
+    source_name: str
+
+
+def _auto_hit_spell_params(spell: SrdEntry) -> AutoHitSpellParams:
+    """Magic Missile's one dart: 1d4 + 1 force damage, fixed regardless of
+    slot level - the level scaling is entirely in *how many* darts are
+    cast (magic_missile_dart_count), not in each dart's own size."""
+    return AutoHitSpellParams(
+        dice_count=1,
+        dice_sides=4,
+        damage_bonus=1,
+        damage_type="force",
+        source_name=spell["name"],
+    )
+
+
+def _cast_auto_hit_dart_at_target(
+    state: GameState,
+    actor: Character,
+    target: Character,
+    params: AutoHitSpellParams,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """One dart's independent, unavoidable hit - no roll of any kind, per
+    SRD ("each dart hits a creature of your choice... automatically").
+    Called once per dart (see _resolve_cast_spell's auto_hit branch,
+    which expands the target list to one entry per dart before this is
+    ever reached), so a target hit by 2 darts gets 2 separate events/
+    damage applications, matching how a real Magic Missile cast against
+    one creature deals its damage as discrete dart hits, not one lump
+    sum - consistent with _apply_damage_and_handle_downing's downing/
+    concentration-break/Relentless-Endurance handling being correct to
+    run once per dart rather than once per cast."""
+    damage = max(
+        0, roll(params.dice_count, params.dice_sides, modifier=params.damage_bonus, rng=rng).total
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={
+                "spell": params.source_name,
+                "target": target.id,
+                "damage": damage,
+                "auto_hit": True,
+            },
+        )
+    )
+    _apply_damage_and_handle_downing(state, actor, target, damage, params.damage_type, rng, srd)
+
+
 def _is_bonus_action_spell(spell: SrdEntry) -> bool:
     """Phase 9H: SRD's `casting_time` is a plain string ("1 action", "1
     bonus action", "1 reaction", "1 minute", ...) - Healing Word is the
@@ -2524,21 +2598,46 @@ def _resolve_cast_spell(
             f"cannot also cast {spell['name']}"
         )
 
-    # Multi-target (Phase 9D): action.targets (a list of character ids)
-    # takes priority when present; falling back to a single-element
-    # [action.target] list keeps every pre-existing single-target action
-    # (and test) resolving identically to before.
-    target_ids = action.targets if action.targets else ([action.target] if action.target else None)
-    if not target_ids:
-        raise TurnEngineError("cast_spell action requires a target")
-
     mechanic = spell_mechanic(spell)
     if mechanic is None:
         raise TurnEngineError(
             f"{spell['name']} is not supported - cast_spell resolves attack-roll, save-based, "
-            "and heal spells (Phase 9D); other no-roll effects (e.g. Magic Missile's automatic "
-            "hits) aren't implemented"
+            "heal, and auto-hit spells; other no-roll/no-damage effects (buffs, utility) "
+            "aren't implemented"
         )
+    spell_level = spell["level"]
+
+    if mechanic == "auto_hit":
+        # Issue #35 (Magic Missile): darts, not independently-rolled
+        # targets - action.targets (if given) is one entry per dart
+        # (repeat an id to send multiple darts at the same creature),
+        # capped at how many darts this slot level actually creates. A
+        # bare action.target (no explicit list) sends every available
+        # dart at that one target, matching SRD's "you can direct them to
+        # hit one creature or several" default of "all darts, one
+        # creature" when the caster doesn't split them up.
+        dart_count = magic_missile_dart_count(spell_level)
+        if action.targets:
+            if len(action.targets) > dart_count:
+                raise TurnEngineError(
+                    f"{spell['name']} only creates {dart_count} dart(s) at this slot level - "
+                    f"named {len(action.targets)} targets"
+                )
+            target_ids: list[str] | None = action.targets
+        elif action.target:
+            target_ids = [action.target] * dart_count
+        else:
+            target_ids = None
+    else:
+        # Multi-target (Phase 9D): action.targets (a list of character
+        # ids) takes priority when present; falling back to a single-
+        # element [action.target] list keeps every pre-existing single-
+        # target action (and test) resolving identically to before.
+        target_ids = (
+            action.targets if action.targets else ([action.target] if action.target else None)
+        )
+    if not target_ids:
+        raise TurnEngineError("cast_spell action requires a target")
 
     targets: list[Character] = []
     for target_id in target_ids:
@@ -2560,7 +2659,6 @@ def _resolve_cast_spell(
                 f"(max {range_normal_feet}ft)"
             )
 
-    spell_level = spell["level"]
     if spell_level > 0:
         remaining = actor.spell_slots.get(spell_level, 0)
         if remaining <= 0:
@@ -2583,6 +2681,14 @@ def _resolve_cast_spell(
         save_params = _spell_save_params(actor, spell, spell_level, srd)
         for target in targets:
             _cast_save_spell_at_target(state, actor, target, save_params, rng, srd)
+    elif mechanic == "auto_hit":
+        # `targets` already has one entry per dart (expanded above), not
+        # one entry per independently-chosen target - so this loop, unlike
+        # attack/save/heal's, resolves dart_count times even for a single
+        # named target.
+        auto_hit_params = _auto_hit_spell_params(spell)
+        for target in targets:
+            _cast_auto_hit_dart_at_target(state, actor, target, auto_hit_params, rng, srd)
     else:  # heal
         heal_params = _spell_heal_params(actor, spell, spell_level, srd)
         for target in targets:

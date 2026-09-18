@@ -6,6 +6,8 @@ other two SRD spell mechanics and the ability to hit more than one target
 in a single cast.
 """
 
+import pytest
+
 from src.cli.play import build_demo_encounter
 from src.engine.actions import ParsedAction
 from src.engine.character_creation import create_character
@@ -13,7 +15,7 @@ from src.engine.encounter import build_encounter_state, monster_to_character
 from src.engine.position import Position
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character
-from src.engine.turn_engine import resolve_action
+from src.engine.turn_engine import TurnEngineError, resolve_action
 
 
 class _FixedRandom:
@@ -296,3 +298,75 @@ def test_casting_a_new_concentration_spell_clears_the_prior_one() -> None:
     resolve_action(state, action, _FixedRandom([10]))  # type: ignore[arg-type]
 
     assert state.characters["elrond"].concentrating_on == "Hold Person"
+
+
+# ------------------------------------------------- auto-hit spells (issue #35)
+# Magic Missile: no roll of any kind (not even a hit check - unlike attack/
+# save spells, AC never enters into it), so every RNG value below feeds
+# straight into a dart's own 1d4+1 damage roll.
+
+
+def test_magic_missile_single_target_gets_all_darts() -> None:
+    # No explicit `targets` list - all 3 darts (level-1 Magic Missile, see
+    # magic_missile_dart_count) go to the one named target, per SRD's "you
+    # can direct them to hit one creature" default. Naturals [1,1,1] -> each
+    # dart 1+1=2 force damage -> 6 total; goblin_1 (7 HP) survives at 1.
+    state = _build_demo_state(_INITIATIVE)
+    state.current_turn = state.turn_order.index("elrond")
+    action = ParsedAction(
+        actor="elrond",
+        verb="cast_spell",
+        target="goblin_1",
+        item_or_spell="magic missile",
+        raw_text="I cast magic missile at the goblin",
+    )
+    resolve_action(state, action, _FixedRandom([1, 1, 1]))  # type: ignore[arg-type]
+
+    spell_events = [e for e in state.events if e.type == "spell_cast"]
+    assert len(spell_events) == 3
+    assert all(e.payload["target"] == "goblin_1" for e in spell_events)
+    assert [e.payload["damage"] for e in spell_events] == [2, 2, 2]
+    assert state.characters["goblin_1"].hp == 1  # 7 - 6
+    assert state.characters["elrond"].spell_slots[1] == 1  # one slot total, not one per dart
+
+
+def test_magic_missile_splits_darts_across_named_targets() -> None:
+    # action.targets is one entry per dart (issue #35's own design) -
+    # repeating "goblin_1" sends 2 darts there, the remaining 1 at goblin_2.
+    state = _build_demo_state(_INITIATIVE)
+    state.current_turn = state.turn_order.index("elrond")
+    action = ParsedAction(
+        actor="elrond",
+        verb="cast_spell",
+        targets=["goblin_1", "goblin_1", "goblin_2"],
+        item_or_spell="magic missile",
+        raw_text="I send two darts at the first goblin and one at the second",
+    )
+    resolve_action(state, action, _FixedRandom([1, 1, 1]))  # type: ignore[arg-type]
+
+    spell_events = [e for e in state.events if e.type == "spell_cast"]
+    assert [e.payload["target"] for e in spell_events] == ["goblin_1", "goblin_1", "goblin_2"]
+    assert state.characters["goblin_1"].hp == 3  # 7 - 2 - 2
+    assert state.characters["goblin_2"].hp == 5  # 7 - 2
+
+
+def test_magic_missile_rejects_more_targets_than_available_darts() -> None:
+    # A 3rd goblin so there are enough distinct ids to name 4 - level-1
+    # Magic Missile only creates 3 darts, so 4 named targets must reject
+    # before any dice are rolled (empty RNG list proves this).
+    state = _build_demo_state(_INITIATIVE)
+    state.current_turn = state.turn_order.index("elrond")
+    srd = load_srd()
+    goblin_3 = monster_to_character(srd.monsters["goblin"], "goblin_3", Position(x=0, y=2))
+    state.characters["goblin_3"] = goblin_3
+    state.turn_order.append("goblin_3")
+
+    action = ParsedAction(
+        actor="elrond",
+        verb="cast_spell",
+        targets=["goblin_1", "goblin_2", "goblin_3", "goblin_1"],
+        item_or_spell="magic missile",
+        raw_text="I throw darts at all of them and then some",
+    )
+    with pytest.raises(TurnEngineError, match="only creates 3 dart"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]

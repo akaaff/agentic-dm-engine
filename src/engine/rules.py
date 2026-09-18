@@ -233,17 +233,35 @@ def normalize_skill_name(raw: str) -> str:
     return raw.strip().lower().replace(" ", "-").removeprefix("skill-")
 
 
+_AUTO_HIT_SPELLS = {"magic-missile"}
+"""Issue #35: spells with no roll of any kind - every dart/effect simply
+hits. Deliberately an explicit per-spell allowlist, not inferred from
+"has `damage` but no `attack_type`/`dc`" the way the other three mechanics
+are: checked directly against the vendored SRD data, several *other*
+spells share that exact field shape (scorching-ray, call-lightning,
+flaming-sphere, branding-smite...) without actually being no-roll effects
+- they're real attack-roll/save spells whose vendored entry simply lacks
+the attack_type/dc field (an SRD data gap, not a genuine auto-hit rule).
+Auto-including them via field inference would silently make them always
+hit instead of correctly staying unsupported. Add a spell here only after
+confirming directly (like Magic Missile was) that it truly has no roll in
+real SRD text, not just because it happens to lack these two fields."""
+
+
 def spell_mechanic(spell: SrdEntry) -> str | None:
-    """Classifies a spell into one of the three mechanics cast_spell
-    resolves (Phase 9D): "attack" (SRD `attack_type` present - e.g. Fire
-    Bolt, Guiding Bolt), "save" (`dc` present - e.g. Fireball, Hold Person),
-    or "heal" (`heal_at_slot_level` present - e.g. Cure Wounds). Checked in
-    this order since a real SRD spell only ever has one of the three shapes
-    (confirmed by inspecting several of each directly via load_srd()). None
-    for anything else - a no-roll, non-heal effect like Magic Missile's
-    automatic-hit force damage, or a pure buff/utility spell with none of
-    these fields - still out of scope for cast_spell to resolve. Moved here
-    from turn_engine (issue #22) so monster_ai's innate-spell selection can
+    """Classifies a spell into one of the four mechanics cast_spell
+    resolves: "attack" (SRD `attack_type` present - e.g. Fire Bolt, Guiding
+    Bolt), "save" (`dc` present - e.g. Fireball, Hold Person), "heal"
+    (`heal_at_slot_level` present - e.g. Cure Wounds), or "auto_hit" (an
+    explicit allowlist - see _AUTO_HIT_SPELLS - for a no-roll spell like
+    Magic Missile). Checked in this order since a real SRD spell only ever
+    has one of the first three shapes (confirmed by inspecting several of
+    each directly via load_srd()); auto_hit is checked last since an
+    allowlisted spell has none of the other fields anyway. None for
+    anything else - a pure buff/utility spell, or a spell whose real SRD
+    mechanic (attack/save) the vendored data doesn't structurally capture
+    - still out of scope for cast_spell to resolve. Moved here from
+    turn_engine (issue #22) so monster_ai's innate-spell selection can
     share the same classification a PC's/monster's actual cast later uses,
     rather than a second, potentially drifting copy - this module has no
     TurnEngineError of its own, so a caller that needs a resolved spell
@@ -254,6 +272,8 @@ def spell_mechanic(spell: SrdEntry) -> str | None:
         return "save"
     if spell.get("heal_at_slot_level"):
         return "heal"
+    if spell.get("index") in _AUTO_HIT_SPELLS:
+        return "auto_hit"
     return None
 
 
@@ -543,6 +563,17 @@ def monk_martial_arts_die_sides(level: int) -> int:
     roughly-level-1-5 scope (PROFICIENCY_BONUS_BY_LEVEL/SPELL_SLOTS_BY_LEVEL
     precedent), so only the one tier boundary within that range matters."""
     return 6 if level >= 5 else 4
+
+
+def magic_missile_dart_count(spell_level: int) -> int:
+    """3 darts at 1st level, +1 per slot level above 1st (issue #35 - SRD
+    prose, "the spell creates one more dart for each slot level above
+    1st," not a structured field). Confirmed against the vendored
+    damage_at_slot_level table rather than assumed: every level 1-9 entry
+    ("3d4 + 3" at 1, ... "11d4 + 11" at 9) factors exactly as (level+2)
+    separate 1d4+1 rolls, so this closed-form formula is a verified fact
+    about the real data, not a guess."""
+    return spell_level + 2
 
 
 def bardic_inspiration_die_sides(level: int) -> int:

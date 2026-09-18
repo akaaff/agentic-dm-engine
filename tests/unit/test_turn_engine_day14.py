@@ -170,18 +170,24 @@ def test_cast_spell_with_no_slots_remaining_errors_clearly() -> None:
 
 def test_cast_spell_rejects_still_unsupported_no_roll_spells() -> None:
     # Phase 9D added save-based (see test_turn_engine_spells.py) and heal
-    # spells, so sacred flame (dc-based) is no longer a valid case for this
-    # regression - Magic Missile (no attack_type, no dc, no
-    # heal_at_slot_level - an automatic-hit, no-roll damage spell) is the
-    # spell shape still genuinely out of scope.
+    # spells, and issue #35 added Magic Missile specifically (an explicit
+    # allowlist entry - see rules.spell_mechanic/_AUTO_HIT_SPELLS), so
+    # neither sacred flame (dc-based) nor magic missile are valid cases for
+    # this regression any more. scorching-ray shares Magic Missile's exact
+    # field shape (has `damage`, no `attack_type`/`dc`/`heal_at_slot_level`)
+    # but is a real 3-ray attack-roll spell whose vendored SRD entry simply
+    # lacks the attack_type field - confirmed directly against load_srd(),
+    # not assumed - so it must stay correctly unsupported rather than
+    # silently auto-hitting via the same field-shape inference Magic
+    # Missile's allowlist deliberately avoids.
     state = _build_demo_state(_INITIATIVE)
     _end_turn(state, "thorin")
     action = ParsedAction(
         actor="elrond",
         verb="cast_spell",
         target="goblin_1",
-        item_or_spell="magic missile",
-        raw_text="I cast magic missile",
+        item_or_spell="scorching ray",
+        raw_text="I cast scorching ray",
     )
     with pytest.raises(TurnEngineError, match="not supported"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]

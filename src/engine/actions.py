@@ -53,7 +53,11 @@ class ParsedAction(BaseModel):
     Burning Hands) the same way `attack` does - found live: the intent-
     parser prompt never actually told the model to set it, so a spell cast
     naming a real target could still reach turn_engine with neither field
-    set and get rejected as "requires a target."
+    set and get rejected as "requires a target." For an "auto_hit" spell
+    (Magic Missile, issue #35 - see rules.spell_mechanic), `targets` means
+    something different from every other mechanic: one entry per *dart*,
+    not one entry per independently-resolved target - a bare `target`
+    (no `targets` list) sends every available dart at that one creature.
     `offhand_attack` needs only `target` (like `attack`) - always resolves
     against the actor's second equipped weapon, no `item_or_spell`.
     `attack` may optionally carry `params["smite_slot_level"] = int`

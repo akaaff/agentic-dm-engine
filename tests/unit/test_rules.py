@@ -17,6 +17,7 @@ from src.engine.rules import (
     has_relentless_endurance,
     is_class_proficient_with,
     is_monk_weapon,
+    magic_missile_dart_count,
     max_wild_shape_cr,
     monk_martial_arts_die_sides,
     monster_action_range_feet,
@@ -405,6 +406,35 @@ def test_spell_mechanic_classifies_real_srd_spells() -> None:
     assert spell_mechanic(srd.spells["vicious-mockery"]) == "save"
     assert spell_mechanic(srd.spells["cure-wounds"]) == "heal"
     assert spell_mechanic(srd.spells["dancing-lights"]) is None  # pure utility, no roll at all
+    assert spell_mechanic(srd.spells["magic-missile"]) == "auto_hit"  # issue #35
+
+
+def test_spell_mechanic_does_not_auto_hit_spells_that_merely_lack_the_fields() -> None:
+    # Issue #35: several real SRD spells share Magic Missile's exact field
+    # shape (has `damage`, no `attack_type`/`dc`/`heal_at_slot_level`) but
+    # are genuine attack-roll/save spells whose vendored entry simply lacks
+    # that field - not real no-roll effects. Confirmed directly against
+    # load_srd() rather than assumed; must stay None (unsupported), not
+    # silently become "auto_hit", since _AUTO_HIT_SPELLS is an explicit
+    # allowlist rather than inferred from field absence.
+    srd = load_srd()
+    assert spell_mechanic(srd.spells["scorching-ray"]) is None
+    assert spell_mechanic(srd.spells["call-lightning"]) is None
+    assert spell_mechanic(srd.spells["flaming-sphere"]) is None
+
+
+def test_magic_missile_dart_count_matches_every_real_srd_slot_level() -> None:
+    # Verified against the vendored damage_at_slot_level table itself
+    # (level+2 darts of 1d4+1 each, confirmed to factor exactly for every
+    # level 1-9 entry - see magic_missile_dart_count's own docstring) -
+    # this test locks in that formula rather than trusting the comment.
+    srd = load_srd()
+    notation_by_level = srd.spells["magic-missile"]["damage"]["damage_at_slot_level"]
+    for level_str, notation in notation_by_level.items():
+        level = int(level_str)
+        expected_dice, expected_bonus = notation.split(" + ")
+        assert expected_dice == f"{magic_missile_dart_count(level)}d4"
+        assert expected_bonus == str(magic_missile_dart_count(level))
 
 
 def test_normalize_spell_name() -> None:
