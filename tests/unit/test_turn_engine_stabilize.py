@@ -116,6 +116,11 @@ def test_hit_against_unconscious_target_is_always_critical_and_doubles_damage() 
     assert thorin.hp == 3  # 12 - 9
     assert thorin.death_save_failures == 2  # 2 automatic failures from the hit
     assert thorin.is_dead is False
+    # Issue #34: the forced-failure death_save event needs its own explicit
+    # success flag too, same as a real rolled one - it's always a failure,
+    # never left for the narrator/frontend badge to infer.
+    forced_save_event = next(e for e in state.events if e.type == "saving_throw")
+    assert forced_save_event.payload["success"] is False
 
 
 def test_natural_1_still_misses_an_unconscious_target() -> None:

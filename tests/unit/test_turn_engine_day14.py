@@ -421,6 +421,29 @@ def test_death_save_natural_1_counts_as_two_failures() -> None:
     assert thorin.is_dead is True
 
 
+def test_death_save_event_payload_carries_this_rolls_own_success_flag() -> None:
+    # Issue #34: the payload used to carry only `natural`/cumulative
+    # `successes`/`failures` counts - no per-roll outcome, forcing the
+    # narrator (and the frontend's saving_throw badge, which read a
+    # nonexistent `success` key and always rendered "fail") to infer
+    # pass/fail from the raw number instead of being told directly.
+    state = _build_demo_state(_INITIATIVE)
+    thorin = state.characters["thorin"]
+    thorin.hp = 0
+    apply_condition(thorin, Condition(name="unconscious"))
+
+    action = ParsedAction(actor="thorin", verb="death_save", raw_text="death save")
+    state.current_turn = state.turn_order.index("thorin")
+    resolve_action(state, action, _FixedRandom([15]))  # type: ignore[arg-type]
+    pass_event = next(e for e in state.events if e.type == "saving_throw")
+    assert pass_event.payload["success"] is True
+
+    state.current_turn = state.turn_order.index("thorin")
+    resolve_action(state, action, _FixedRandom([6]))  # type: ignore[arg-type]
+    fail_event = [e for e in state.events if e.type == "saving_throw"][-1]
+    assert fail_event.payload["success"] is False
+
+
 def test_death_save_natural_20_revives_with_one_hp() -> None:
     state = _build_demo_state(_INITIATIVE)
     thorin = state.characters["thorin"]

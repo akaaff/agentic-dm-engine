@@ -790,6 +790,7 @@ def _apply_unconscious_hit_death_save_failures(state: GameState, target: Charact
             payload={
                 "kind": "death_save",
                 "natural": None,
+                "success": False,
                 "cause": "hit_while_unconscious",
                 "successes": target.death_save_successes,
                 "failures": target.death_save_failures,
@@ -2807,6 +2808,7 @@ def _resolve_death_save(state: GameState, actor: Character, rng: random.Random) 
             payload={
                 "kind": "death_save",
                 "natural": natural,
+                "success": natural >= 10,
                 "successes": actor.death_save_successes,
                 "failures": actor.death_save_failures,
             },
