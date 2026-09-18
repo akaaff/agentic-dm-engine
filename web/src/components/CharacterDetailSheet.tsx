@@ -24,6 +24,14 @@ function formatModifier(mod: number): string {
   return mod >= 0 ? `+${mod}` : `${mod}`
 }
 
+// Mirrors rules.monk_martial_arts_die_sides exactly (same duplicate-in-TS
+// precedent as abilityModifier above, mirroring rules.ability_modifier) -
+// 1d4 through level 4, 1d6 from level 5 on (this project's roughly-level-
+// 1-5 scope stops there; real SRD keeps scaling further).
+function monkMartialArtsDieSides(level: number): number {
+  return level >= 5 ? 6 : 4
+}
+
 function resourceLabel(key: string): string {
   // "second_wind" -> "Second Wind"
   return key
@@ -195,6 +203,20 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
         </p>
       )}
       {character.is_raging && <p className="race-bonus-badge">Raging</p>}
+      {character.class_index === 'monk' && (
+        // Issue #36: Martial Arts/Unarmored Defense are correctly applied
+        // under the hood from level 1 (see _pc_attack_params's Monk branch
+        // and rules.armor_ac's class_index="monk" branch) but had zero
+        // visible confirmation anywhere on the sheet - a player had no way
+        // to tell the mechanic was even active.
+        <p>
+          <strong>Martial Arts:</strong> unarmed strikes/monk weapons use a
+          1d{monkMartialArtsDieSides(character.level)} die and may use DEX
+          instead of STR; once per turn after attacking, a free bonus-action
+          unarmed strike is available (no ki cost). Unarmored Defense: AC
+          already includes your WIS bonus while unarmored and shieldless.
+        </p>
+      )}
 
       {resourceEntries.length > 0 && (
         <div>
@@ -266,6 +288,12 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
           <li className={character.equip_used_this_turn ? 'detail-action-unavailable' : ''}>
             Equip (switch weapons - doesn't cost your turn)
           </li>
+          {character.class_index === 'monk' && (
+            <li className={character.bonus_action_used ? 'detail-action-unavailable' : ''}>
+              Martial Arts Strike (free bonus-action unarmed strike, no ki)
+              {character.bonus_action_used && ' - bonus action already used this turn'}
+            </li>
+          )}
           {cantrips.length > 0 && (
             <li>
               Cast a Spell - cantrips: {cantrips.map(nameWithSpellDetail).join(', ')}

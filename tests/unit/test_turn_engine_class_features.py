@@ -895,6 +895,63 @@ def test_flurry_of_blows_rejected_if_bonus_action_already_used() -> None:
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
+# --- Monk: Martial Arts Strike (issue #36) --------------------------------------
+# The third piece of level-1 Martial Arts (alongside the DEX-option/scaling-die
+# tests above) - a free bonus-action unarmed strike, no ki, unlike Flurry of
+# Blows which costs 1 ki and needs level 2+.
+
+
+def test_martial_arts_strike_lands_one_full_damage_unarmed_strike_at_level_1() -> None:
+    kai = _monk()  # level 1 - no ki at all, proving this doesn't need any
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai",
+        verb="martial_arts_strike",
+        target="goblin_1",
+        raw_text="I throw in a quick punch",
+    )
+    resolve_action(state, action, _FixedRandom([12, 3]))  # type: ignore[arg-type]
+
+    attack_events = [e for e in state.events if e.type == "attack_roll"]
+    assert len(attack_events) == 1
+    assert attack_events[0].payload["hit"] is True
+    damage_event = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage_event.payload["amount"] == 6  # die 3 + DEX mod 3, same as the plain-attack case
+    assert "ki" not in kai.class_resources  # no Ki resource exists yet at level 1
+    assert kai.bonus_action_used is True
+    assert state.turn_order[state.current_turn] == "kai"  # still his turn
+
+
+def test_martial_arts_strike_rejected_for_a_non_monk() -> None:
+    fighter = _fighter()
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(fighter, goblin)
+    action = ParsedAction(
+        actor=fighter.id,
+        verb="martial_arts_strike",
+        target="goblin_1",
+        raw_text="I throw in a quick punch",
+    )
+    with pytest.raises(TurnEngineError, match="doesn't have Martial Arts"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_martial_arts_strike_rejected_if_bonus_action_already_used() -> None:
+    kai = _monk()
+    kai.bonus_action_used = True
+    goblin = _goblin("goblin_1", Position(x=0, y=0))
+    state = _make_state(kai, goblin)
+    action = ParsedAction(
+        actor="kai",
+        verb="martial_arts_strike",
+        target="goblin_1",
+        raw_text="I throw in a quick punch",
+    )
+    with pytest.raises(TurnEngineError, match="already used their bonus action"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
 # --- Bardic Inspiration (issue #25) ---------------------------------------------
 
 

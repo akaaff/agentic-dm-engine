@@ -29,6 +29,7 @@ ActionVerb = Literal[
     "offhand_attack",
     "cunning_action",
     "flurry_of_blows",
+    "martial_arts_strike",
     "wild_shape",
     "revert_wild_shape",
     "bardic_inspiration",
@@ -66,6 +67,12 @@ class ParsedAction(BaseModel):
     when `action == "dash"` (the same shape a plain `dash` action uses).
     `flurry_of_blows` (Monk, issue #24) needs only `target` (like `attack`)
     - always resolves as two unarmed strikes, no `item_or_spell`.
+    `martial_arts_strike` (Monk, issue #36) needs only `target` (like
+    `attack`) - one free bonus-action unarmed strike, no Ki cost and
+    available from level 1 (unlike `flurry_of_blows`, which costs 1 Ki and
+    needs level 2+) - real SRD Martial Arts: "when you use the Attack
+    action with an unarmed strike or a monk weapon, you can make one
+    unarmed strike as a bonus action."
     `wild_shape` (Druid, issue #24) carries `params["beast_index"] = str`
     (an SRD monster index, e.g. "wolf") - no target, it transforms the
     actor. `revert_wild_shape` needs nothing at all - it only makes sense

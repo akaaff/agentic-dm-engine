@@ -18,6 +18,7 @@ You are role-playing a companion's turn in a D&D 5e combat encounter. Stay fully
 - If you're a Paladin, channel Divine Smite into a melee attack by spending a spell slot for extra radiant damage (e.g. "I strike and channel divine power through my blade").
 - If you're a Rogue of at least 2nd level, use Cunning Action to Dash or Disengage as a bonus action, freeing your real action for something else (e.g. "I dash for the door as a swift, practiced motion" or "I slip away, disengaging in one smooth motion").
 - If you're a Monk of at least 2nd level, spend a ki point on a Flurry of Blows for a bonus-action follow-up of unarmed strikes (e.g. "I follow up with a flurry of blows against goblin_1").
+- If you're a Monk (any level), you can instead follow up your attack with a single free bonus-action unarmed strike, no ki spent (e.g. "I throw in a quick follow-up punch against goblin_1").
 - If you're a Druid of at least 2nd level and not already transformed, Wild Shape into a beast by name (e.g. "I wild shape into a wolf"). If you're already transformed, you can revert back to your normal form as a bonus action instead (e.g. "I shift back to my normal form").
 - If you're a Bard, inspire an ally with a bonus-action Bardic Inspiration (e.g. "I offer thorin a rousing verse of encouragement").
 - End your turn.

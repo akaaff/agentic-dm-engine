@@ -978,6 +978,41 @@ def _resolve_flurry_of_blows(
     return False
 
 
+def _resolve_martial_arts_strike(
+    state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
+) -> bool:
+    """Monk's Martial Arts bonus-action unarmed strike (issue #36) - the
+    third piece of level-1 Martial Arts, alongside the DEX-option and
+    scaling damage die already handled unconditionally by
+    _pc_attack_params's Monk branch. A single free unarmed strike, no Ki
+    cost, available from level 1 - a genuinely different feature from
+    Flurry of Blows above (2 strikes, costs 1 Ki, needs level 2+ Ki to
+    exist at all). Same bonus_action_used gate shape as Flurry/Second Wind/
+    Rage. Real SRD gates this on "immediately after the Attack action with
+    an unarmed strike or a monk weapon" - not enforced here, same
+    documented simplification this engine already accepts for Flurry's own
+    identical real-SRD prerequisite (this engine doesn't track "which verb
+    was used earlier this turn" in a way a check like that could consume)."""
+    if actor.class_index != "monk":
+        raise TurnEngineError(f"{actor.id} doesn't have Martial Arts")
+    if actor.bonus_action_used:
+        raise TurnEngineError(
+            f"{actor.id} has already used their bonus action this turn - "
+            "cannot make a Martial Arts strike"
+        )
+    if action.target is None:
+        raise TurnEngineError("martial_arts_strike action requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown martial_arts_strike target: {action.target}")
+    _validate_attack_target(actor, target)
+
+    params = _pc_attack_params(actor, None, srd, force_unarmed=True)
+    _resolve_single_attack(state, actor, target, params, rng, srd)
+    actor.bonus_action_used = True
+    return False
+
+
 def _resolve_wild_shape(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> bool:
@@ -2960,6 +2995,8 @@ def resolve_action(
         ends_turn = _resolve_cunning_action(state, actor, action, rng, srd)
     elif action.verb == "flurry_of_blows":
         ends_turn = _resolve_flurry_of_blows(state, actor, action, rng, srd)
+    elif action.verb == "martial_arts_strike":
+        ends_turn = _resolve_martial_arts_strike(state, actor, action, rng, srd)
     elif action.verb == "wild_shape":
         ends_turn = _resolve_wild_shape(state, actor, action, rng, srd)
     elif action.verb == "revert_wild_shape":
