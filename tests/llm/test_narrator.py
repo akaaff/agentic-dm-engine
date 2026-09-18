@@ -13,8 +13,9 @@ pytestmark = pytest.mark.llm
 
 
 def _narrate(events: list[Event]) -> str:
-    # game_state is unused by narrator_node beyond events, so a minimal
-    # placeholder is fine here rather than building a real encounter.
+    # game_state.events is what actually drives the narration; game_state.
+    # characters is also read now (issue #33's cast_names grounding), so a
+    # real encounter is built rather than a bare placeholder either way.
     from src.cli.play import build_demo_encounter, build_demo_party, demo_initiative_rng
     from src.engine.encounter import build_encounter_state
 
@@ -81,6 +82,41 @@ def test_narrator_describes_a_miss() -> None:
     narration = _narrate(events)
     assert narration
     assert not contains_cjk(narration)  # issue #16
+
+
+def test_narrator_does_not_hallucinate_a_monster_outside_the_actual_cast() -> None:
+    # Issue #33: a live multi-round session produced "the drow's poison
+    # courses through..." mid-fight against an encounter with no drow at
+    # all. Confirmed this isn't context accumulation (chat_english_only
+    # sends one stateless request per call - see providers.chat, no
+    # conversation history kept between narrator_node invocations), so the
+    # fix is grounding each individual call more tightly: the prompt now
+    # lists the real cast (game_state.characters) explicitly. This can't
+    # prove a small model will *never* hallucinate (same honest framing as
+    # issue #16's CJK mitigation), but repeated trials against a
+    # goblins-only encounter should never mention an unrelated monster
+    # species like a drow, dragon, or orc - none of which exist anywhere
+    # in this encounter's data.
+    events = [
+        Event(
+            round=3,
+            turn_index=0,
+            actor="thorin",
+            type="attack_roll",
+            payload={"target": "goblin_1", "hit": True, "critical": False},
+        ),
+        Event(
+            round=3,
+            turn_index=0,
+            actor="thorin",
+            type="damage_dealt",
+            payload={"target": "goblin_1", "amount": 5, "target_hp_remaining": 2},
+        ),
+    ]
+    hallucinated_terms = ("drow", "dragon", "orc", "demon", "vampire", "zombie")
+    for _ in range(8):
+        narration = _narrate(events).lower()
+        assert not any(term in narration for term in hallucinated_terms), narration
 
 
 def test_narrator_returns_empty_for_no_new_events() -> None:

@@ -22,6 +22,22 @@ def narrator_node(state: GraphState) -> dict[str, Any]:
         return {"narration": ""}
 
     events_summary = "\n".join(_event_line(e) for e in new_events)
-    prompt = load_prompt("narrator").format(events_summary=events_summary)
+    # Issue #33: a live report of the narrator inventing an unrelated
+    # monster ("the drow's poison...") mid-fight against a wolves-only
+    # encounter. Confirmed this isn't context accumulation across turns -
+    # chat_english_only/chat send one stateless request per call (see
+    # providers.chat's plain httpx.post, no conversation history kept
+    # between calls), so a hallucination at round 12 can't be "bleed" from
+    # something said many turns earlier - it never saw those calls. The
+    # prompt already said "do not invent... characters... not listed
+    # below," but that's a prohibition with nothing concrete to check
+    # itself against; giving it the actual closed cast list (same
+    # "anchor it to real data" pattern intent_parser's visible-characters
+    # list already uses) is a stronger, more falsifiable grounding than a
+    # generic instruction alone - not a guaranteed fix for a small model's
+    # occasional hallucination, same honest framing as issue #16's CJK
+    # mitigation.
+    cast_names = ", ".join(sorted({c.name for c in state["game_state"].characters.values()}))
+    prompt = load_prompt("narrator").format(events_summary=events_summary, cast_names=cast_names)
     narration = chat_english_only(messages=[{"role": "user", "content": prompt}], temperature=0.7)
     return {"narration": narration.strip()}
