@@ -303,7 +303,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         chosen_spells: classDetail?.spells_known ? chosenSpells : undefined,
       })
       setCreated(character)
-      setStep(5)
+      setStep(4)
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : 'Failed to reach the server')
     } finally {
@@ -397,7 +397,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
       <div className="wizard">
         <h1>Create a Character</h1>
         <ol className="steps">
-          {['Basics', 'Class & Skills', 'Ability Scores', 'Background', 'Equipment'].map(
+          {['Basics', 'Class & Skills', 'Ability Scores', 'Equipment'].map(
             (label, i) => (
               <li key={label} className={i === step ? 'active' : i < step ? 'done' : ''}>
                 {label}
@@ -633,30 +633,6 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
 
         {step === 3 && (
           <section>
-            <label>
-              Background
-              <select value={backgroundIndex} onChange={(e) => setBackgroundIndex(e.target.value)}>
-                <option value="">Choose a background...</option>
-                {backgrounds.map((b) => (
-                  <option key={b.index} value={b.index}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="wizard-nav">
-              <button type="button" onClick={() => setStep(2)}>
-                Back
-              </button>
-              <button type="button" disabled={backgroundIndex === ''} onClick={() => setStep(4)}>
-                Next
-              </button>
-            </div>
-          </section>
-        )}
-
-        {step === 4 && (
-          <section>
             <p>
               Optional extra gear, beyond your class/background's starting kit - restricted to what{' '}
               {classes.find((c) => c.index === classIndex)?.name ?? 'your class'} is actually
@@ -707,7 +683,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 })}
             </fieldset>
             <div className="wizard-nav">
-              <button type="button" onClick={() => setStep(3)}>
+              <button type="button" onClick={() => setStep(2)}>
                 Back
               </button>
               <button type="button" disabled={!canSubmit || submitting} onClick={handleSubmit}>
