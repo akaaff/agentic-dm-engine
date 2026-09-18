@@ -633,8 +633,16 @@ def test_multiattack_sub_actions_matches_case_insensitively_and_orders_by_appear
 
 
 def test_spell_range_feet_parses_feet_and_falls_back_for_touch() -> None:
-    assert spell_range_feet("120 feet") == 120
-    assert spell_range_feet("Touch") == 5
+    assert spell_range_feet({"index": "fire-bolt", "range": "120 feet"}) == 120
+    assert spell_range_feet({"index": "vampiric-touch", "range": "Touch"}) == 5
+
+
+def test_spell_range_feet_applies_produce_flame_override() -> None:
+    # Issue #37: the SRD's own "range" field says "Self" (where the flame
+    # appears), not the real 30ft hurl-the-flame attack range - the regex/
+    # 5ft fallback alone would under-range it.
+    srd = load_srd()
+    assert spell_range_feet(srd.spells["produce-flame"]) == 30
 
 
 # --- Phase 9A: saving throws + condition mechanics ------------------------

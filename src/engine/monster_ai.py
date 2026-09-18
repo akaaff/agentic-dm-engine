@@ -162,7 +162,7 @@ def _choose_innate_spell(actor: Character, target: Character, srd: SrdIndex) -> 
             and actor.innate_spell_uses_remaining.get(normalized, 0) <= 0
         ):
             continue
-        if distance > spell_range_feet(str(spell.get("range", ""))):
+        if distance > spell_range_feet(spell):
             continue
         return ParsedAction(
             actor=actor.id,

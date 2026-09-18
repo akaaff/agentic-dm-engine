@@ -682,16 +682,32 @@ def weapon_range_feet(weapon: SrdEntry) -> tuple[int, int | None]:
 
 _SPELL_RANGE_RE = re.compile(r"(\d+)\s*feet", re.IGNORECASE)
 
+_SPELL_RANGE_OVERRIDES_FEET: dict[str, int] = {
+    # Issue #37: Produce Flame's SRD `range` field is literally "Self" (it
+    # describes where the conjured flame first appears in your hand) - the
+    # real 30ft hurl-the-flame attack range only exists in the spell's
+    # free-text desc, not in any structured field, so the regex/5ft fallback
+    # below silently under-ranges it. Confirmed this is the only spell that
+    # needs one: every other attack-roll spell with range "Self"
+    # (vampiric-touch) genuinely is Touch-range, so the 5ft fallback is
+    # already correct for it - not added here since it isn't wrong.
+    "produce-flame": 30,
+}
 
-def spell_range_feet(range_str: str) -> int:
+
+def spell_range_feet(spell: SrdEntry) -> int:
     """A spell's SRD `range` field is a plain string ("120 feet", "Touch",
     "Self") - no {normal, long} structure like weapons, since spells have
     no "beyond normal range" disadvantage tier in 5e; you're either in
     range or you aren't. "Touch"/"Self"/anything unparseable falls back to
-    5ft (melee-adjacent) - a safe default since cast_spell only resolves
-    single-target attack-roll spells (Day 14 scope), which are never
-    "Self"-range in practice."""
-    match = _SPELL_RANGE_RE.search(range_str)
+    5ft (melee-adjacent) - a safe default for spells whose range genuinely
+    is Touch/Self, but wrong for the rare spell (see
+    _SPELL_RANGE_OVERRIDES_FEET) whose real attack range only exists in
+    free-text flavor, checked first."""
+    override = _SPELL_RANGE_OVERRIDES_FEET.get(spell.get("index", ""))
+    if override is not None:
+        return override
+    match = _SPELL_RANGE_RE.search(str(spell.get("range", "")))
     return int(match.group(1)) if match else 5
 
 

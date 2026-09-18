@@ -2021,7 +2021,7 @@ def _spell_attack_params(
         damage_bonus=notation_bonus,
         damage_type=damage_info["damage_type"]["index"],
         source_name=spell["name"],
-        range_normal_feet=spell_range_feet(str(spell.get("range", ""))),
+        range_normal_feet=spell_range_feet(spell),
         range_long_feet=None,  # spells have no "beyond normal" disadvantage tier
         attack_bonus_breakdown=[
             (f"{ability} mod", ability_mod),
@@ -2430,7 +2430,7 @@ def _resolve_monster_innate_spell(
         raise TurnEngineError(f"Unknown spell target: {action.target}")
     _validate_attack_target(actor, target)
 
-    range_normal_feet = spell_range_feet(str(spell.get("range", "")))
+    range_normal_feet = spell_range_feet(spell)
     distance = distance_feet(actor.position, target.position)
     if distance > range_normal_feet:
         raise TurnEngineError(
@@ -2516,7 +2516,7 @@ def _resolve_cast_spell(
             _validate_attack_target(actor, target)
         targets.append(target)
 
-    range_normal_feet = spell_range_feet(str(spell.get("range", "")))
+    range_normal_feet = spell_range_feet(spell)
     for target in targets:
         distance = distance_feet(actor.position, target.position)
         if distance > range_normal_feet:
