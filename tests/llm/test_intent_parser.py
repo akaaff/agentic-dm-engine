@@ -3,16 +3,18 @@ Not a full replay-fixture test (LLM output isn't byte-deterministic even at
 low temperature) - checks the fields that matter (verb, and target where the
 utterance clearly names one), tolerant of everything else."""
 
+import random
 from typing import Any
 
 import pytest
 
 from src.cli.play import build_demo_encounter, build_demo_party, demo_initiative_rng
 from src.engine.encounter import build_encounter_state, monster_to_character
-from src.engine.position import Position
+from src.engine.position import BattleMap, Position
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character
 from src.engine.state import GameState as EngineGameState
+from src.engine.turn_engine import resolve_action
 from src.graph.nodes.intent_parser import intent_parser_node, parse_intent_sequence
 from src.graph.state_schema import GraphState
 
@@ -249,3 +251,73 @@ def test_parse_intent_sequence_extracts_multiple_actions_in_order() -> None:
     assert "attack" in verbs, f"actions={actions}"
     assert verbs[-1] == "attack", f"actions={actions}"
     assert all(a.actor == "thorin" for a in actions)
+
+
+def test_the_full_rage_move_attack_repro_actually_resolves_end_to_end() -> None:
+    # Issue #48's own verification: the exact original live report ("I fly
+    # into rage, come to wolf 1 and smash it with my warhammer") only ever
+    # got the rage - #47 fixed the sequencing, but the move itself failed
+    # (single-adjacent-square-only free-text movement, confirmed live twice
+    # with a target-less attack and a malformed empty path). With a real
+    # battle_map this time (the wolf 2 squares/10ft away, not adjacent) and
+    # each returned action actually resolved through the real engine - not
+    # just verbs inspected - this proves the whole chain: rage applies,
+    # movement genuinely closes the distance, and the attack lands with a
+    # real target set.
+    srd = load_srd()
+    actor = Character(
+        id="thorin",
+        name="Thorin",
+        is_pc=True,
+        class_index="barbarian",
+        hp=15,
+        max_hp=15,
+        ac=13,
+        position=Position(x=0, y=0),
+        stats={"STR": 16, "DEX": 12, "CON": 15, "INT": 8, "WIS": 10, "CHA": 8},
+        proficiency_bonus=2,
+        speed=30,
+        race="Human",
+        class_="Barbarian",
+        background="Acolyte",
+        class_resources={"rage": 2},
+        equipped_weapons=["warhammer"],
+    )
+    wolf = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=2, y=0))
+    battle_map = BattleMap(
+        width=10, height=10, terrain=[["floor"] * 10 for _ in range(10)], spawn_points={}
+    )
+    game_state = EngineGameState(
+        encounter_id="move_repro_live_test",
+        characters={actor.id: actor, wolf.id: wolf},
+        turn_order=[actor.id, wolf.id],
+        current_turn=0,
+        round=1,
+        battle_map=battle_map,
+    )
+    state: GraphState = {
+        "game_state": game_state,
+        "raw_text": "I fly into a rage, come to wolf 1, and smash it with my warhammer",
+        "parsed_action": None,
+        "events_before": 0,
+        "round_before": 1,
+        "narration": None,
+        "scene_image_url": None,
+    }
+
+    actions = parse_intent_sequence(state)
+    rng = random.Random(1)
+    for action in actions:
+        resolve_action(game_state, action, rng)
+        if game_state.status != "in_progress":
+            break
+        if game_state.turn_order[game_state.current_turn] != "thorin":
+            break
+
+    assert actor.is_raging, f"actions={actions}"
+    # Actually moved closer, not still at the starting square.
+    assert actor.position != Position(x=0, y=0), f"actions={actions}"
+    # The attack landed a real hit-or-miss roll against the wolf (an event
+    # exists either way) - proves the attack sub-action resolved with a
+    # real target, not "requires a target".
+    assert any(e.type == "attack_roll" for e in game_state.events), f"actions={actions}"

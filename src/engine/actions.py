@@ -46,7 +46,14 @@ class ParsedAction(BaseModel):
     item_or_spell: str | None = None
     params: dict[str, Any] = {}
     """Verb-specific extras. Convention: `move`/`dash` carry
-    `params["move_to"] = {"x": int, "y": int}`; `skill_check` carries
+    `params["path"] = [{"x": int, "y": int}, ...]` (one entry per square
+    stepped through) - or, since issue #48, `target` may be set instead of
+    `path` to a visible character's id, meaning "approach this character"
+    rather than a precise destination; graph/nodes/intent_parser.py's
+    `_resolve_move_target` computes a real `path` from it before the action
+    ever reaches turn_engine (which still only ever consumes `path` -
+    `target` on a move/dash is resolved away before resolve_action sees
+    it, not a second thing it understands). `skill_check` carries
     `params["skill"] = str`; `equip` carries `params["items"] = [str, ...]`
     (the weapon/armor/shield indices to make the new active equipped set).
     `cast_spell` needs `target` (or `targets` for a multi-target cast, e.g.

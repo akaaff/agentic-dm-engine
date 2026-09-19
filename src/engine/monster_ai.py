@@ -96,7 +96,7 @@ def _best_step(
     return min(open_squares, key=lambda p: chebyshev_distance(p, target))
 
 
-def _approach_path(
+def approach_path(
     start: Position,
     target: Position,
     speed: int,
@@ -117,7 +117,15 @@ def _approach_path(
     starting squares could independently choose the identical "best"
     intermediate square and end up stacked exactly on top of each other -
     invisible as two tokens on the combat grid, and a real (if minor) break
-    of the "no two creatures share a square" rule."""
+    of the "no two creatures share a square" rule.
+
+    Public (issue #48) so graph/nodes/intent_parser.py can reuse the exact
+    same algorithm for a player's own "move toward X" free text, instead of
+    asking the model to compute a valid multi-square path itself - the cost
+    accounting here already matches turn_engine._resolve_move's own
+    affordability check exactly, so a path built against the actor's real
+    remaining speed budget is guaranteed to still be affordable when
+    _resolve_move re-validates it."""
     path: list[Position] = []
     current = start
     remaining = speed
@@ -215,7 +223,7 @@ def choose_monster_action(game_state: GameState, actor: Character) -> ParsedActi
     # left, not a fresh full speed, or a monster with exactly enough speed
     # to close half the gap would waste an attempt on a now-unaffordable move.
     remaining_speed = max(0, effective_speed(actor) - actor.movement_used_feet)
-    path = _approach_path(
+    path = approach_path(
         actor.position,
         target.position,
         remaining_speed,

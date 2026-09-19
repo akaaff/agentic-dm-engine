@@ -30,8 +30,10 @@ from typing import Any
 
 from src import config
 from src.engine.actions import ParsedAction, ParsedActionSequence
+from src.engine.monster_ai import approach_path
 from src.engine.position import Position, distance_feet
-from src.engine.state import Character
+from src.engine.rules import effective_speed
+from src.engine.state import Character, GameState
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_structured, chat_structured_best_effort, load_prompt
 
@@ -151,6 +153,85 @@ def _normalize_cast_spell_target(action: ParsedAction) -> ParsedAction:
     return action
 
 
+def _resolve_move_target(action: ParsedAction, game_state: GameState) -> ParsedAction:
+    """Issue #48: "move"/"dash" toward a *named* visible character further
+    than one square away (e.g. "I charge the wolf" / "come to wolf_1") -
+    the prompt sets the top-level "target" field for this instead of
+    trying to compute exact squares itself, since intent_parser.md's own
+    single-adjacent-step instruction is deliberately narrow (the model was
+    never reliable at obstacle-avoiding multi-square paths - see #47's own
+    live finding of a malformed empty path when it tried anyway).
+
+    `target` unconditionally overrides any `params.path` the model also
+    supplied, rather than only filling in a gap - confirmed live this isn't
+    a hypothetical: the model set *both* target="wolf_1" and a bogus
+    single-entry path landing 2 squares away (not actually adjacent) for
+    the exact same utterance in the same response, and deferring to the
+    already-present (wrong) path silently reproduced the original bug this
+    issue exists to fix. `target` is the reliable signal (a plain lookup);
+    exact square math is what the model keeps getting wrong, so it never
+    gets the tie-break once a target is named. A move genuinely aimed at a
+    bare destination square (no character involved at all) has no target
+    to begin with, so its own params.path is untouched exactly as before.
+
+    Computes a real path via monster_ai.approach_path, the same greedy
+    algorithm already proven against turn_engine._resolve_move's own
+    affordability check for monster movement - stopping at 5ft/adjacent
+    ("move to X" most naturally means "get next to it," not stop at some
+    weapon-range-dependent distance - out of scope, see the issue), using
+    the actor's real remaining speed budget (doubled for dash, matching
+    _resolve_move's own budget formula exactly). An empty/short result
+    (blocked, occupied, not enough speed, or already adjacent) is left as
+    no `path` at all rather than a partial or stale one silently kept -
+    _resolve_move's own "move/dash action requires params['path']" error is
+    the honest, already-established way to report "couldn't get there," not
+    a new single-action-with-nothing-in-it modeled as if it succeeded."""
+    if action.verb not in ("move", "dash") or not action.target:
+        return action
+    actor = game_state.characters.get(action.actor)
+    target = game_state.characters.get(action.target)
+    if actor is None or target is None or game_state.battle_map is None:
+        return action
+
+    base_speed = effective_speed(actor)
+    total_budget = base_speed * 2 if action.verb == "dash" else base_speed
+    remaining_budget = max(0, total_budget - actor.movement_used_feet)
+    occupied = {
+        (c.position.x, c.position.y)
+        for c in game_state.characters.values()
+        if not c.is_dead and c.id != actor.id
+    }
+    path = approach_path(
+        actor.position,
+        target.position,
+        remaining_budget,
+        5,
+        game_state.battle_map.terrain,
+        occupied,
+    )
+    # Explicitly drop any params.path the model also supplied, even on an
+    # empty computed path - already-adjacent or genuinely blocked, either
+    # way a stale/wrong model-supplied path from the same response that
+    # named this target must not survive to reach turn_engine unexamined.
+    new_params = {k: v for k, v in action.params.items() if k != "path"}
+    if path:
+        new_params["path"] = [{"x": p.x, "y": p.y} for p in path]
+    return action.model_copy(update={"params": new_params})
+
+
+def _postprocess_action(
+    action: ParsedAction, expected_actor_id: str, game_state: GameState
+) -> ParsedAction:
+    """The full pipeline every parsed action goes through, regardless of
+    which backend produced it - forcing the real actor, fixing a
+    misplaced cast_spell target, and computing a real move/dash path from
+    a named target. Order matters only in that each step is independent of
+    the others (none touch fields the next one reads)."""
+    action = _force_actor(action, expected_actor_id)
+    action = _normalize_cast_spell_target(action)
+    return _resolve_move_target(action, game_state)
+
+
 def intent_parser_node(state: GraphState) -> dict[str, Any]:
     if state["parsed_action"] is not None:
         return {"parsed_action": state["parsed_action"]}
@@ -166,8 +247,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         action = parse_intent_local(prompt, config.INTENT_PARSER_ADAPTER_DIR)
         if action is None:
             return {"parsed_action": _invalid_action(state)}
-        action = _force_actor(action, expected_actor_id)
-        return {"parsed_action": _normalize_cast_spell_target(action)}
+        return {"parsed_action": _postprocess_action(action, expected_actor_id, game_state)}
 
     if backend == "finetuned_ollama":
         action = chat_structured_best_effort(
@@ -178,16 +258,14 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         )
         if action is None:
             return {"parsed_action": _invalid_action(state)}
-        action = _force_actor(action, expected_actor_id)
-        return {"parsed_action": _normalize_cast_spell_target(action)}
+        return {"parsed_action": _postprocess_action(action, expected_actor_id, game_state)}
 
     action = chat_structured(
         messages=[{"role": "user", "content": prompt}],
         schema=ParsedAction,
         temperature=0.2,
     )
-    action = _force_actor(action, expected_actor_id)
-    return {"parsed_action": _normalize_cast_spell_target(action)}
+    return {"parsed_action": _postprocess_action(action, expected_actor_id, game_state)}
 
 
 def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
@@ -225,7 +303,5 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
         schema=ParsedActionSequence,
         temperature=0.2,
     )
-    actions = [
-        _normalize_cast_spell_target(_force_actor(a, expected_actor_id)) for a in sequence.actions
-    ]
+    actions = [_postprocess_action(a, expected_actor_id, game_state) for a in sequence.actions]
     return actions or [_invalid_action(state)]
