@@ -3,17 +3,41 @@ the WebSocket live-play session) get included here starting Day 9."""
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.api.routes import campaigns, characters, companions, sessions
 from src.api.ws import session as ws_session
-from src.config import EXTRA_CORS_ORIGINS
+from src.config import EXTRA_CORS_ORIGINS, SHARED_ACCESS_PASSPHRASE
 from src.engine.character_creation import PORTRAIT_DIR
 from src.imagegen.service import DEFAULT_OUTPUT_DIR, MEDIA_URL_PREFIX
 
 app = FastAPI(title="agentic-dm-engine")
+
+# Issue #42: everything except /health requires the shared passphrase (as an
+# X-Access-Passphrase header) once SHARED_ACCESS_PASSPHRASE is set - a no-op
+# when it's unset (local dev, the default). Registered *before* the
+# CORSMiddleware call below so CORS ends up as the outermost layer (Starlette
+# wraps middleware in reverse-registration order - confirmed by reading
+# Starlette's own build_middleware_stack rather than assuming) and still
+# attaches Access-Control-Allow-Origin to a rejected 401 response, the same
+# "don't let a masked backend response read as a CORS error" lesson already
+# documented elsewhere in this file for unhandled exceptions. This only
+# covers HTTP requests - the WebSocket endpoint (which can't carry a custom
+# header from browser JS) does its own equivalent check via a `key` query
+# param, in api/ws/session.py.
+_UNGATED_PATHS = {"/health"}
+
+
+@app.middleware("http")
+async def _require_passphrase(request: Request, call_next):  # type: ignore[no-untyped-def]
+    if SHARED_ACCESS_PASSPHRASE and request.url.path not in _UNGATED_PATHS:
+        if request.headers.get("X-Access-Passphrase") != SHARED_ACCESS_PASSPHRASE:
+            return JSONResponse({"detail": "Missing or incorrect passphrase."}, status_code=401)
+    return await call_next(request)
+
 
 # The Vite dev server (Day 17+) runs on a different origin (localhost:5173)
 # than this API (localhost:8000) - local-dev-only, wide open since this is a
@@ -51,5 +75,21 @@ app.mount("/media/portraits", StaticFiles(directory=PORTRAIT_DIR), name="portrai
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, object]:
+    # passphrase_required lets the frontend's gate screen (issue #42) decide
+    # whether to show itself at all, without guessing from a failed request -
+    # this endpoint is deliberately exempt from the gate itself (see
+    # _UNGATED_PATHS above), matching the ordinary "a health check shouldn't
+    # need auth" convention.
+    return {"status": "ok", "passphrase_required": SHARED_ACCESS_PASSPHRASE is not None}
+
+
+@app.get("/auth/check")
+def auth_check() -> dict[str, bool]:
+    # Gated like everything else - reaching this handler at all already
+    # proves the caller's X-Access-Passphrase header was correct (or the
+    # gate is disabled), so there's nothing left to check here. The
+    # frontend's gate screen calls this once to validate what the player
+    # typed before storing it and proceeding, rather than only discovering
+    # it was wrong on the first real API call.
+    return {"ok": True}

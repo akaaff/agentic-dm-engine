@@ -533,6 +533,18 @@ async def _handle_client_message(
 
 @router.websocket("/ws/session/{session_id}")
 async def session_websocket(websocket: WebSocket, session_id: str) -> None:
+    # Issue #42: the WS equivalent of main.py's _require_passphrase HTTP
+    # middleware - a plain WebSocket connection from browser JS can't set a
+    # custom header, so this reads a `key` query param instead. Rejected
+    # *before* accept() so the handshake itself fails rather than opening a
+    # connection just to immediately close it - Starlette's WebSocket.close()
+    # is valid to call pre-accept (confirmed by reading its source: it just
+    # sends a "websocket.close" ASGI event, which is a legal response to the
+    # initial "websocket.connect" event per the ASGI spec).
+    passphrase = config.SHARED_ACCESS_PASSPHRASE
+    if passphrase and websocket.query_params.get("key") != passphrase:
+        await websocket.close(code=4401, reason="missing or incorrect passphrase")
+        return
     await websocket.accept()
     try:
         session = _get_or_create_default_session(session_id)

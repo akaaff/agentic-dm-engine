@@ -18,6 +18,14 @@ export default defineConfig({
       '/sessions': 'http://localhost:8000',
       '/media': 'http://localhost:8000',
       '/ws': { target: 'http://localhost:8000', ws: true, changeOrigin: true },
+      // Issue #42: missed on the first pass - without these two, Vite's own
+      // SPA fallback silently answers /health and /auth/check with index.html
+      // (200 OK, wrong content) instead of proxying to the backend, which
+      // made the frontend's passphrase gate fail open (checkHealth()'s JSON
+      // parse threw, and the catch-all defaulted to unlocked) rather than
+      // showing itself. Caught live, not by inspection.
+      '/health': 'http://localhost:8000',
+      '/auth': 'http://localhost:8000',
     },
     // A free Cloudflare Tunnel quick-tunnel gets a fresh random hostname
     // every time it starts, so there's no fixed value to allowlist here -

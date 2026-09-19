@@ -2,6 +2,7 @@
 // No generated OpenAPI client - the surface is small enough that hand-written
 // types are less overhead than adding a codegen step for Day 17's scope.
 
+import { getAccessKey } from './accessKey'
 import { API_BASE_URL } from './baseUrl'
 
 export class ApiError extends Error {
@@ -14,9 +15,16 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // Issue #42: attached whenever a passphrase is stored, harmless when the
+  // backend gate is disabled (SHARED_ACCESS_PASSPHRASE unset - the header
+  // is simply ignored, per main.py's own gate logic).
+  const accessKey = getAccessKey()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (accessKey) headers['X-Access-Passphrase'] = accessKey
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: { ...headers, ...init?.headers },
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
@@ -206,4 +214,11 @@ export const api = {
   listCampaigns: () => request<CampaignSummary[]>('/campaigns'),
   startSession: (body: StartSessionRequest) =>
     request<StartSessionResponse>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  // Issue #42: checkHealth tells the gate screen whether to show itself at
+  // all (passphrase_required); verifyAccessKey lets it test a just-typed
+  // candidate key directly (via an explicit header override, ignoring
+  // whatever's currently in storage) before committing to storing it.
+  checkHealth: () => request<{ status: string; passphrase_required: boolean }>('/health'),
+  verifyAccessKey: (key: string) =>
+    request<{ ok: boolean }>('/auth/check', { headers: { 'X-Access-Passphrase': key } }),
 }

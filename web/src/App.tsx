@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { getAccessKey } from './api/accessKey'
 import { api, ApiError, type Character } from './api/client'
+import AccessGate from './screens/AccessGate'
 import CharacterCreator from './screens/CharacterCreator'
 import PartySetup from './screens/PartySetup'
 import CampaignSelect from './screens/CampaignSelect'
@@ -15,6 +17,42 @@ function App() {
   const [flow, setFlow] = useState<Flow>({ screen: 'character' })
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
+  // Issue #42: 'checking' avoids a flash of the gate screen (or the real
+  // app) before we know whether the backend even requires a passphrase, or
+  // whether an already-stored one from a prior visit is still valid.
+  const [gate, setGate] = useState<'checking' | 'locked' | 'unlocked'>('checking')
+
+  useEffect(() => {
+    api
+      .checkHealth()
+      .then(async ({ passphrase_required }) => {
+        if (!passphrase_required) {
+          setGate('unlocked')
+          return
+        }
+        const stored = getAccessKey()
+        if (stored) {
+          try {
+            await api.verifyAccessKey(stored)
+            setGate('unlocked')
+            return
+          } catch {
+            // Stored key no longer valid (e.g. the operator rotated it) -
+            // fall through to the gate screen below.
+          }
+        }
+        setGate('locked')
+      })
+      .catch(() => setGate('unlocked')) // /health itself unreachable - let the rest of the app surface that error normally rather than getting stuck behind a gate that can never resolve.
+  }, [])
+
+  if (gate === 'checking') {
+    return null
+  }
+
+  if (gate === 'locked') {
+    return <AccessGate onUnlocked={() => setGate('unlocked')} />
+  }
 
   if (flow.screen === 'character') {
     return (

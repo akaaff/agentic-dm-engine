@@ -31,6 +31,14 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./agentic_dm_engine.db"
 _extra_cors_origins_raw = os.environ.get("EXTRA_CORS_ORIGINS", "")
 EXTRA_CORS_ORIGINS = [origin for origin in _extra_cors_origins_raw.split(",") if origin]
 
+# Issue #42: a single shared passphrase gating every REST/WS endpoint except
+# /health - proportionate to the real threat model here ("a few friends
+# playing D&D", not a real user/account system - see the issue itself for
+# why that's explicitly out of scope). Unset (the default) disables the gate
+# entirely, so local dev is unaffected; a genuinely internet-reachable
+# deployment (a Cloudflare Tunnel hostname, issue #40) sets this to opt in.
+SHARED_ACCESS_PASSPHRASE = os.environ.get("SHARED_ACCESS_PASSPHRASE") or None
+
 # Issue #41: the debug_action WS message type injects a fully-formed
 # ParsedAction directly, bypassing intent_parser's LLM call and any check
 # that the sender controls the named actor - genuinely useful for fast local

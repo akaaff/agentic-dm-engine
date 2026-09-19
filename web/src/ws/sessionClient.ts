@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { getAccessKey } from '../api/accessKey'
 import { WS_BASE_URL } from '../api/baseUrl'
 
 // Mirrors the JSON shape of src/engine/state.py's Character/GameState -
@@ -244,7 +245,12 @@ export function useSessionSocket(sessionId: string) {
       scheduleDrain()
     }
 
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}`)
+    // Issue #42: a plain WebSocket can't carry a custom header, so the
+    // passphrase (when one is stored) rides along as a query param instead -
+    // see api/ws/session.py's session_websocket for the matching check.
+    const accessKey = getAccessKey()
+    const keyParam = accessKey ? `?key=${encodeURIComponent(accessKey)}` : ''
+    const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}${keyParam}`)
     wsRef.current = ws
 
     ws.onopen = () => {
