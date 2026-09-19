@@ -1841,6 +1841,7 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
             srd.equipment,
             class_index=actor.class_index,
             wis_mod=ability_modifier(actor.stats["WIS"]),
+            con_mod=ability_modifier(actor.stats["CON"]),
         )
 
     actor.equip_used_this_turn = True

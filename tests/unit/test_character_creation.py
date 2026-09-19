@@ -342,6 +342,14 @@ def test_barbarian_gets_rage_uses_and_fighter_gets_second_wind_use() -> None:
         chosen_skills=["skill-athletics", "skill-intimidation"],
     )
     assert barbarian.class_resources == {"rage": 2}
+    # Found live (user question): Barbarian's own Unarmored Defense (10 +
+    # DEX + CON while unarmored - a shield doesn't disable it, unlike
+    # Monk's version) was never implemented, silently under-computing AC.
+    # No armor is offered in Barbarian's starting kit, so this fixture is
+    # unarmored by construction. Dwarf's +2 CON racial bonus: 13 -> 15
+    # (mod 2); DEX 14 (mod 2) -> AC 10 + 2 + 2 = 14.
+    assert barbarian.equipped_armor is None
+    assert barbarian.ac == 14
 
     # A class with no such resource at all (e.g. Rogue - Wizard has one
     # now, issue #25's Arcane Recovery) gets an empty dict, not a missing

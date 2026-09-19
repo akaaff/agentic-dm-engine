@@ -339,6 +339,7 @@ def _combat_summaries(session: Session) -> dict[str, object]:
             continue
         dex_mod = ability_modifier(character.stats["DEX"])
         wis_mod = ability_modifier(character.stats["WIS"])
+        con_mod = ability_modifier(character.stats["CON"])
         ac_breakdown = armor_ac_breakdown(
             character.equipped_armor,
             character.equipped_shield,
@@ -347,6 +348,7 @@ def _combat_summaries(session: Session) -> dict[str, object]:
             session.srd.equipment,
             character.class_index,
             wis_mod,
+            con_mod,
         )
         attacks = current_attack_summaries(character, session.srd)
         summaries[character.id] = {

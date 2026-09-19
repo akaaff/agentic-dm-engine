@@ -592,6 +592,60 @@ def test_armor_ac_monk_unarmored_defense_disabled_by_a_shield() -> None:
     )
 
 
+def test_armor_ac_barbarian_unarmored_defense_adds_con_mod() -> None:
+    # Found live (user question): Barbarian's own, different Unarmored
+    # Defense had never been implemented at all - 10 + DEX mod(2) +
+    # CON mod(3), unarmored.
+    srd = load_srd()
+    assert (
+        armor_ac(
+            None,
+            None,
+            dex_mod=2,
+            fighting_style=None,
+            equipment=srd.equipment,
+            class_index="barbarian",
+            con_mod=3,
+        )
+        == 15
+    )
+
+
+def test_armor_ac_barbarian_unarmored_defense_survives_a_shield() -> None:
+    # Unlike Monk's version, SRD says "you can use a shield and still gain
+    # this benefit" - a shield adds its own flat bonus on top, it doesn't
+    # disable the CON mod the way it disables Monk's WIS mod.
+    srd = load_srd()
+    assert (
+        armor_ac(
+            None,
+            "shield",
+            dex_mod=2,
+            fighting_style=None,
+            equipment=srd.equipment,
+            class_index="barbarian",
+            con_mod=3,
+        )
+        == 17  # 10 + 2 (dex) + 3 (con) + 2 (shield)
+    )
+
+
+def test_armor_ac_ignores_con_mod_for_a_non_barbarian() -> None:
+    srd = load_srd()
+    assert (
+        armor_ac(
+            None,
+            None,
+            dex_mod=2,
+            fighting_style=None,
+            equipment=srd.equipment,
+            class_index="fighter",
+            con_mod=3,
+        )
+        == 12  # 10 + 2 (dex) only
+    )
+
+
 def test_armor_ac_ignores_wis_mod_for_a_non_monk() -> None:
     srd = load_srd()
     assert (
@@ -672,6 +726,24 @@ def test_armor_ac_breakdown_includes_monk_unarmored_defense() -> None:
         ("base (unarmored)", 10),
         ("DEX mod", 2),
         ("WIS mod (Unarmored Defense)", 3),
+    ]
+
+
+def test_armor_ac_breakdown_includes_barbarian_unarmored_defense() -> None:
+    srd = load_srd()
+    breakdown = armor_ac_breakdown(
+        None,
+        None,
+        dex_mod=2,
+        fighting_style=None,
+        equipment=srd.equipment,
+        class_index="barbarian",
+        con_mod=3,
+    )
+    assert breakdown == [
+        ("base (unarmored)", 10),
+        ("DEX mod", 2),
+        ("CON mod (Unarmored Defense)", 3),
     ]
 
 

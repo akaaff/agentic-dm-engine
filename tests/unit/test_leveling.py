@@ -265,6 +265,36 @@ def test_monk_ac_recomputes_on_an_asi_that_boosts_wis() -> None:
     assert kai.ac == 16  # WIS mod 2 -> 3, AC 15 -> 16
 
 
+def _barbarian() -> Character:
+    # Human's +1-to-every-ability bonus: DEX13->14 (mod+2), CON14->15 (mod+2).
+    return create_character(
+        character_id="grosh",
+        name="Grosh",
+        race_index="human",
+        class_index="barbarian",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 13, "CON": 14, "INT": 8, "WIS": 10, "CHA": 12},
+        chosen_skills=["skill-athletics", "skill-intimidation"],
+    )
+
+
+def test_barbarian_ac_recomputes_on_an_asi_that_boosts_con() -> None:
+    # Barbarian's own, different Unarmored Defense (10 + DEX + CON, a
+    # shield doesn't disable it) - an ASI boosting CON should actually move
+    # the Barbarian's AC the same way a Monk's WIS-boosting ASI does above.
+    # DEX14 (mod+2) + CON14 (mod+2) -> AC 10+2+2 = 14 at level 1.
+    srd = load_srd()
+    grosh = _barbarian()
+    assert grosh.equipped_armor is None
+    assert grosh.ac == 14
+    for i in range(3):
+        # 3rd call reaches level 4, the ASI level here.
+        level_up(grosh, srd, ability_score_increase={"CON": 2} if i == 2 else None)
+    assert grosh.level == 4
+    assert grosh.stats["CON"] == 17  # 15 -> 17
+    assert grosh.ac == 15  # CON mod 2 -> 3, AC 14 -> 15
+
+
 def _bard() -> Character:
     # Human's +1-to-every-ability bonus: CHA13->14 (mod+2).
     return create_character(

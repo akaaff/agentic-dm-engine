@@ -602,14 +602,22 @@ def armor_ac_breakdown(
     equipment: dict[str, SrdEntry],
     class_index: str | None = None,
     wis_mod: int = 0,
+    con_mod: int = 0,
 ) -> list[tuple[str, int]]:
     """The named components that sum to `armor_ac`'s own return value -
     extracted so the two can never drift (armor_ac is now just
     `sum(v for _, v in this)`), same "extract once, reuse for both
     resolution and display" precedent as rules.spell_damage_notation
     (issue #30). Added for a proactive UX ask: showing a player's current
-    AC as base + modifiers on the character sheet, not just a flat total.
-    See armor_ac's own docstring for the rules this reproduces exactly."""
+    AC as base + modifiers on the character sheet, not just a flat total -
+    which is exactly what surfaced a real, pre-existing gap live: Barbarian
+    Unarmored Defense (10 + DEX + CON while unarmored - unlike Monk's own
+    version, a shield doesn't break it, per SRD's literal "you can use a
+    shield and still gain this benefit") had never been implemented at all,
+    silently under-computing every Barbarian's AC since this engine only
+    ever checked for Monk. `con_mod` defaults to 0 so every pre-existing
+    caller is unaffected. See armor_ac's own docstring for the rest of the
+    rules this reproduces exactly."""
     breakdown: list[tuple[str, int]] = []
 
     armor_item = equipment.get(equipped_armor) if equipped_armor else None
@@ -618,6 +626,8 @@ def armor_ac_breakdown(
         breakdown.append(("DEX mod", dex_mod))
         if class_index == "monk" and equipped_shield is None and wis_mod:
             breakdown.append(("WIS mod (Unarmored Defense)", wis_mod))
+        elif class_index == "barbarian" and con_mod:
+            breakdown.append(("CON mod (Unarmored Defense)", con_mod))
     else:
         ac_info = armor_item["armor_class"]
         breakdown.append((f"{armor_item['name']} base", ac_info["base"]))
@@ -648,6 +658,7 @@ def armor_ac(
     equipment: dict[str, SrdEntry],
     class_index: str | None = None,
     wis_mod: int = 0,
+    con_mod: int = 0,
 ) -> int:
     """AC from a character's two armor slots (issue #13) - the same formula
     character_creation._compute_ac originally computed once at creation by
@@ -669,7 +680,12 @@ def armor_ac(
     while wielding no shield either, per SRD's literal "wearing no armor
     and not wielding a shield" gate - a Monk holding a shield falls back to
     the ordinary unarmored formula (still gets the shield's own flat
-    bonus, same as anyone else)."""
+    bonus, same as anyone else). Plus Barbarian's own, different Unarmored
+    Defense (found live, missing entirely - `con_mod` defaults to 0 the
+    same way `wis_mod` does): 10 + DEX mod + CON mod, and *unlike* Monk's
+    version a shield does NOT disable it - SRD's literal "you can use a
+    shield and still gain this benefit" - so it's checked independently of
+    `equipped_shield`, not gated on it."""
     return sum(
         value
         for _, value in armor_ac_breakdown(
@@ -680,6 +696,7 @@ def armor_ac(
             equipment,
             class_index,
             wis_mod,
+            con_mod,
         )
     )
 

@@ -473,6 +473,7 @@ def create_character(
         srd.equipment,
         class_index=class_index,
         wis_mod=wis_mod,
+        con_mod=con_mod,
     )
 
     # chosen_skills can include non-skill proficiencies (e.g. Bard's musical
@@ -700,14 +701,15 @@ def level_up(
         for ability, bonus in ability_score_increase.items():
             character.stats[ability] = character.stats.get(ability, 0) + bonus
 
-    # A Monk's AC depends on WIS (Unarmored Defense) as well as DEX, unlike
-    # every other AC source in this project - an ASI at level 4 boosting
-    # either should actually move their AC, so recompute it here. Scoped to
-    # Monk only (not every class) since that's the one case level_up can
-    # actually change the AC formula's inputs; a general "AC should
-    # recompute on any ASI" gap for everyone else is real but pre-existing
-    # and out of this issue's scope.
-    if character.class_index == "monk":
+    # A Monk's AC depends on WIS (Unarmored Defense) and a Barbarian's on
+    # CON (their own, different Unarmored Defense - see armor_ac's own
+    # docstring), both on top of DEX, unlike every other AC source in this
+    # project - an ASI at level 4 boosting either should actually move
+    # their AC, so recompute it here. Scoped to these two classes (not
+    # every class) since that's the only case level_up can actually change
+    # the AC formula's inputs; a general "AC should recompute on any ASI"
+    # gap for everyone else is real but pre-existing and out of scope.
+    if character.class_index in ("monk", "barbarian"):
         character.ac = armor_ac(
             character.equipped_armor,
             character.equipped_shield,
@@ -716,6 +718,7 @@ def level_up(
             srd.equipment,
             class_index=character.class_index,
             wis_mod=ability_modifier(character.stats["WIS"]),
+            con_mod=ability_modifier(character.stats["CON"]),
         )
 
     # Bardic Inspiration uses (issue #25, Bard): recomputed after the ASI
