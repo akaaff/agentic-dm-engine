@@ -53,7 +53,10 @@ def test_load_encounter_parses_battle_map_and_monsters() -> None:
     assert encounter.battle_map.terrain[1][3] == "difficult"
     assert encounter.battle_map.terrain[2][6] == "wall"
     assert len(encounter.monsters) == 3
-    assert encounter.party_spawn_points == ["party_1", "party_2", "party_3"]
+    # Live-found (2026-09-19): bumped from 3 to 5 to cover the true max
+    # party size (1 PC + up to 4 companions) - see the encounter YAML's own
+    # comment and CLAUDE.md.
+    assert encounter.party_spawn_points == ["party_1", "party_2", "party_3", "party_4", "party_5"]
 
 
 def test_monster_to_character_reads_srd_stat_block() -> None:

@@ -15,6 +15,8 @@ battle_map:
     party_1: { x: 0, y: 2 }
     party_2: { x: 1, y: 3 }
     party_3: { x: 0, y: 3 }
+    party_4: { x: 0, y: 1 }
+    party_5: { x: 1, y: 4 }
     wolf_1: { x: 5, y: 1 }
     wolf_2: { x: 6, y: 2 }
     wolf_3: { x: 5, y: 3 }
@@ -30,4 +32,9 @@ monsters:
     character_id: wolf_3
     spawn_point: wolf_3
 
-party_spawn_points: [party_1, party_2, party_3]
+# Issue live-found (2026-09-19): only 3 spawn points here, but a party can
+# have up to 5 members (1 PC + up to 4 companions, see web/src/screens/
+# PartySetup.tsx's MAX_COMPANIONS) - bumped to the true max instead of just
+# past whatever party size happened to trigger the report this time, same
+# gap this file already hit once before at 2 spawn points (see CLAUDE.md).
+party_spawn_points: [party_1, party_2, party_3, party_4, party_5]

@@ -13,6 +13,9 @@ battle_map:
   spawn_points:
     party_1: { x: 0, y: 1 }
     party_2: { x: 0, y: 2 }
+    party_3: { x: 0, y: 0 }
+    party_4: { x: 0, y: 3 }
+    party_5: { x: 1, y: 2 }
     kobold_1: { x: 5, y: 0 }
     kobold_2: { x: 5, y: 2 }
     kobold_3: { x: 5, y: 3 }
@@ -28,4 +31,6 @@ monsters:
     character_id: kobold_3
     spawn_point: kobold_3
 
-party_spawn_points: [party_1, party_2]
+# See wolf_den.yaml's own comment - bumped to the true max party size (1 PC
+# + up to 4 companions = 5), not just past whatever size first got reported.
+party_spawn_points: [party_1, party_2, party_3, party_4, party_5]
