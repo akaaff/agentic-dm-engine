@@ -326,3 +326,30 @@ def test_start_lobby_rejects_unknown_companion(client: TestClient) -> None:
         f"/sessions/{session_id}/start", json={"companion_ids": ["not-a-real-companion"]}
     )
     assert response.status_code == 404
+
+
+def test_get_lobby_status_reflects_join_and_start(client: TestClient) -> None:
+    _create_thorin(client)
+    session_id = _create_lobby(client)
+
+    open_status = client.get(f"/sessions/{session_id}")
+    assert open_status.status_code == 200
+    assert open_status.json() == {
+        "session_id": session_id,
+        "campaign_id": "goblin_ambush_oneshot",
+        "status": "open",
+        "party_character_ids": [],
+    }
+
+    client.post(f"/sessions/{session_id}/join", json={"character_id": "thorin"})
+    client.post(f"/sessions/{session_id}/start", json={"companion_ids": ["companion_grom"]})
+
+    started_status = client.get(f"/sessions/{session_id}")
+    assert started_status.status_code == 200
+    assert started_status.json()["status"] == "in_progress"
+    assert started_status.json()["party_character_ids"] == ["thorin", "companion_grom"]
+
+
+def test_get_lobby_status_rejects_unknown_session(client: TestClient) -> None:
+    response = client.get("/sessions/does-not-exist")
+    assert response.status_code == 404

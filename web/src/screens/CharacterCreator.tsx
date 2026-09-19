@@ -385,7 +385,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
             Create another character
           </button>
           <button type="button" onClick={() => onCreated(created)}>
-            Continue to Party Setup
+            Continue
           </button>
         </div>
       </div>

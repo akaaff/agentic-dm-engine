@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getAccessKey } from '../api/accessKey'
 import { WS_BASE_URL } from '../api/baseUrl'
+import { getLobbyToken } from '../api/lobbyTokens'
 
 // Mirrors the JSON shape of src/engine/state.py's Character/GameState -
 // only the fields the UI actually renders, not a full 1:1 port of every
@@ -248,9 +249,18 @@ export function useSessionSocket(sessionId: string) {
     // Issue #42: a plain WebSocket can't carry a custom header, so the
     // passphrase (when one is stored) rides along as a query param instead -
     // see api/ws/session.py's session_websocket for the matching check.
+    // Issue #44/#45: same story for a lobby's personal player token, which
+    // identifies which character this connection controls in a session with
+    // 2+ human seats (a single-seat session needs neither the frontend nor
+    // the server to know about a token at all - see session_websocket's own
+    // single-seat exemption).
+    const params = new URLSearchParams()
     const accessKey = getAccessKey()
-    const keyParam = accessKey ? `?key=${encodeURIComponent(accessKey)}` : ''
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}${keyParam}`)
+    if (accessKey) params.set('key', accessKey)
+    const lobbyToken = getLobbyToken(sessionId)
+    if (lobbyToken) params.set('token', lobbyToken)
+    const query = params.toString() ? `?${params.toString()}` : ''
+    const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}${query}`)
     wsRef.current = ws
 
     ws.onopen = () => {

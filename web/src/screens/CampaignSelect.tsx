@@ -67,7 +67,7 @@ export default function CampaignSelect({
         disabled={campaignId === '' || starting}
         onClick={() => onStart(campaignId)}
       >
-        {starting ? 'Starting...' : 'Start Adventure'}
+        {starting ? 'Creating...' : 'Create Game'}
       </button>
       {startError && <p className="wizard-error">{startError}</p>}
     </div>

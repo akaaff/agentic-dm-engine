@@ -200,6 +200,21 @@ export interface StartSessionResponse {
   session_id: string
 }
 
+// Issue #45's lobby/join/start flow (backend: issue #44). session_id also
+// serves as the shareable lobby code - see CampaignProgress.id's own
+// docstring for why there's no separate short code.
+export interface LobbyStatus {
+  session_id: string
+  campaign_id: string
+  status: 'open' | 'in_progress'
+  party_character_ids: string[]
+}
+
+export interface JoinLobbyResult {
+  token: string
+  character_id: string
+}
+
 export const api = {
   listRaces: () => request<RaceSummary[]>('/characters/races'),
   listClasses: () => request<ClassSummary[]>('/characters/classes'),
@@ -214,6 +229,22 @@ export const api = {
   listCampaigns: () => request<CampaignSummary[]>('/campaigns'),
   startSession: (body: StartSessionRequest) =>
     request<StartSessionResponse>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  createLobby: (campaignId: string) =>
+    request<StartSessionResponse>('/sessions/lobby', {
+      method: 'POST',
+      body: JSON.stringify({ campaign_id: campaignId }),
+    }),
+  getLobbyStatus: (sessionId: string) => request<LobbyStatus>(`/sessions/${sessionId}`),
+  joinLobby: (sessionId: string, body: { character_id?: string; token?: string }) =>
+    request<JoinLobbyResult>(`/sessions/${sessionId}/join`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  startLobby: (sessionId: string, companionIds: string[]) =>
+    request<{ session_id: string; party_character_ids: string[] }>(
+      `/sessions/${sessionId}/start`,
+      { method: 'POST', body: JSON.stringify({ companion_ids: companionIds }) }
+    ),
   // Issue #42: checkHealth tells the gate screen whether to show itself at
   // all (passphrase_required); verifyAccessKey lets it test a just-typed
   // candidate key directly (via an explicit header override, ignoring

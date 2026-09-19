@@ -335,6 +335,16 @@ button.secondary {
   font-size: 0.9rem;
 }
 
+/* Issue #45 - the shareable lobby code, set apart from ordinary paragraph
+   text so it reads as something to copy/type, not prose. */
+.lobby-code {
+  font-family: monospace;
+  font-size: 1.1rem;
+  background: #1c1924;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
 .sheet {
   background: #1c1924;
   border-radius: 8px;

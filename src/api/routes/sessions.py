@@ -119,6 +119,31 @@ def create_lobby(body: CreateLobbyRequest, db: DbSession) -> CreateLobbyResponse
     return CreateLobbyResponse(session_id=session_id)
 
 
+class LobbyStatusResponse(BaseModel):
+    session_id: str
+    campaign_id: str
+    status: str
+    party_character_ids: list[str]
+
+
+@router.get("/{session_id}", response_model=LobbyStatusResponse, status_code=200)
+def get_lobby_status(session_id: str, db: DbSession) -> LobbyStatusResponse:
+    # Issue #45: read-only, no side effects - lets a joined player's client
+    # poll for "has the leader started yet" (status flipping "open" ->
+    # "in_progress") without needing to open the live-play WebSocket early,
+    # which would build the actual encounter from whatever's currently in
+    # party_character_ids - before the leader's chosen companions fill the
+    # remaining seats, if that poll happened to race ahead of POST
+    # /sessions/{id}/start.
+    progress = _get_progress_or_404(db, session_id)
+    return LobbyStatusResponse(
+        session_id=progress.id,
+        campaign_id=progress.campaign_id,
+        status=progress.status,
+        party_character_ids=progress.party_character_ids,
+    )
+
+
 class JoinLobbyRequest(BaseModel):
     character_id: str | None = None
     """Required to claim a brand-new seat - the player's own already-created
