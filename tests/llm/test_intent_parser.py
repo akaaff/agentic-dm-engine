@@ -13,7 +13,7 @@ from src.engine.position import Position
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character
 from src.engine.state import GameState as EngineGameState
-from src.graph.nodes.intent_parser import intent_parser_node
+from src.graph.nodes.intent_parser import intent_parser_node, parse_intent_sequence
 from src.graph.state_schema import GraphState
 
 pytestmark = pytest.mark.llm
@@ -197,3 +197,55 @@ def test_intent_parser_forces_the_real_actor_id_even_for_a_pathological_name() -
     result = intent_parser_node(state)
 
     assert result["parsed_action"].actor == "asssssass"
+
+
+def test_parse_intent_sequence_extracts_multiple_actions_in_order() -> None:
+    # Live-found (issue #47): "I fly into rage, come to wolf 1 and smash it
+    # with my warhammer" only ever resolved the rage - the pipeline had no
+    # way to hand back more than one action per utterance. wolf placed two
+    # squares away (not adjacent) so a real move is actually needed before
+    # the attack, exercising the full 3-action chain from the live report.
+    srd = load_srd()
+    actor = Character(
+        id="thorin",
+        name="Thorin",
+        is_pc=True,
+        class_index="barbarian",
+        hp=15,
+        max_hp=15,
+        ac=13,
+        position=Position(x=0, y=0),
+        stats={"STR": 16, "DEX": 12, "CON": 15, "INT": 8, "WIS": 10, "CHA": 8},
+        proficiency_bonus=2,
+        speed=30,
+        race="Human",
+        class_="Barbarian",
+        background="Acolyte",
+        class_resources={"rage": 2},
+        equipped_weapons=["warhammer"],
+    )
+    wolf = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=2, y=0))
+    game_state = EngineGameState(
+        encounter_id="multi_action_live_test",
+        characters={actor.id: actor, wolf.id: wolf},
+        turn_order=[actor.id, wolf.id],
+        current_turn=0,
+        round=1,
+    )
+    state: GraphState = {
+        "game_state": game_state,
+        "raw_text": "I fly into a rage, come to wolf 1, and smash it with my warhammer",
+        "parsed_action": None,
+        "events_before": 0,
+        "round_before": 1,
+        "narration": None,
+        "scene_image_url": None,
+    }
+
+    actions = parse_intent_sequence(state)
+
+    verbs = [a.verb for a in actions]
+    assert verbs[0] == "rage", f"actions={actions}"
+    assert "attack" in verbs, f"actions={actions}"
+    assert verbs[-1] == "attack", f"actions={actions}"
+    assert all(a.actor == "thorin" for a in actions)

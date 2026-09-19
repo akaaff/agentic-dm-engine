@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 from src import config
-from src.engine.actions import ParsedAction
+from src.engine.actions import ParsedAction, ParsedActionSequence
 from src.engine.position import Position, distance_feet
 from src.engine.state import Character
 from src.graph.state_schema import GraphState
@@ -188,3 +188,44 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
     )
     action = _force_actor(action, expected_actor_id)
     return {"parsed_action": _normalize_cast_spell_target(action)}
+
+
+def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
+    """Issue #47: like intent_parser_node, but can return more than one
+    ParsedAction for a single utterance describing multiple distinct
+    actions in sequence (e.g. "I rage, move to the wolf, and attack it") -
+    called directly by api/ws/session.py's own sequencing loop for real
+    human free text, not by the graph itself. intent_parser_node's own
+    single-action contract above is unchanged and still what every other
+    raw_text path goes through (companion turns via player_agent_node,
+    autoplay, tests) - none of those need more than one action per call.
+
+    Only the "teacher" backend (the default, real production path)
+    understands the multi-action list format, since it's the only one the
+    prompt/schema below actually target. "finetuned"/"finetuned_ollama"
+    were prompted/trained on (and still only asked for) a single action -
+    not a regression, since batching more than one action per submission
+    was never something they could do anyway - so they fall back to
+    intent_parser_node's existing single-action call, wrapped in a
+    one-element list."""
+    if state["parsed_action"] is not None:
+        return [state["parsed_action"]]
+
+    if config.INTENT_PARSER_BACKEND != "teacher":
+        result = intent_parser_node(state)
+        action = result["parsed_action"]
+        assert isinstance(action, ParsedAction)
+        return [action]
+
+    game_state = state["game_state"]
+    expected_actor_id = game_state.turn_order[game_state.current_turn]
+    prompt = build_intent_parser_prompt(state)
+    sequence = chat_structured(
+        messages=[{"role": "user", "content": prompt}],
+        schema=ParsedActionSequence,
+        temperature=0.2,
+    )
+    actions = [
+        _normalize_cast_spell_target(_force_actor(a, expected_actor_id)) for a in sequence.actions
+    ]
+    return actions or [_invalid_action(state)]

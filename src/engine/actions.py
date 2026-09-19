@@ -86,3 +86,21 @@ class ParsedAction(BaseModel):
     raw_text: str
     confidence: float | None = None
     """Set by the LLM intent parser; absent for scripted/hand-authored actions."""
+
+
+class ParsedActionSequence(BaseModel):
+    """Issue #47: an ordered list of ParsedActions extracted from one
+    utterance - e.g. "I rage, move to the wolf, and attack it" becomes
+    [rage, move, attack]. Almost always length 1; more than one entry only
+    for a genuinely multi-clause command. The model's job is purely
+    extraction (what did the player describe, in what order) - resolving
+    them (stopping early the moment the actor's turn actually ends, per
+    resolve_action's own per-verb ends_turn signal, or a sub-action fails)
+    is the caller's job, the same "give the model structure, let Python own
+    the legality/sequencing logic" split already used elsewhere in this
+    project. See api/ws/session.py's own sequencing loop for where that
+    happens - intent_parser_node's own single-action contract is unchanged,
+    since every other raw_text path (companion turns, autoplay, tests)
+    still only ever needs one action per call."""
+
+    actions: list[ParsedAction]
