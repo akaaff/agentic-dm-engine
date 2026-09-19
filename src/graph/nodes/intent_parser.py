@@ -131,18 +131,28 @@ def _force_actor(action: ParsedAction, expected_actor_id: str) -> ParsedAction:
     return action.model_copy(update={"actor": expected_actor_id})
 
 
-def _normalize_cast_spell_target(action: ParsedAction) -> ParsedAction:
-    """Found live: even with the prompt explicitly telling the model to set
-    the top-level "target" field for cast_spell (never nest it in params -
-    see intent_parser.md), it still fairly often answers with
+def _promote_stray_target(action: ParsedAction) -> ParsedAction:
+    """Found live for cast_spell first: even with the prompt explicitly
+    telling the model to set the top-level "target" field (never nest it in
+    params - see intent_parser.md), it still fairly often answers with
     params["target"]/params["targets"] instead - a real, fairly consistent
-    quirk of this model on this one field, confirmed by direct repeated
-    testing, not something further prompt wording reliably fixes (a more
-    verbose instruction covering the multi-target case actively made the
-    single-target case *worse*). Promoting a stray params entry here is a
-    deterministic, model-agnostic safety net: the data the model extracted
-    is already correct, it's just in the wrong place in the JSON."""
-    if action.verb != "cast_spell" or action.target or action.targets:
+    quirk of this model, confirmed by direct repeated testing, not something
+    further prompt wording reliably fixes (a more verbose instruction
+    covering the multi-target case actively made the single-target case
+    *worse*). Originally scoped to cast_spell only; found live a second time
+    (issue #49's own investigation) that a multi-action sequence can carry
+    the same nesting quirk into "move"/"attack" too - once the model starts
+    using params.target for one action in a sequence, it can keep doing so
+    for the rest, confirmed by a direct repro where a "move" and its
+    following "attack" both nested target under a single bad parse.
+    Deliberately not restricted to any particular verb: promoting a stray
+    params entry to the top level is harmless even for a verb that never
+    reads it back out (nothing downstream inspects params["target"] once
+    the real field is set), so applying this generically is strictly safer
+    than trying to enumerate which verbs need it. A deterministic,
+    model-agnostic safety net either way - the data the model extracted is
+    already correct, it's just in the wrong place in the JSON."""
+    if action.target or action.targets:
         return action
     stray_target = action.params.get("target")
     stray_targets = action.params.get("targets")
@@ -219,17 +229,50 @@ def _resolve_move_target(action: ParsedAction, game_state: GameState) -> ParsedA
     return action.model_copy(update={"params": new_params})
 
 
+def _strip_invalid_smite(action: ParsedAction, game_state: GameState) -> ParsedAction:
+    """Issue #49: the model hallucinates params.smite_slot_level on a plain
+    "attack" surprisingly often - live-narrowed to specific weapon names at
+    first (e.g. "I attack wolf_1 with my handaxe"), then found live a second
+    time to be broader: forceful verb synonyms ("smash"/"crush"/"strike"/
+    "hit"/"pummel"/"smack" instead of "attack") paired with certain weapons
+    (warhammer, longsword, handaxe, battleaxe...) reproduce it consistently
+    too - not a single-weapon quirk, a general "this reads like a mighty
+    blow" association the model makes regardless of the actor's actual
+    class. turn_engine's own validation already rejects this cleanly for a
+    non-Paladin ("X is not a Paladin and cannot use Divine Smite"), so no
+    bad state was ever at risk - but that's still a real attack the player
+    described, failing outright with a confusing rules error for something
+    they never asked for. Whether the actor is actually a Paladin is a
+    plain, already-known fact in Python - the same "give the model
+    pre-computed facts / let Python own the legality logic" split already
+    used for cast_spell's target and the closest-enemy/direction
+    resolution - so this strips a hallucinated smite unconditionally for
+    anyone but a real Paladin, before it ever reaches turn_engine. A
+    genuine Paladin's own smite declaration is completely untouched; a
+    residual false-positive there just costs a real spell slot on a hit,
+    same as any other spellcasting misparse this project already accepts."""
+    if action.verb != "attack" or "smite_slot_level" not in action.params:
+        return action
+    actor = game_state.characters.get(action.actor)
+    if actor is not None and actor.class_index == "paladin":
+        return action
+    new_params = {k: v for k, v in action.params.items() if k != "smite_slot_level"}
+    return action.model_copy(update={"params": new_params})
+
+
 def _postprocess_action(
     action: ParsedAction, expected_actor_id: str, game_state: GameState
 ) -> ParsedAction:
     """The full pipeline every parsed action goes through, regardless of
     which backend produced it - forcing the real actor, fixing a
-    misplaced cast_spell target, and computing a real move/dash path from
-    a named target. Order matters only in that each step is independent of
-    the others (none touch fields the next one reads)."""
+    misplaced cast_spell target, computing a real move/dash path from a
+    named target, and dropping a hallucinated non-Paladin smite. Order
+    matters only in that each step is independent of the others (none
+    touch fields the next one reads)."""
     action = _force_actor(action, expected_actor_id)
-    action = _normalize_cast_spell_target(action)
-    return _resolve_move_target(action, game_state)
+    action = _promote_stray_target(action)
+    action = _resolve_move_target(action, game_state)
+    return _strip_invalid_smite(action, game_state)
 
 
 def intent_parser_node(state: GraphState) -> dict[str, Any]:

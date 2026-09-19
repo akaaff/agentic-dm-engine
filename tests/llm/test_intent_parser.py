@@ -49,7 +49,7 @@ GOLDEN_CASES = [
     ("I attack goblin_2", "attack", "goblin_2", None),
     # Found live: the model needed an explicit "never nest it inside params"
     # instruction and a code-level fallback (intent_parser_node's
-    # _normalize_cast_spell_target) before this reliably set "target" at
+    # _promote_stray_target) before this reliably set "target" at
     # all - it kept answering with params["target"] instead.
     ("I cast acid splash at goblin_1", "cast_spell", "goblin_1", None),
     ("I dodge incoming attacks", "dodge", None, None),
@@ -199,6 +199,61 @@ def test_intent_parser_forces_the_real_actor_id_even_for_a_pathological_name() -
     result = intent_parser_node(state)
 
     assert result["parsed_action"].actor == "asssssass"
+
+
+def test_intent_parser_never_hallucinates_smite_for_a_non_paladin() -> None:
+    # Issue #49: found live twice. First narrowed to specific weapon names
+    # ("I attack wolf_1 with my handaxe"); a second live report showed it's
+    # actually broader - a forceful verb synonym ("smash"/"crush"/"hit"
+    # instead of "attack") combined with certain weapons reliably triggers
+    # params.smite_slot_level regardless of the actor's real class.
+    # turn_engine's own validation already rejects this cleanly for a
+    # non-Paladin, but that's still a real attack failing outright with a
+    # confusing rules error - _strip_invalid_smite (intent_parser.py) now
+    # drops it deterministically for anyone but a real Paladin before it
+    # ever reaches turn_engine, so this asserts the fix holds against the
+    # real model for the exact repro utterance, not just the pure function.
+    srd = load_srd()
+    actor = Character(
+        id="thorin",
+        name="Thorin",
+        is_pc=True,
+        class_index="barbarian",
+        hp=15,
+        max_hp=15,
+        ac=13,
+        position=Position(x=0, y=0),
+        stats={"STR": 16, "DEX": 12, "CON": 15, "INT": 8, "WIS": 10, "CHA": 8},
+        proficiency_bonus=2,
+        speed=30,
+        race="Human",
+        class_="Barbarian",
+        background="Acolyte",
+        equipped_weapons=["warhammer"],
+    )
+    wolf = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=2, y=0))
+    game_state = EngineGameState(
+        encounter_id="smite_hallucination_live_test",
+        characters={actor.id: actor, wolf.id: wolf},
+        turn_order=[actor.id, wolf.id],
+        current_turn=0,
+        round=1,
+    )
+    state: GraphState = {
+        "game_state": game_state,
+        "raw_text": "I smash wolf_1 with my warhammer",
+        "parsed_action": None,
+        "events_before": 0,
+        "round_before": 1,
+        "narration": None,
+        "scene_image_url": None,
+    }
+
+    result = intent_parser_node(state)
+    action = result["parsed_action"]
+
+    assert action.verb == "attack", f"action={action}"
+    assert "smite_slot_level" not in action.params, f"action={action}"
 
 
 def test_parse_intent_sequence_extracts_multiple_actions_in_order() -> None:
