@@ -134,11 +134,30 @@ class CampaignProgress(Base):
     __tablename__ = "campaign_progress"
 
     id: Mapped[str] = mapped_column(primary_key=True)
-    """Session id."""
+    """Session id - also the shareable lobby code (issue #44): no separate
+    short-code generation, the existing uuid4().hex session id doubles as
+    both, an explicit scope cut to keep this issue's backend surface to
+    exactly the lobby/join/resume mechanism, not also a code-shortening
+    scheme #45's frontend has no stated need for yet."""
     campaign_id: Mapped[str]
     current_scene_id: Mapped[str]
     party_character_ids: Mapped[list[str]] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(default="in_progress")
+    """"open" (issue #44): a lobby still accepting new players via POST
+    /sessions/{id}/join, not yet playable - POST /sessions/{id}/start flips
+    it to "in_progress" once the leader is ready, filling any unclaimed
+    seats with the chosen companions first. The legacy POST /sessions
+    (single-shot: character + companions all chosen upfront) skips the
+    lobby phase entirely and defaults straight to "in_progress", matching
+    its own pre-#44 behavior exactly - no lobby-waiting step existed for it
+    and none is added now."""
+    player_tokens: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, server_default="{}")
+    """Issue #44: personal per-player token -> character id, populated by
+    POST /sessions/{id}/join. Empty for a session created via the legacy
+    POST /sessions (single human, no lobby/join step ever happened) - see
+    api/ws/session.py's _build_real_session_setup for how an empty dict
+    here falls back to the original single-human-at-party_character_ids[0]
+    assumption, keeping every pre-#44 session/test working unchanged."""
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

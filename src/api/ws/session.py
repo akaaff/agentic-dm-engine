@@ -21,6 +21,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langgraph.graph.state import CompiledStateGraph
@@ -59,15 +60,19 @@ class Session:
     action_rng: random.Random
     graph: CompiledStateGraph[GraphState, Any, Any, Any]
     connections: list[SessionConnection] = field(default_factory=list)
-    human_character_id: str | None = None
-    """Set only for a real session started via POST /sessions (Day 18) and
-    resolved from its CampaignProgress row (Day 19) - the human connecting
-    controls just this one character, and every other actor's turn
-    (companions, monsters) is auto-played server-side, see
-    _autoplay_non_human_turns. None preserves the original Day-11
-    "whoever connects controls every character" simplification, still used
-    by the demo-encounter fallback below and by every offline test that
-    calls create_session() directly."""
+    human_character_ids: dict[str, str] = field(default_factory=dict)
+    """Issue #44: personal token -> character id, replacing the old singular
+    human_character_id (a real session now supports 2+ human players, not
+    just one) - every character id in this dict's values is human-controlled;
+    every other actor's turn (companions, monsters) is auto-played
+    server-side, see _autoplay_non_human_turns. Empty preserves the original
+    Day-11 "whoever connects controls every character" simplification, still
+    used by the demo-encounter fallback below and by every offline test that
+    calls create_session() directly. A single-entry dict (the legacy
+    single-shot POST /sessions flow, or a lobby with exactly one joined
+    player) additionally doesn't require the connecting client to present a
+    token at all - see session_websocket - since there's only one human seat
+    to disambiguate between."""
     campaign: Campaign | None = None
     """Set only for a real session - lets the session continue live past
     one encounter's victory into the rest of the scene chain (see
@@ -110,7 +115,7 @@ def create_session(
     game_state: GameState,
     action_rng: random.Random | None = None,
     graph: CompiledStateGraph[GraphState, Any, Any, Any] | None = None,
-    human_character_id: str | None = None,
+    human_character_ids: dict[str, str] | None = None,
     campaign: Campaign | None = None,
     party: list[Character] | None = None,
     srd: SrdIndex | None = None,
@@ -127,7 +132,7 @@ def create_session(
         game_state=game_state,
         action_rng=action_rng,
         graph=graph or build_graph(rng=action_rng),
-        human_character_id=human_character_id,
+        human_character_ids=human_character_ids or {},
         campaign=campaign,
         party=party,
         srd=srd,
@@ -146,41 +151,63 @@ class _RealSessionSetup:
     party: list[Character]
     combat_scene_id: str
     srd: SrdIndex
+    human_character_ids: dict[str, str]
 
 
 def _build_real_session_setup(progress: CampaignProgress) -> _RealSessionSetup | None:
-    """Builds a real session from a Day-18 CampaignProgress row: the
-    player's own persisted character plus their chosen companions, walked
-    through the campaign's scene chain from its very first scene via
-    campaign_runner.advance_to_next_encounter - narrating any
+    """Builds a real session from a CampaignProgress row - either the
+    legacy Day-18 single-shot POST /sessions shape (one player character,
+    chosen upfront, plus their companions) or issue #44's lobby shape
+    (2+ player characters, joined live via POST /sessions/{id}/join, plus
+    whichever companions POST /sessions/{id}/start filled the rest with) -
+    walked through the campaign's scene chain from its very first scene via
+    campaign_runner.advance_to_next_encounter, narrating any
     narrative_beat/skill_challenge scenes along the way (the "hook" before
     a fight, not just dropping straight into combat - caught live, a real
     session used to skip this entirely) into its first combat encounter.
 
     Returns None (caller falls back to the demo encounter) if anything
     expected is missing - defensive, not expected to trigger in practice
-    since POST /sessions already validates the campaign/character/companion
-    ids before writing the row, or if the campaign has no combat scene at
-    all (not a real authored campaign's shape, but not this function's job
-    to assume)."""
+    since every write path (POST /sessions, POST /sessions/{id}/join,
+    POST /sessions/{id}/start) already validates its own ids before
+    persisting, or if the campaign has no combat scene at all (not a real
+    authored campaign's shape, but not this function's job to assume)."""
     try:
         campaign = load_campaign(progress.campaign_id)
     except FileNotFoundError:
         return None
+    if not progress.party_character_ids:
+        return None
 
     srd = load_srd()
-    with SessionLocal() as db:
-        human_record = db.get(CharacterRecord, progress.party_character_ids[0])
-        if human_record is None:
-            return None
-        human_character = _record_to_character(human_record)
 
-    party = [human_character]
-    for companion_id in progress.party_character_ids[1:]:
-        spec = load_companion_spec_by_character_id(companion_id)
-        if spec is None:
-            return None
-        party.append(build_companion(spec, srd=srd))
+    # issue #44: player_tokens (populated only via the lobby/join flow)
+    # names every human-controlled character explicitly; an empty dict means
+    # this row came from the legacy single-shot flow, which never recorded a
+    # token at all - falls back to that flow's own original assumption
+    # (party_character_ids[0] is the one human) so every pre-#44 session
+    # keeps working unchanged, including the WS connect side (see
+    # session_websocket's own "single human seat needs no token" handling).
+    human_character_ids = (
+        dict(progress.player_tokens)
+        if progress.player_tokens
+        else {uuid4().hex: progress.party_character_ids[0]}
+    )
+    human_ids = set(human_character_ids.values())
+
+    party: list[Character] = []
+    with SessionLocal() as db:
+        for char_id in progress.party_character_ids:
+            if char_id in human_ids:
+                record = db.get(CharacterRecord, char_id)
+                if record is None:
+                    return None
+                party.append(_record_to_character(record))
+            else:
+                spec = load_companion_spec_by_character_id(char_id)
+                if spec is None:
+                    return None
+                party.append(build_companion(spec, srd=srd))
 
     rng = random.Random()
     combat_scene, narration = advance_to_next_encounter(
@@ -200,25 +227,26 @@ def _build_real_session_setup(progress: CampaignProgress) -> _RealSessionSetup |
         party=party,
         combat_scene_id=combat_scene.id,
         srd=srd,
+        human_character_ids=human_character_ids,
     )
 
 
 def _get_or_create_default_session(session_id: str) -> Session:
     """First connection to an unknown session_id either resumes a real
-    session started via POST /sessions (looked up by its CampaignProgress
-    row) or, if none exists, falls back to the Day-7 demo encounter -
-    preserved as-is for any ad-hoc/manual WebSocket connection that never
-    went through the real character/party/campaign flow."""
+    session started via POST /sessions or the lobby flow (looked up by its
+    CampaignProgress row) or, if none exists, falls back to the Day-7 demo
+    encounter - preserved as-is for any ad-hoc/manual WebSocket connection
+    that never went through the real character/party/campaign flow."""
     if session_id not in _sessions:
         with SessionLocal() as db:
             progress = db.get(CampaignProgress, session_id)
 
         setup = _build_real_session_setup(progress) if progress else None
-        if setup is not None and progress is not None:
+        if setup is not None:
             create_session(
                 session_id,
                 setup.game_state,
-                human_character_id=progress.party_character_ids[0],
+                human_character_ids=setup.human_character_ids,
                 campaign=setup.campaign,
                 party=setup.party,
                 srd=setup.srd,
@@ -258,13 +286,13 @@ def _state_update_message(session: Session) -> dict[str, object]:
 
 
 async def _autoplay_non_human_turns(session: Session) -> None:
-    """Resolves every actor's turn up to (not including) the human's next
-    one - companions via player_agent_node (empty raw_text/parsed_action,
-    the same trigger cli.play.run_autoplay uses), monsters via the
-    deterministic monster_ai heuristic. No-ops immediately for a session
-    with no human_character_id set (the demo-encounter fallback and every
-    offline test that calls create_session() directly), so this can be
-    called unconditionally from both connect and after every human action.
+    """Resolves every actor's turn up to (not including) the next human one -
+    companions via player_agent_node (empty raw_text/parsed_action, the same
+    trigger cli.play.run_autoplay uses), monsters via the deterministic
+    monster_ai heuristic. No-ops immediately for a session with no
+    human_character_ids set (the demo-encounter fallback and every offline
+    test that calls create_session() directly), so this can be called
+    unconditionally from both connect and after every human action.
 
     Same consecutive_invalid circuit breaker as run_autoplay, and for the
     same reason: a persona-driven companion turn can still occasionally fail
@@ -273,15 +301,16 @@ async def _autoplay_non_human_turns(session: Session) -> None:
     - without this, that failure mode would hang the session forever instead
     of just wasting a few turns.
     """
-    if session.human_character_id is None:
+    if not session.human_character_ids:
         return
+    human_ids = session.human_character_ids.values()
 
     consecutive_invalid = 0
     while session.game_state.status == "in_progress":
         current_actor_id = session.game_state.turn_order[session.game_state.current_turn]
         actor = session.game_state.characters[current_actor_id]
 
-        if current_actor_id == session.human_character_id:
+        if current_actor_id in human_ids:
             if actor.hp <= 0 and not actor.is_dead:
                 # Same shortcut player_agent_node already has for an
                 # unconscious companion (src/graph/nodes/player_agent.py) -
@@ -445,7 +474,7 @@ async def _handle_rest_request(session: Session, rest_type: str) -> None:
 
 
 async def _handle_client_message(
-    session: Session, websocket: WebSocket, raw: dict[str, object]
+    session: Session, websocket: WebSocket, connection: SessionConnection, raw: dict[str, object]
 ) -> None:
     msg_type = raw.get("type")
 
@@ -461,6 +490,23 @@ async def _handle_client_message(
         await _autoplay_non_human_turns(session)
         await _send_awaiting_input(session)
         return
+
+    if msg_type in ("player_action", "player_move") and session.game_state.status == "in_progress":
+        # Issue #44: with 2+ human seats now possible, nothing before this
+        # stopped one player's connection from submitting an action for
+        # whoever's turn it currently is, regardless of which character(s)
+        # this connection was actually issued a token for - intent_parser
+        # and the move-message builder below both derive the acting
+        # character purely from "whoever's turn it is," never from anything
+        # the client claims about itself. debug_action is deliberately
+        # exempt - it's the explicit, already-gated (#41) full-override tool,
+        # not a real player action.
+        current_actor = session.game_state.turn_order[session.game_state.current_turn]
+        if current_actor not in connection.controlled_character_ids:
+            await websocket.send_json(
+                {"type": "error", "detail": f"It is not your turn ({current_actor} is acting)."}
+            )
+            return
 
     if msg_type in ("player_action", "player_move", "debug_action"):
         # Issue #43: these three are the only message types that reach
@@ -599,11 +645,38 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
         await websocket.close(code=1011, reason="session setup failed")
         return
 
-    controlled = (
-        {session.human_character_id}
-        if session.human_character_id is not None
-        else set(session.game_state.characters.keys())
-    )
+    if not session.human_character_ids:
+        # Demo-encounter fallback / a direct create_session() call with no
+        # human_character_ids at all - unchanged Day-11 behavior, whoever
+        # connects controls everyone.
+        controlled = set(session.game_state.characters.keys())
+    else:
+        token = websocket.query_params.get("token")
+        if token is not None and token in session.human_character_ids:
+            controlled = {session.human_character_ids[token]}
+        elif token is None and len(session.human_character_ids) == 1:
+            # Issue #44: a single human seat (the legacy single-shot POST
+            # /sessions flow, or a lobby exactly one player ever joined)
+            # doesn't need a token to disambiguate between players who
+            # aren't there - the pre-#44 frontend never sends ?token= at
+            # all, so this keeps every existing single-player session
+            # working with zero frontend changes.
+            controlled = {next(iter(session.human_character_ids.values()))}
+        else:
+            # 2+ human seats and no token, or a token that doesn't match any
+            # of them - this connection can't be identified as any specific
+            # player, so it can't be let in as one. Accepted above already
+            # (the token can only be checked once the real session exists,
+            # unlike #42's passphrase check), so reported and closed the
+            # same way a GameStateBuildError is just above.
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "detail": "Missing or unrecognized player token for this session.",
+                }
+            )
+            await websocket.close(code=4401, reason="missing or unrecognized player token")
+            return
     connection = SessionConnection(websocket=websocket, controlled_character_ids=controlled)
     session.connections.append(connection)
 
@@ -642,7 +715,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
 
         while True:
             raw = await websocket.receive_json()
-            await _handle_client_message(session, websocket, raw)
+            await _handle_client_message(session, websocket, connection, raw)
     except WebSocketDisconnect:
         pass
     finally:
