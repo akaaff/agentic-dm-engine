@@ -149,3 +149,51 @@ def test_intent_parser_preserves_actor_id() -> None:
     }
     result = intent_parser_node(state)
     assert result["parsed_action"].actor == current_actor
+
+
+def test_intent_parser_forces_the_real_actor_id_even_for_a_pathological_name() -> None:
+    # Live-found: a real player named their character "asssssass" (a
+    # repeated-letter nonsense string - exactly what a tokenizer-based
+    # model reproduces worst) and every action they took was rejected with
+    # "It is asssssass's turn, not assssssass's" - the model's own
+    # structured-output `actor` field had silently added an extra "s".
+    # test_intent_parser_preserves_actor_id above never caught this with an
+    # ordinary name (a real word/name is trivial for the model to echo
+    # exactly) - this uses the actual repro string directly.
+    srd = load_srd()
+    actor = Character(
+        id="asssssass",
+        name="asssssass",
+        is_pc=True,
+        hp=12,
+        max_hp=12,
+        ac=12,
+        position=Position(x=0, y=0),
+        stats={"STR": 12, "DEX": 12, "CON": 12, "INT": 12, "WIS": 12, "CHA": 12},
+        proficiency_bonus=2,
+        speed=30,
+        race="Human",
+        class_="Fighter",
+        background="Acolyte",
+    )
+    wolf = monster_to_character(srd.monsters["wolf"], "wolf_1", Position(x=2, y=0))
+    game_state = EngineGameState(
+        encounter_id="pathological_actor_test",
+        characters={actor.id: actor, wolf.id: wolf},
+        turn_order=[actor.id, wolf.id],
+        current_turn=0,
+        round=1,
+    )
+    state: GraphState = {
+        "game_state": game_state,
+        "raw_text": "I attack the nearest wolf",
+        "parsed_action": None,
+        "events_before": 0,
+        "round_before": 1,
+        "narration": None,
+        "scene_image_url": None,
+    }
+
+    result = intent_parser_node(state)
+
+    assert result["parsed_action"].actor == "asssssass"

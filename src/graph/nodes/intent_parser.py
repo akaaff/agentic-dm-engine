@@ -107,6 +107,28 @@ def _invalid_action(state: GraphState) -> ParsedAction:
     return ParsedAction(actor=actor_id, verb="invalid", raw_text=state["raw_text"])
 
 
+def _force_actor(action: ParsedAction, expected_actor_id: str) -> ParsedAction:
+    """Live-found: the model's structured output includes its own `actor`
+    field, generated (not copied) as part of the JSON - the prompt gives it
+    `actor_id` as context text, but nothing makes its output literally echo
+    that string byte-for-byte, and it occasionally doesn't. Confirmed live
+    with an actual test character id "asssssass" (a repeated-letter nonsense
+    string - exactly what LLM tokenization reproduces worst): the model
+    returned "assssssass" (one extra "s"), which then failed
+    resolve_action's actor-mismatch check with a confusing, near-identical-
+    looking error. But the acting character is never actually a model
+    decision - it's always exactly whoever's turn it currently is, already
+    known with certainty before the call ever happens. Same "give the model
+    pre-computed facts instead of asking it to reason/reproduce" fix shape
+    already used for cast_spell's target field and the closest-enemy/
+    direction resolution above - here the fact is asserted after the call
+    instead of given as a prompt hint before it, since there's nothing to
+    "reason" about, just an exact value to not let the model retype."""
+    if action.actor == expected_actor_id:
+        return action
+    return action.model_copy(update={"actor": expected_actor_id})
+
+
 def _normalize_cast_spell_target(action: ParsedAction) -> ParsedAction:
     """Found live: even with the prompt explicitly telling the model to set
     the top-level "target" field for cast_spell (never nest it in params -
@@ -135,6 +157,8 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
 
     prompt = build_intent_parser_prompt(state)
     backend = config.INTENT_PARSER_BACKEND
+    game_state = state["game_state"]
+    expected_actor_id = game_state.turn_order[game_state.current_turn]
 
     if backend == "finetuned":
         from src.llm.local_parser import parse_intent_local
@@ -142,6 +166,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         action = parse_intent_local(prompt, config.INTENT_PARSER_ADAPTER_DIR)
         if action is None:
             return {"parsed_action": _invalid_action(state)}
+        action = _force_actor(action, expected_actor_id)
         return {"parsed_action": _normalize_cast_spell_target(action)}
 
     if backend == "finetuned_ollama":
@@ -153,6 +178,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         )
         if action is None:
             return {"parsed_action": _invalid_action(state)}
+        action = _force_actor(action, expected_actor_id)
         return {"parsed_action": _normalize_cast_spell_target(action)}
 
     action = chat_structured(
@@ -160,4 +186,5 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         schema=ParsedAction,
         temperature=0.2,
     )
+    action = _force_actor(action, expected_actor_id)
     return {"parsed_action": _normalize_cast_spell_target(action)}
