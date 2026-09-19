@@ -31,6 +31,16 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./agentic_dm_engine.db"
 _extra_cors_origins_raw = os.environ.get("EXTRA_CORS_ORIGINS", "")
 EXTRA_CORS_ORIGINS = [origin for origin in _extra_cors_origins_raw.split(",") if origin]
 
+# Issue #41: the debug_action WS message type injects a fully-formed
+# ParsedAction directly, bypassing intent_parser's LLM call and any check
+# that the sender controls the named actor - genuinely useful for fast local
+# live-verification (used throughout this project's own CLAUDE.md log), but
+# a real backdoor (act as any character, including someone else's PC) if the
+# app is ever reachable from the internet. Off by default; a local dev
+# session opts back in explicitly rather than this defaulting to on for
+# "localhost-looking" requests, which would be trivial to spoof.
+ALLOW_DEBUG_ACTIONS = os.environ.get("ALLOW_DEBUG_ACTIONS", "0") == "1"
+
 # Day 27 (+ Day 27 detour): which backend the live intent_parser node uses.
 #   "teacher"          - the Ollama 7B model, grammar-constrained (default, unchanged).
 #   "finetuned"        - the LoRA-distilled 0.5B student loaded via transformers/peft

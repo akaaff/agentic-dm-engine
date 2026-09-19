@@ -26,6 +26,7 @@ import uvicorn
 import websockets
 from fastapi.testclient import TestClient
 
+from src import config
 from src.api.main import app
 from src.api.ws.session import create_session, reset_sessions
 from src.cli.play import (
@@ -55,6 +56,14 @@ def _stub_scene_image(state: GraphState) -> dict[str, Any]:
 @pytest.fixture(autouse=True)
 def _isolated_sessions() -> None:
     reset_sessions()
+
+
+@pytest.fixture(autouse=True)
+def _allow_debug_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Issue #41 gated debug_action behind an off-by-default flag; every test
+    # in this file relies on debug_action to drive the engine deterministically
+    # without a real LLM call (see the module docstring above).
+    monkeypatch.setattr(config, "ALLOW_DEBUG_ACTIONS", True)
 
 
 def _send_action_and_get_state(ws: Any, action: ParsedAction) -> dict[str, Any]:
@@ -211,6 +220,46 @@ def test_a_rejected_action_still_gets_re_prompted_for_input() -> None:
         error_msg = ws.receive_json()
         assert error_msg["type"] == "error"
 
+        retry_prompt = ws.receive_json()
+        assert retry_prompt["type"] == "awaiting_input"
+        assert retry_prompt["actor"] == current_actor
+
+
+def test_debug_action_is_rejected_with_a_clear_error_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Issue #41: debug_action bypasses intent_parser and any check that the
+    # sender controls the named actor, so it must refuse to run - loudly,
+    # not silently - unless the server operator explicitly opted in.
+    monkeypatch.setattr(config, "ALLOW_DEBUG_ACTIONS", False)
+
+    encounter = build_demo_encounter()
+    party = build_demo_party()
+    initial_state = build_encounter_state(encounter, party, demo_initiative_rng())  # type: ignore[arg-type]
+    action_rng = demo_action_rng()
+    create_session(
+        "test-debug-action-disabled",
+        initial_state,
+        action_rng=action_rng,  # type: ignore[arg-type]
+        graph=build_graph(rng=action_rng, narrator_fn=_stub_narrator),  # type: ignore[arg-type]
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws/session/test-debug-action-disabled") as ws:
+        ws.receive_json()  # initial state_update
+        awaiting = ws.receive_json()
+        current_actor = awaiting["actor"]
+
+        action = SCRIPTED_ACTIONS[0]
+        ws.send_json({"type": "debug_action", "action": action.model_dump(mode="json")})
+
+        error_msg = ws.receive_json()
+        assert error_msg["type"] == "error"
+        assert "disabled" in error_msg["detail"]
+        assert "ALLOW_DEBUG_ACTIONS" in error_msg["detail"]
+
+        # Nothing was mutated - the same actor is still up, not the one two
+        # turns further along that a successfully-resolved action would reach.
         retry_prompt = ws.receive_json()
         assert retry_prompt["type"] == "awaiting_input"
         assert retry_prompt["actor"] == current_actor

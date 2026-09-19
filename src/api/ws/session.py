@@ -25,6 +25,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langgraph.graph.state import CompiledStateGraph
 
+from src import config
 from src.api.db.models import CampaignProgress, CharacterRecord
 from src.api.db.session import SessionLocal
 from src.api.routes.characters import _record_to_character
@@ -466,7 +467,21 @@ async def _handle_client_message(
     elif msg_type == "debug_action":
         # Test/dev only: injects a fully-formed ParsedAction directly,
         # bypassing intent_parser's LLM call entirely (see its pre-supplied-
-        # parsed_action escape hatch). Never sent by the real frontend.
+        # parsed_action escape hatch). Never sent by the real frontend - and,
+        # since it also bypasses any check that the sender controls the
+        # named actor, a real backdoor if left reachable from the internet
+        # (issue #41). Gated behind an explicit, off-by-default env flag
+        # rather than a silent no-op, so a client relying on it in dev gets
+        # a clear error instead of a mysteriously-ignored message.
+        if not config.ALLOW_DEBUG_ACTIONS:
+            detail = "debug_action is disabled (set ALLOW_DEBUG_ACTIONS=1 to enable it)."
+            await websocket.send_json({"type": "error", "detail": detail})
+            # Same Day-19 lesson as the TurnEngineError path below: without
+            # this, the frontend's own optimistic "it's my turn" flag never
+            # gets restored, leaving the input looking stuck even though the
+            # turn never actually moved.
+            await _send_awaiting_input(session)
+            return
         action = ParsedAction.model_validate(raw["action"])
     else:
         return
