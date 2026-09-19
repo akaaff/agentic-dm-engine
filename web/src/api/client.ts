@@ -2,7 +2,7 @@
 // No generated OpenAPI client - the surface is small enough that hand-written
 // types are less overhead than adding a codegen step for Day 17's scope.
 
-const API_BASE_URL = 'http://localhost:8000'
+import { API_BASE_URL } from './baseUrl'
 
 export class ApiError extends Error {
   status: number

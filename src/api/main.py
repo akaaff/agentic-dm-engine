@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.routes import campaigns, characters, companions, sessions
 from src.api.ws import session as ws_session
+from src.config import EXTRA_CORS_ORIGINS
 from src.engine.character_creation import PORTRAIT_DIR
 from src.imagegen.service import DEFAULT_OUTPUT_DIR, MEDIA_URL_PREFIX
 
@@ -17,9 +18,12 @@ app = FastAPI(title="agentic-dm-engine")
 # The Vite dev server (Day 17+) runs on a different origin (localhost:5173)
 # than this API (localhost:8000) - local-dev-only, wide open since this is a
 # local single-user app with no deployed/public instance to protect.
+# EXTRA_CORS_ORIGINS (issue #40) covers a genuinely split-origin hosting
+# setup - the common single-tunnel case doesn't need it at all, since the
+# Vite dev proxy (see vite.config.ts) makes every request same-origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", *EXTRA_CORS_ORIGINS],
     allow_methods=["*"],
     allow_headers=["*"],
 )

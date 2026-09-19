@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { WS_BASE_URL } from '../api/baseUrl'
 
 // Mirrors the JSON shape of src/engine/state.py's Character/GameState -
 // only the fields the UI actually renders, not a full 1:1 port of every
@@ -152,8 +153,6 @@ export interface NarrationEntry {
    * revealing everything that led there. */
   gameStateSnapshot?: LiveGameState
 }
-
-const WS_BASE_URL = 'ws://localhost:8000'
 
 // How long a revealed narration entry stays "the last thing shown" before
 // the next queued one is allowed to appear - only ever adds delay when

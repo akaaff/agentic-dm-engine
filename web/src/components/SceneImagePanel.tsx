@@ -1,6 +1,5 @@
 import { useState } from 'react'
-
-const MEDIA_BASE_URL = 'http://localhost:8000'
+import { API_BASE_URL as MEDIA_BASE_URL } from '../api/baseUrl'
 
 // Split out so `key={url}` (below) remounts a fresh instance per image URL -
 // `loaded` then naturally starts false for each new image without an effect

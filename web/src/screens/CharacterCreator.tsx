@@ -316,7 +316,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
       <div className="wizard-error">
         Could not load character-creation data from the API: {loadError}
         <br />
-        Is the backend running at http://localhost:8000?
+        Is the backend running and reachable?
       </div>
     )
   }

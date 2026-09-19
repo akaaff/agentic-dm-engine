@@ -21,6 +21,16 @@ OLLAMA_TEACHER_MODEL = os.environ.get("OLLAMA_TEACHER_MODEL", "qwen2.5:7b-instru
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./agentic_dm_engine.db")
 
+# Issue #40: extra CORS origins beyond the hardcoded local Vite dev ones
+# (see api/main.py) - a comma-separated list, e.g. a Cloudflare Tunnel
+# hostname (https://xyz.trycloudflare.com) for anyone serving the frontend
+# from a different origin than the API itself. Not needed for the common
+# single-tunnel case (the Vite dev proxy/a same-origin deployment means the
+# browser never makes a cross-origin request at all - see vite.config.ts),
+# only for a genuinely split frontend/backend hosting setup.
+_extra_cors_origins_raw = os.environ.get("EXTRA_CORS_ORIGINS", "")
+EXTRA_CORS_ORIGINS = [origin for origin in _extra_cors_origins_raw.split(",") if origin]
+
 # Day 27 (+ Day 27 detour): which backend the live intent_parser node uses.
 #   "teacher"          - the Ollama 7B model, grammar-constrained (default, unchanged).
 #   "finetuned"        - the LoRA-distilled 0.5B student loaded via transformers/peft

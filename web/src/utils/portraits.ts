@@ -5,7 +5,7 @@
 // CharacterDetailSheet) goes through this one function rather than
 // duplicating the filename-building logic.
 
-const MEDIA_BASE_URL = 'http://localhost:8000'
+import { API_BASE_URL as MEDIA_BASE_URL } from '../api/baseUrl'
 
 // A structural subset shared by both LiveCharacter (sessionClient.ts) and
 // Character (api/client.ts) - deliberately not importing either type here,
