@@ -29,6 +29,7 @@ from src import config
 from src.api.db.models import CampaignProgress, CharacterRecord
 from src.api.db.session import SessionLocal
 from src.api.routes.characters import _record_to_character
+from src.api.ws.rate_limit import TokenBucket
 from src.cli.play import build_demo_encounter, build_demo_party
 from src.engine.actions import ParsedAction
 from src.engine.campaign import Campaign, load_campaign
@@ -89,6 +90,16 @@ class Session:
     connection joining later won't see it - the same "no narration replay
     on late join" limitation this session already has for ordinary
     per-turn narration, not something this change newly introduces."""
+    action_bucket: TokenBucket = field(
+        default_factory=lambda: TokenBucket(
+            capacity=config.ACTION_RATE_LIMIT_CAPACITY,
+            refill_per_second=config.ACTION_RATE_LIMIT_PER_MINUTE / 60,
+        )
+    )
+    """Issue #43: shared across every connection to this session (not
+    per-connection) - the thing being protected is the session's own turn
+    pipeline (one shared narrator/scene_image call per resolved action), not
+    any individual client."""
 
 
 _sessions: dict[str, Session] = {}
@@ -451,6 +462,19 @@ async def _handle_client_message(
         await _send_awaiting_input(session)
         return
 
+    if msg_type in ("player_action", "player_move", "debug_action"):
+        # Issue #43: these three are the only message types that reach
+        # session.graph.invoke below, which always runs a real narrator LLM
+        # call (and, for player_action, a real intent_parser LLM call too) -
+        # rest/continue_campaign never touch the graph at all (campaign_runner
+        # is pure/deterministic), so they're deliberately not rate-limited.
+        if not session.action_bucket.try_consume():
+            await websocket.send_json(
+                {"type": "error", "detail": "Too many actions too quickly - please slow down."}
+            )
+            await _send_awaiting_input(session)
+            return
+
     raw_text = ""
     action: ParsedAction | None = None
 
@@ -545,6 +569,21 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     if passphrase and websocket.query_params.get("key") != passphrase:
         await websocket.close(code=4401, reason="missing or incorrect passphrase")
         return
+
+    # Issue #43: a hard cap on how many *distinct* sessions may have a live
+    # connection at once - the actual shared resource is the one local GPU/
+    # Ollama instance behind every session's narrator/scene_image calls, not
+    # this endpoint itself. Joining a session that's already active (another
+    # connection already open on it - the multiplayer case) never counts
+    # against the cap; only opening a *new* one does.
+    existing = _sessions.get(session_id)
+    already_active = existing is not None and len(existing.connections) > 0
+    if not already_active:
+        active_count = sum(1 for s in _sessions.values() if s.connections)
+        if active_count >= config.MAX_CONCURRENT_SESSIONS:
+            await websocket.close(code=4429, reason="too many concurrent sessions - try again soon")
+            return
+
     await websocket.accept()
     try:
         session = _get_or_create_default_session(session_id)

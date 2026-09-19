@@ -39,6 +39,22 @@ EXTRA_CORS_ORIGINS = [origin for origin in _extra_cors_origins_raw.split(",") if
 # deployment (a Cloudflare Tunnel hostname, issue #40) sets this to opt in.
 SHARED_ACCESS_PASSPHRASE = os.environ.get("SHARED_ACCESS_PASSPHRASE") or None
 
+# Issue #43: guards the WS endpoint's actual expensive resource - every
+# resolved turn (human or auto-played companion/monster) runs a real
+# narrator LLM call and a real scene-image GPU generation unconditionally
+# (see graph_builder.py's fixed player_agent->intent_parser->rules_engine->
+# narrator->scene_image edge chain), so the thing worth bounding isn't
+# individual cheap REST reads, it's (a) how many sessions can be pulling on
+# that one shared local GPU/Ollama instance at once, and (b) how fast a
+# single session's own client can submit new turns. Defaults chosen to be
+# generously above real single-player pacing (CLAUDE.md's own measured
+# ~7s/round) rather than empirically load-tested against real concurrent
+# GPU contention - the issue itself flags that as worth confirming properly
+# once this is actually deployed multi-session, not before.
+MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "3"))
+ACTION_RATE_LIMIT_CAPACITY = float(os.environ.get("ACTION_RATE_LIMIT_CAPACITY", "10"))
+ACTION_RATE_LIMIT_PER_MINUTE = float(os.environ.get("ACTION_RATE_LIMIT_PER_MINUTE", "10"))
+
 # Issue #41: the debug_action WS message type injects a fully-formed
 # ParsedAction directly, bypassing intent_parser's LLM call and any check
 # that the sender controls the named actor - genuinely useful for fast local
