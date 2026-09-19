@@ -129,6 +129,11 @@ type ServerMessage =
   | { type: 'scene_image'; url: string }
   | { type: 'awaiting_input'; actor: string }
   | { type: 'error'; detail: string }
+  // Issue #46: another connected player's own WebSocket dropping/coming
+  // back, not this connection's own - surfaced so the rest of the party
+  // isn't left guessing why the game is paused on a character's turn.
+  | { type: 'player_disconnected'; actor: string }
+  | { type: 'player_reconnected'; actor: string }
 
 export interface NarrationEntry {
   text: string
@@ -170,6 +175,11 @@ export function useSessionSocket(sessionId: string) {
   const [logCaughtUp, setLogCaughtUp] = useState(true)
   const [sceneImageUrl, setSceneImageUrl] = useState<string | null>(null)
   const [awaitingActor, setAwaitingActor] = useState<string | null>(null)
+  // Issue #46: character ids whose player is currently disconnected - reset
+  // on every fresh connect (a stale "so-and-so disconnected" banner
+  // shouldn't survive this client's own reconnect, which starts blind to
+  // whatever happened while it was gone until the next relevant message).
+  const [disconnectedActors, setDisconnectedActors] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -206,6 +216,7 @@ export function useSessionSocket(sessionId: string) {
     }
     lastRevealTimeRef.current = -Infinity
     setLogCaughtUp(true)
+    setDisconnectedActors([])
 
     // Paces the queue by real elapsed time since the last reveal, not by
     // whether the queue happened to look empty at the instant a new entry
@@ -333,6 +344,14 @@ export function useSessionSocket(sessionId: string) {
         case 'error':
           setError(message.detail)
           break
+        case 'player_disconnected':
+          setDisconnectedActors((prev) =>
+            prev.includes(message.actor) ? prev : [...prev, message.actor]
+          )
+          break
+        case 'player_reconnected':
+          setDisconnectedActors((prev) => prev.filter((id) => id !== message.actor))
+          break
       }
     }
 
@@ -377,6 +396,7 @@ export function useSessionSocket(sessionId: string) {
     logCaughtUp,
     sceneImageUrl,
     awaitingActor,
+    disconnectedActors,
     error,
     connected,
     sendPlayerAction,

@@ -21,6 +21,7 @@ export default function LivePlay({
     logCaughtUp,
     sceneImageUrl,
     awaitingActor,
+    disconnectedActors,
     error,
     connected,
     sendPlayerAction,
@@ -117,6 +118,20 @@ export default function LivePlay({
             {gameState.status === 'victory' && 'Victory! The encounter is over.'}
             {gameState.status === 'defeat' && 'Defeat... the party has fallen.'}
             {gameState.status === 'aborted' && 'The encounter ended early.'}
+          </p>
+        )}
+        {disconnectedActors.length > 0 && gameState && (
+          // Issue #46: surfaces another player's dropped connection so the
+          // party isn't left guessing why the game is paused on their turn -
+          // this project deliberately waits indefinitely for them rather
+          // than auto-skipping (a friends game shouldn't punish a wifi
+          // blip), so this is purely informational, no timeout attached.
+          <p className="wizard-error status-banner">
+            {disconnectedActors
+              .map((id) => gameState.characters[id]?.name ?? id)
+              .join(', ')}
+            {disconnectedActors.length === 1 ? "'s" : "'"} player
+            {disconnectedActors.length === 1 ? ' is' : 's are'} reconnecting...
           </p>
         )}
         {gameState?.status === 'victory' && logCaughtUp && (

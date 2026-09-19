@@ -310,3 +310,92 @@ async def test_reconnecting_with_an_existing_token_resumes_the_same_character_af
     assert "thorin" in character_ids
     session = ws_session_module._sessions[session_id]
     assert session.human_character_ids[thorin_token] == "thorin"
+
+
+async def test_reconnecting_mid_session_without_eviction_resumes_with_correct_awaiting_input(
+    rest_client: TestClient, live_server: int
+) -> None:
+    # Issue #46's own verification ask: a connection controlling a character
+    # disconnects and a new connection with the same join token reconnects
+    # *while the in-memory session is still alive* (no server restart this
+    # time, unlike the eviction test above) - the ordinary "phone sleeps,
+    # wifi blips" case, not a server-restart edge case.
+    session_id, thorin_token, elrond_token = _set_up_two_player_lobby(rest_client)
+    url = f"ws://127.0.0.1:{live_server}/ws/session/{session_id}?token={thorin_token}"
+
+    async with websockets.connect(url) as ws:
+        msg = json.loads(await ws.recv())
+        while msg["type"] != "state_update":
+            msg = json.loads(await ws.recv())
+    # `async with` has already closed this connection cleanly by here -
+    # session.connections no longer holds it (confirmed indirectly below by
+    # the reconnect succeeding and getting its own personal messages).
+
+    async with websockets.connect(url) as ws:
+        thorin_state = json.loads(await ws.recv())
+        while thorin_state["type"] != "state_update":
+            thorin_state = json.loads(await ws.recv())
+        current_actor = thorin_state["game_state"]["turn_order"][
+            thorin_state["game_state"]["current_turn"]
+        ]
+        if current_actor == "thorin":
+            awaiting = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+            assert awaiting == {"type": "awaiting_input", "actor": "thorin"}
+
+    session = ws_session_module._sessions[session_id]
+    assert session.human_character_ids[thorin_token] == "thorin"
+    assert session.human_character_ids[elrond_token] == "elrond"
+
+
+async def test_other_connection_is_notified_of_a_disconnect_and_reconnect(
+    rest_client: TestClient, live_server: int
+) -> None:
+    session_id, thorin_token, elrond_token = _set_up_two_player_lobby(rest_client)
+    thorin_url = f"ws://127.0.0.1:{live_server}/ws/session/{session_id}?token={thorin_token}"
+    elrond_url = f"ws://127.0.0.1:{live_server}/ws/session/{session_id}?token={elrond_token}"
+
+    async with websockets.connect(elrond_url) as ws_elrond:
+        elrond_state = json.loads(await ws_elrond.recv())
+        while elrond_state["type"] != "state_update":
+            elrond_state = json.loads(await ws_elrond.recv())
+
+        async with websockets.connect(thorin_url) as ws_thorin:
+            thorin_state = json.loads(await ws_thorin.recv())
+            while thorin_state["type"] != "state_update":
+                thorin_state = json.loads(await ws_thorin.recv())
+        # ws_thorin closed cleanly here (end of the inner `async with`) -
+        # elrond's connection should be told thorin's player dropped.
+
+        disconnect_notice = None
+        deadline = asyncio.get_event_loop().time() + 3
+        while asyncio.get_event_loop().time() < deadline:
+            msg = json.loads(
+                await asyncio.wait_for(
+                    ws_elrond.recv(), timeout=deadline - asyncio.get_event_loop().time()
+                )
+            )
+            if msg["type"] == "player_disconnected":
+                disconnect_notice = msg
+                break
+        assert disconnect_notice == {"type": "player_disconnected", "actor": "thorin"}
+
+        # Reconnecting with the same token - elrond's connection should now
+        # hear that thorin's player is back.
+        async with websockets.connect(thorin_url) as ws_thorin_again:
+            msg = json.loads(await ws_thorin_again.recv())
+            while msg["type"] != "state_update":
+                msg = json.loads(await ws_thorin_again.recv())
+
+            reconnect_notice = None
+            deadline = asyncio.get_event_loop().time() + 3
+            while asyncio.get_event_loop().time() < deadline:
+                elrond_msg = json.loads(
+                    await asyncio.wait_for(
+                        ws_elrond.recv(), timeout=deadline - asyncio.get_event_loop().time()
+                    )
+                )
+                if elrond_msg["type"] == "player_reconnected":
+                    reconnect_notice = elrond_msg
+                    break
+
+    assert reconnect_notice == {"type": "player_reconnected", "actor": "thorin"}

@@ -105,6 +105,18 @@ class Session:
     per-connection) - the thing being protected is the session's own turn
     pipeline (one shared narrator/scene_image call per resolved action), not
     any individual client."""
+    connected_human_character_ids: set[str] = field(default_factory=set)
+    """Issue #46: which human characters currently have a live connection -
+    used to tell a genuine reconnect (this character was connected before,
+    dropped, and is connecting again) apart from a character's very first
+    connect ever (nothing to call a "reconnect"). Only meaningful for a real
+    multi-human session (human_character_ids non-empty); the demo/single-
+    connection-controls-everyone fallback never touches this."""
+    ever_connected_human_character_ids: set[str] = field(default_factory=set)
+    """Issue #46: every human character that has EVER connected at least
+    once - never removed, unlike connected_human_character_ids above, so a
+    later reconnect can still be told apart from a first connect after the
+    character has since disconnected."""
 
 
 _sessions: dict[str, Session] = {}
@@ -267,8 +279,27 @@ def reset_sessions() -> None:
 
 
 async def _broadcast(session: Session, message: dict[str, object]) -> None:
+    # Issue #46: a connection that dropped without a clean disconnect (no
+    # WebSocketDisconnect ever raised on this connection's own receive loop -
+    # a phone sleeping or a wifi blip, not a closed tab) would otherwise sit
+    # in session.connections indefinitely, and Starlette's WebSocket.send()
+    # raises WebSocketDisconnect/RuntimeError on the first attempt to write
+    # to it (confirmed by reading its source) - letting that propagate here
+    # would abort this whole broadcast mid-loop, silently dropping the
+    # message for every connection *after* the dead one too. Pruned quietly
+    # (no player_disconnected notice from this path specifically - the main
+    # receive loop's own clean-disconnect handling below is the primary,
+    # prompt detection point; this is just a defensive backstop).
+    dead: list[SessionConnection] = []
     for connection in session.connections:
-        await connection.websocket.send_json(message)
+        try:
+            await connection.websocket.send_json(message)
+        except (WebSocketDisconnect, RuntimeError):
+            dead.append(connection)
+    for connection in dead:
+        if connection in session.connections:
+            session.connections.remove(connection)
+        session.connected_human_character_ids -= connection.controlled_character_ids
 
 
 async def _send_awaiting_input(session: Session) -> None:
@@ -277,7 +308,13 @@ async def _send_awaiting_input(session: Session) -> None:
     current_actor = session.game_state.turn_order[session.game_state.current_turn]
     for connection in session.connections:
         if current_actor in connection.controlled_character_ids:
-            await connection.websocket.send_json({"type": "awaiting_input", "actor": current_actor})
+            try:
+                await connection.websocket.send_json(
+                    {"type": "awaiting_input", "actor": current_actor}
+                )
+            except (WebSocketDisconnect, RuntimeError):
+                session.connections.remove(connection)
+                session.connected_human_character_ids -= connection.controlled_character_ids
             return
 
 
@@ -680,6 +717,21 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     connection = SessionConnection(websocket=websocket, controlled_character_ids=controlled)
     session.connections.append(connection)
 
+    if session.human_character_ids:
+        # Issue #46: "reconnected" is only meaningful set against a real
+        # human seat that has genuinely dropped and come back, not this
+        # character's very first-ever connect (nothing to call a "re" on) -
+        # see Session.connected_/ever_connected_human_character_ids' own
+        # docstrings for why both sets exist.
+        human_ids = set(session.human_character_ids.values())
+        reconnected = (
+            controlled & human_ids & session.ever_connected_human_character_ids
+        ) - session.connected_human_character_ids
+        session.connected_human_character_ids |= controlled & human_ids
+        session.ever_connected_human_character_ids |= controlled & human_ids
+        for actor in reconnected:
+            await _broadcast(session, {"type": "player_reconnected", "actor": actor})
+
     try:
         # The campaign's own scene-setting text (a narrative "hook" before
         # the fight, etc.) - collected once at session setup, sent to
@@ -719,4 +771,16 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        session.connections.remove(connection)
+        # Guarded, not unconditional: a broadcast send failing earlier in
+        # this same connection's lifetime (see _broadcast/_send_awaiting_
+        # input's own pruning) may have already removed it from the list.
+        if connection in session.connections:
+            session.connections.remove(connection)
+        if session.human_character_ids:
+            still_connected = {
+                cid for c in session.connections for cid in c.controlled_character_ids
+            }
+            newly_disconnected = connection.controlled_character_ids - still_connected
+            session.connected_human_character_ids -= newly_disconnected
+            for actor in newly_disconnected:
+                await _broadcast(session, {"type": "player_disconnected", "actor": actor})
