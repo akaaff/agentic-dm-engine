@@ -17,6 +17,7 @@ export default function LivePlay({
 }) {
   const {
     gameState,
+    combatSummaries,
     narrationLog,
     logCaughtUp,
     sceneImageUrl,
@@ -221,7 +222,10 @@ export default function LivePlay({
       </div>
       {gameState?.characters[myCharacterId] && (
         <div className="live-play-detail">
-          <CharacterDetailSheet character={gameState.characters[myCharacterId]} />
+          <CharacterDetailSheet
+            character={gameState.characters[myCharacterId]}
+            combatSummary={combatSummaries[myCharacterId]}
+          />
         </div>
       )}
     </div>

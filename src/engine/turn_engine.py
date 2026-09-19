@@ -503,6 +503,57 @@ def _pc_attack_params(
     )
 
 
+@dataclass(frozen=True)
+class AttackSummary:
+    """Display-only aid for a proactive UX ask (not tied to any bug): shows
+    a PC's own current attack bonus/damage - base + modifiers - on the
+    character sheet, before they've committed to an attack. Built by
+    current_attack_summaries below, which reuses _pc_attack_params directly
+    (the exact function a real attack resolves through) rather than a
+    second, hand-derived computation - same "extract once, reuse for both
+    resolution and display" precedent as rules.spell_damage_notation
+    (issue #30), so this can never drift from what an actual attack rolls."""
+
+    source_name: str
+    attack_bonus: int
+    attack_bonus_breakdown: list[tuple[str, int]]
+    damage_dice_count: int
+    damage_dice_sides: int
+    damage_bonus: int
+    damage_type: str
+
+
+def current_attack_summaries(actor: Character, srd: SrdIndex) -> list[AttackSummary]:
+    """One entry for the main hand (or unarmed, if nothing's equipped) and,
+    only if genuinely dual-wielding, a second for the off-hand - its own
+    reduced damage bonus already applied via include_ability_damage_bonus=
+    False, matching offhand_attack's real resolution exactly. Monsters have
+    nothing meaningful to preview here (their stat-block attack bonus is
+    already a single precomputed number, not something that varies by
+    equipment choice), so this is a no-op for anyone but a PC."""
+    if not actor.is_pc:
+        return []
+    summaries = [_attack_summary_from_params(_pc_attack_params(actor, None, srd))]
+    if len(actor.equipped_weapons) == 2:
+        off_params = _pc_attack_params(
+            actor, actor.equipped_weapons[1], srd, include_ability_damage_bonus=False
+        )
+        summaries.append(_attack_summary_from_params(off_params, name_suffix=" (off-hand)"))
+    return summaries
+
+
+def _attack_summary_from_params(params: AttackParams, name_suffix: str = "") -> AttackSummary:
+    return AttackSummary(
+        source_name=f"{params.source_name}{name_suffix}",
+        attack_bonus=params.attack_bonus,
+        attack_bonus_breakdown=params.attack_bonus_breakdown,
+        damage_dice_count=params.damage_dice_count,
+        damage_dice_sides=params.damage_dice_sides,
+        damage_bonus=params.damage_bonus,
+        damage_type=params.damage_type,
+    )
+
+
 def _monster_action(actor: Character, action_name: str | None, srd: SrdIndex) -> SrdEntry:
     """Looks up the raw SRD action dict a monster's attack should use - the
     named action if given, else the stat block's first action (every

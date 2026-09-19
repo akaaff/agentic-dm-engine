@@ -594,6 +594,52 @@ def is_monk_weapon(weapon: SrdEntry) -> bool:
     return "monk" in {p["index"] for p in (weapon.get("properties") or [])}
 
 
+def armor_ac_breakdown(
+    equipped_armor: str | None,
+    equipped_shield: str | None,
+    dex_mod: int,
+    fighting_style: str | None,
+    equipment: dict[str, SrdEntry],
+    class_index: str | None = None,
+    wis_mod: int = 0,
+) -> list[tuple[str, int]]:
+    """The named components that sum to `armor_ac`'s own return value -
+    extracted so the two can never drift (armor_ac is now just
+    `sum(v for _, v in this)`), same "extract once, reuse for both
+    resolution and display" precedent as rules.spell_damage_notation
+    (issue #30). Added for a proactive UX ask: showing a player's current
+    AC as base + modifiers on the character sheet, not just a flat total.
+    See armor_ac's own docstring for the rules this reproduces exactly."""
+    breakdown: list[tuple[str, int]] = []
+
+    armor_item = equipment.get(equipped_armor) if equipped_armor else None
+    if armor_item is None:
+        breakdown.append(("base (unarmored)", 10))
+        breakdown.append(("DEX mod", dex_mod))
+        if class_index == "monk" and equipped_shield is None and wis_mod:
+            breakdown.append(("WIS mod (Unarmored Defense)", wis_mod))
+    else:
+        ac_info = armor_item["armor_class"]
+        breakdown.append((f"{armor_item['name']} base", ac_info["base"]))
+        if ac_info.get("dex_bonus"):
+            bonus = dex_mod
+            label = "DEX mod"
+            if "max_bonus" in ac_info and bonus > ac_info["max_bonus"]:
+                bonus = ac_info["max_bonus"]
+                label = f"DEX mod (capped at +{ac_info['max_bonus']})"
+            breakdown.append((label, bonus))
+
+    if equipped_shield:
+        shield_item = equipment.get(equipped_shield)
+        if shield_item and shield_item.get("armor_class"):
+            breakdown.append((shield_item["name"], int(shield_item["armor_class"]["base"])))
+
+    if fighting_style == "defense" and armor_item is not None:
+        breakdown.append(("Defense fighting style", 1))
+
+    return breakdown
+
+
 def armor_ac(
     equipped_armor: str | None,
     equipped_shield: str | None,
@@ -624,29 +670,18 @@ def armor_ac(
     and not wielding a shield" gate - a Monk holding a shield falls back to
     the ordinary unarmored formula (still gets the shield's own flat
     bonus, same as anyone else)."""
-    shield_bonus = 0
-    if equipped_shield:
-        shield_item = equipment.get(equipped_shield)
-        if shield_item and shield_item.get("armor_class"):
-            shield_bonus = int(shield_item["armor_class"]["base"])
-
-    armor_item = equipment.get(equipped_armor) if equipped_armor else None
-    defense_bonus = 1 if fighting_style == "defense" and armor_item is not None else 0
-
-    if armor_item is None:
-        unarmored_defense_bonus = (
-            wis_mod if class_index == "monk" and equipped_shield is None else 0
+    return sum(
+        value
+        for _, value in armor_ac_breakdown(
+            equipped_armor,
+            equipped_shield,
+            dex_mod,
+            fighting_style,
+            equipment,
+            class_index,
+            wis_mod,
         )
-        return 10 + dex_mod + unarmored_defense_bonus + shield_bonus + defense_bonus
-
-    ac_info = armor_item["armor_class"]
-    base: int = ac_info["base"]
-    if ac_info.get("dex_bonus"):
-        bonus = dex_mod
-        if "max_bonus" in ac_info:
-            bonus = min(bonus, ac_info["max_bonus"])
-        base += bonus
-    return base + shield_bonus + defense_bonus
+    )
 
 
 def weapon_combo_is_legal(

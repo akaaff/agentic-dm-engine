@@ -39,9 +39,10 @@ from src.engine.companions import build_companion, load_companion_spec_by_charac
 from src.engine.encounter import GameStateBuildError, build_encounter_state, load_encounter
 from src.engine.monster_ai import choose_monster_action
 from src.engine.resting import apply_long_rest, apply_short_rest
+from src.engine.rules import ability_modifier, armor_ac_breakdown
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
-from src.engine.turn_engine import TurnEngineError
+from src.engine.turn_engine import TurnEngineError, current_attack_summaries
 from src.graph.graph_builder import build_graph
 from src.graph.nodes.intent_parser import parse_intent_sequence
 from src.graph.state_schema import GraphState
@@ -319,8 +320,59 @@ async def _send_awaiting_input(session: Session) -> None:
             return
 
 
+def _combat_summaries(session: Session) -> dict[str, object]:
+    """Proactive UX ask, not a bug fix: a character sheet showing "AC 15"
+    or "+5 to hit" as a bare number gives no way to tell whether that's
+    right without re-deriving it by hand - the same class of gap issue
+    #38's debug-mode roll breakdown already closed for the log, just never
+    extended to the sheet's own static AC/attack-bonus display. Computed
+    fresh per broadcast (cheap - at most a handful of PCs) rather than
+    cached on Character, since equipped gear/fighting-style-independent
+    state like Rage can change mid-encounter and this must never go stale.
+    Empty when srd isn't set (the demo-encounter/offline-test fallback -
+    see Session.srd's own docstring) - real sessions always have it."""
+    if session.srd is None:
+        return {}
+    summaries: dict[str, object] = {}
+    for character in session.game_state.characters.values():
+        if not character.is_pc:
+            continue
+        dex_mod = ability_modifier(character.stats["DEX"])
+        wis_mod = ability_modifier(character.stats["WIS"])
+        ac_breakdown = armor_ac_breakdown(
+            character.equipped_armor,
+            character.equipped_shield,
+            dex_mod,
+            character.fighting_style,
+            session.srd.equipment,
+            character.class_index,
+            wis_mod,
+        )
+        attacks = current_attack_summaries(character, session.srd)
+        summaries[character.id] = {
+            "ac_breakdown": ac_breakdown,
+            "attacks": [
+                {
+                    "source_name": a.source_name,
+                    "attack_bonus": a.attack_bonus,
+                    "attack_bonus_breakdown": a.attack_bonus_breakdown,
+                    "damage_dice_count": a.damage_dice_count,
+                    "damage_dice_sides": a.damage_dice_sides,
+                    "damage_bonus": a.damage_bonus,
+                    "damage_type": a.damage_type,
+                }
+                for a in attacks
+            ],
+        }
+    return summaries
+
+
 def _state_update_message(session: Session) -> dict[str, object]:
-    return {"type": "state_update", "game_state": session.game_state.model_dump(mode="json")}
+    return {
+        "type": "state_update",
+        "game_state": session.game_state.model_dump(mode="json"),
+        "combat_summaries": _combat_summaries(session),
+    }
 
 
 async def _autoplay_non_human_turns(session: Session) -> None:

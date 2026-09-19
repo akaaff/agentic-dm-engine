@@ -6,6 +6,7 @@ from src.engine.rules import (
     ability_modifier,
     apply_damage,
     armor_ac,
+    armor_ac_breakdown,
     bardic_inspiration_die_sides,
     class_equipment_options,
     condition_attack_advantage,
@@ -605,6 +606,73 @@ def test_armor_ac_ignores_wis_mod_for_a_non_monk() -> None:
         )
         == 12  # 10 + 2 (dex) only
     )
+
+
+def test_armor_ac_breakdown_sums_to_armor_acs_own_total() -> None:
+    # armor_ac is now just sum(v for _, v in armor_ac_breakdown(...)) -
+    # confirms the two can never drift across a real mix of cases (a
+    # capped-dex medium armor + shield + Defense fighting style).
+    srd = load_srd()
+    breakdown = armor_ac_breakdown(
+        "scale-mail", "shield", dex_mod=4, fighting_style="defense", equipment=srd.equipment
+    )
+    total = armor_ac(
+        "scale-mail", "shield", dex_mod=4, fighting_style="defense", equipment=srd.equipment
+    )
+    assert sum(v for _, v in breakdown) == total
+
+
+def test_armor_ac_breakdown_unarmored() -> None:
+    srd = load_srd()
+    breakdown = armor_ac_breakdown(
+        None, None, dex_mod=3, fighting_style=None, equipment=srd.equipment
+    )
+    assert breakdown == [("base (unarmored)", 10), ("DEX mod", 3)]
+
+
+def test_armor_ac_breakdown_names_the_worn_armor_and_caps_a_high_dex() -> None:
+    srd = load_srd()
+    # Scale Mail: base 14, max_bonus 2 - a +4 Dex mod is capped down to +2,
+    # and the breakdown should say so, not just silently report a smaller
+    # number than the raw modifier.
+    breakdown = armor_ac_breakdown(
+        "scale-mail", None, dex_mod=4, fighting_style=None, equipment=srd.equipment
+    )
+    assert breakdown == [
+        ("Scale Mail base", 14),
+        ("DEX mod (capped at +2)", 2),
+    ]
+
+
+def test_armor_ac_breakdown_includes_shield_and_defense_fighting_style() -> None:
+    srd = load_srd()
+    breakdown = armor_ac_breakdown(
+        "leather-armor", "shield", dex_mod=2, fighting_style="defense", equipment=srd.equipment
+    )
+    assert breakdown == [
+        ("Leather Armor base", 11),
+        ("DEX mod", 2),
+        ("Shield", 2),
+        ("Defense fighting style", 1),
+    ]
+
+
+def test_armor_ac_breakdown_includes_monk_unarmored_defense() -> None:
+    srd = load_srd()
+    breakdown = armor_ac_breakdown(
+        None,
+        None,
+        dex_mod=2,
+        fighting_style=None,
+        equipment=srd.equipment,
+        class_index="monk",
+        wis_mod=3,
+    )
+    assert breakdown == [
+        ("base (unarmored)", 10),
+        ("DEX mod", 2),
+        ("WIS mod (Unarmored Defense)", 3),
+    ]
 
 
 def test_weapon_range_feet_melee_vs_ranged_vs_reach() -> None:

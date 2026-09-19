@@ -85,6 +85,29 @@ export interface LiveCharacter {
   wild_shape_beast_index: string | null
 }
 
+// Proactive UX ask, not tied to a bug: the character sheet's AC/attack
+// numbers should show base + modifiers, not a bare total. Computed
+// server-side (api/ws/session.py's _combat_summaries) so this can never
+// drift from what an actual roll uses - see turn_engine.current_attack_
+// summaries/rules.armor_ac_breakdown, the same functions a real attack/AC
+// check goes through. Keyed by character id, PCs only (empty for a
+// monster, and for the whole message on a session with no srd set - see
+// _combat_summaries's own docstring).
+export interface CombatAttackSummary {
+  source_name: string
+  attack_bonus: number
+  attack_bonus_breakdown: [string, number][]
+  damage_dice_count: number
+  damage_dice_sides: number
+  damage_bonus: number
+  damage_type: string
+}
+
+export interface CombatSummary {
+  ac_breakdown: [string, number][]
+  attacks: CombatAttackSummary[]
+}
+
 export type TerrainType = 'floor' | 'wall' | 'difficult' | 'hazard'
 
 export interface LiveBattleMap {
@@ -123,7 +146,11 @@ export interface LiveGameState {
 }
 
 type ServerMessage =
-  | { type: 'state_update'; game_state: LiveGameState }
+  | {
+      type: 'state_update'
+      game_state: LiveGameState
+      combat_summaries: Record<string, CombatSummary>
+    }
   | { type: 'narration'; text: string }
   | { type: 'scene_narration'; text: string }
   | { type: 'scene_image'; url: string }
@@ -159,6 +186,10 @@ export interface NarrationEntry {
    * straight to the final outcome while the paced log was still slowly
    * revealing everything that led there. */
   gameStateSnapshot?: LiveGameState
+  /** Same lockstep-with-the-paced-log reasoning as gameStateSnapshot above -
+   * always arrives in the same state_update message, so it's held back and
+   * applied at the same moment. */
+  combatSummariesSnapshot?: Record<string, CombatSummary>
 }
 
 // How long a revealed narration entry stays "the last thing shown" before
@@ -171,6 +202,7 @@ const ENTRY_REVEAL_DELAY_MS = 3000
 
 export function useSessionSocket(sessionId: string) {
   const [gameState, setGameState] = useState<LiveGameState | null>(null)
+  const [combatSummaries, setCombatSummaries] = useState<Record<string, CombatSummary>>({})
   const [narrationLog, setNarrationLog] = useState<NarrationEntry[]>([])
   const [logCaughtUp, setLogCaughtUp] = useState(true)
   const [sceneImageUrl, setSceneImageUrl] = useState<string | null>(null)
@@ -245,6 +277,7 @@ export function useSessionSocket(sessionId: string) {
           // Apply the state this entry belongs to now, not when it arrived -
           // keeps the sidebar/HP/banner in lockstep with the paced log.
           if (entry.gameStateSnapshot) setGameState(entry.gameStateSnapshot)
+          if (entry.combatSummariesSnapshot) setCombatSummaries(entry.combatSummariesSnapshot)
           lastRevealTimeRef.current = performance.now()
         }
         scheduleDrain() // schedules the next one, or marks caught up if none left
@@ -315,11 +348,13 @@ export function useSessionSocket(sessionId: string) {
               kind: 'action',
               events: newEvents,
               gameStateSnapshot: message.game_state,
+              combatSummariesSnapshot: message.combat_summaries,
             })
           } else {
             // Nothing of its own to pace, and nothing already queued for it
             // to jump ahead of - safe to apply right away.
             setGameState(message.game_state)
+            setCombatSummaries(message.combat_summaries)
           }
           break
         }
@@ -392,6 +427,7 @@ export function useSessionSocket(sessionId: string) {
 
   return {
     gameState,
+    combatSummaries,
     narrationLog,
     logCaughtUp,
     sceneImageUrl,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type EquipmentSummary, type SpellSummary } from '../api/client'
-import type { LiveCharacter } from '../ws/sessionClient'
+import type { CombatAttackSummary, CombatSummary, LiveCharacter } from '../ws/sessionClient'
 import { equipmentDetail } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
 import { nameWithSpellDetail } from '../utils/spellDetail'
@@ -32,6 +32,27 @@ function monkMartialArtsDieSides(level: number): number {
   return level >= 5 ? 6 : 4
 }
 
+// Same "label value" join convention formatEvent.ts's own debug-mode
+// breakdown badges already use (issue #38), just without a natural die
+// roll prefix - this is a static, no-roll-yet preview, not a resolved
+// roll's own log entry.
+function formatBreakdown(breakdown: [string, number][]): string {
+  return breakdown.map(([label, value]) => `${label} ${value}`).join(' + ')
+}
+
+function formatDamage(attack: CombatAttackSummary): string {
+  const dice =
+    attack.damage_dice_count > 0 ? `${attack.damage_dice_count}d${attack.damage_dice_sides}` : null
+  const needsBonus = attack.damage_bonus !== 0 || dice === null
+  const bonus = needsBonus
+    ? dice
+      ? `${attack.damage_bonus >= 0 ? '+' : '-'} ${Math.abs(attack.damage_bonus)}`
+      : `${attack.damage_bonus}`
+    : null
+  const notation = [dice, bonus].filter((p): p is string => p !== null).join(' ')
+  return `${notation} ${attack.damage_type}`
+}
+
 function resourceLabel(key: string): string {
   // "second_wind" -> "Second Wind"
   return key
@@ -50,7 +71,18 @@ function resourceLabel(key: string): string {
  * per-spell detail to display alongside it comes from this fetch). The
  * sheet's own action list stays a frontend-derived summary of what's
  * mechanically available right now, not a server-computed list. */
-export default function CharacterDetailSheet({ character }: { character: LiveCharacter }) {
+export default function CharacterDetailSheet({
+  character,
+  combatSummary,
+}: {
+  character: LiveCharacter
+  /** Base + modifiers for this character's current AC/attacks - computed
+   * server-side (api/ws/session.py's _combat_summaries) so it can never
+   * drift from what an actual roll uses. Undefined until the first
+   * state_update arrives, or if the session has no srd set (offline/demo
+   * fallback) - both render the sheet exactly as before this feature. */
+  combatSummary?: CombatSummary
+}) {
   const [cantrips, setCantrips] = useState<SpellSummary[]>([])
   const [knownSpellsPool, setKnownSpellsPool] = useState<SpellSummary[]>([])
   const [equipment, setEquipment] = useState<EquipmentSummary[]>([])
@@ -164,6 +196,11 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
           character.hp <= 0 &&
           (character.is_stable ? ' - stable' : ' - unconscious')}
       </div>
+      {combatSummary && combatSummary.ac_breakdown.length > 0 && (
+        <p className="companion-meta">
+          <strong>AC breakdown:</strong> {formatBreakdown(combatSummary.ac_breakdown)}
+        </p>
+      )}
       <p className="companion-meta">
         <strong>Equipped:</strong>{' '}
         {[
@@ -172,6 +209,20 @@ export default function CharacterDetailSheet({ character }: { character: LiveCha
           ...(character.equipped_shield ? [nameWithDetail(character.equipped_shield)] : []),
         ].join(', ') || 'nothing (unarmed, unarmored)'}
       </p>
+      {combatSummary && combatSummary.attacks.length > 0 && (
+        <div>
+          <strong>Attack &amp; damage:</strong>
+          <ul className="detail-action-list">
+            {combatSummary.attacks.map((attack) => (
+              <li key={attack.source_name}>
+                {attack.source_name}: {attack.attack_bonus >= 0 ? '+' : ''}
+                {attack.attack_bonus} to hit [{formatBreakdown(attack.attack_bonus_breakdown)}],{' '}
+                {formatDamage(attack)} damage
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <table className="detail-stats-table">
         <tbody>

@@ -11,6 +11,7 @@ from src.engine.turn_engine import (
     TurnEngineError,
     _monster_attack_params,
     _pc_attack_params,
+    current_attack_summaries,
     parse_dice_notation,
     resolve_action,
 )
@@ -102,6 +103,71 @@ def test_pc_attack_params_drops_proficiency_bonus_when_not_proficient() -> None:
     # Debug-mode breakdown (issue #38): confirms proficiency was correctly
     # *withheld*, not silently missing.
     assert params.attack_bonus_breakdown == [("STR mod", -1), ("proficiency (none)", 0)]
+
+
+def test_current_attack_summaries_matches_pc_attack_params_for_a_single_weapon() -> None:
+    # Proactive UX ask: the character sheet's "current attack/damage"
+    # display must never drift from what an actual attack resolves - this
+    # reuses _pc_attack_params directly, so confirming it matches that
+    # function's own output for the identical inputs is really confirming
+    # there's only ever one computation, not two that happen to agree.
+    srd = load_srd()
+    fighter = _two_person_party()[0]
+    expected = _pc_attack_params(fighter, None, srd)
+
+    summaries = current_attack_summaries(fighter, srd)
+
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert summary.source_name == expected.source_name == "Longsword"
+    assert summary.attack_bonus == expected.attack_bonus
+    assert summary.attack_bonus_breakdown == expected.attack_bonus_breakdown
+    assert (summary.damage_dice_count, summary.damage_dice_sides, summary.damage_bonus) == (
+        expected.damage_dice_count,
+        expected.damage_dice_sides,
+        expected.damage_bonus,
+    )
+    assert summary.damage_type == expected.damage_type
+
+
+def test_current_attack_summaries_includes_a_reduced_damage_off_hand_entry() -> None:
+    # Dual-wielding two light weapons: the off-hand entry must show the
+    # same reduced damage_bonus offhand_attack's real resolution applies
+    # (include_ability_damage_bonus=False), not the main hand's own numbers
+    # copied twice.
+    srd = load_srd()
+    fighter = _two_person_party()[0]
+    fighter.inventory.append("dagger")
+    fighter.equipped_weapons = ["dagger", "dagger"]
+
+    summaries = current_attack_summaries(fighter, srd)
+
+    assert len(summaries) == 2
+    main, off = summaries
+    assert main.source_name == "Dagger"
+    assert off.source_name == "Dagger (off-hand)"
+    # Main hand includes the STR/DEX mod in damage; off-hand doesn't.
+    assert main.damage_bonus > off.damage_bonus
+    assert main.attack_bonus == off.attack_bonus  # the attack roll itself is unaffected
+
+
+def test_current_attack_summaries_falls_back_to_unarmed_strike() -> None:
+    srd = load_srd()
+    fighter = _two_person_party()[0]
+    fighter.inventory = []
+    fighter.equipped_weapons = []
+
+    summaries = current_attack_summaries(fighter, srd)
+
+    assert len(summaries) == 1
+    assert summaries[0].source_name == "unarmed strike"
+
+
+def test_current_attack_summaries_is_empty_for_a_monster() -> None:
+    srd = load_srd()
+    goblin = monster_to_character(srd.monsters["goblin"], "goblin_1", Position(x=0, y=0))
+
+    assert current_attack_summaries(goblin, srd) == []
 
 
 def test_pc_attack_params_falls_back_to_unarmed_strike() -> None:
