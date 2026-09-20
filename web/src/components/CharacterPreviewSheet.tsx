@@ -8,7 +8,7 @@ import type {
 } from '../api/client'
 import { nameWithEquipmentDetail } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
-import { nameWithSpellDetail } from '../utils/spellDetail'
+import { nameWithSpellDetail, spellHint } from '../utils/spellDetail'
 
 const ABILITIES: AbilityScore[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 
@@ -138,26 +138,41 @@ export default function CharacterPreviewSheet({
       </p>
 
       {classDetail && classDetail.cantrips.length > 0 && (
-        <p>
-          <strong>Cantrips available:</strong>{' '}
-          {classDetail.cantrips.map((c) => c.name).join(', ')}
-        </p>
+        <div>
+          <strong>Cantrips available:</strong>
+          <ul className="detail-action-list">
+            {classDetail.cantrips.map((c) => (
+              <li key={c.index}>
+                <div>{nameWithSpellDetail(c)}</div>
+                <div className="spell-hint">{spellHint(c)}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {classDetail && classDetail.spells_known > 0 && (
         // Issue #30: only meaningful for a "Spells Known" caster - resolves
         // the chosen indices against known_spells_pool for real detail, same
         // "pool + this character's own picks" pattern startingKitLabel uses.
-        <p>
-          <strong>Spells known:</strong>{' '}
-          {chosenSpells.length > 0
-            ? chosenSpells
+        <div>
+          <strong>Spells known:</strong>
+          {chosenSpells.length > 0 ? (
+            <ul className="detail-action-list">
+              {chosenSpells
                 .map((idx) => classDetail.known_spells_pool.find((s) => s.index === idx))
                 .filter((s): s is (typeof classDetail.known_spells_pool)[number] => s !== undefined)
-                .map(nameWithSpellDetail)
-                .join(', ')
-            : 'none chosen yet'}
-        </p>
+                .map((s) => (
+                  <li key={s.index}>
+                    <div>{nameWithSpellDetail(s)}</div>
+                    <div className="spell-hint">{spellHint(s)}</div>
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <p className="companion-meta">none chosen yet</p>
+          )}
+        </div>
       )}
 
       {startingKit.length > 0 && (

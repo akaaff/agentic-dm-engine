@@ -39,3 +39,21 @@ export function nameWithSpellDetail(spell: SpellSummary): string {
   const detail = spellDetail(spell)
   return detail ? `${spell.name} (${detail})` : spell.name
 }
+
+const MAX_HINT_LENGTH = 140
+
+// Issue #51: the mechanical detail above (level/range/damage) doesn't say
+// what a spell actually *does* - a player who doesn't already know 5e
+// spells by name can't tell what "Acid Splash" is from "cantrip, 1 action,
+// 60 ft: 1d6 acid, DEX save" alone. spell.desc carries the real SRD prose
+// (already reaching the frontend since issue #30, just never rendered) -
+// trimmed to its first sentence and capped in length for a compact list
+// context, not shown in full (a raw SRD description can run several
+// sentences, meant for a spellbook page, not a one-line list entry).
+export function spellHint(spell: SpellSummary): string {
+  const trimmed = spell.desc.trim()
+  const firstSentence = trimmed.split(/(?<=[.!?])\s/)[0] ?? trimmed
+  return firstSentence.length > MAX_HINT_LENGTH
+    ? `${firstSentence.slice(0, MAX_HINT_LENGTH - 1).trimEnd()}...`
+    : firstSentence
+}

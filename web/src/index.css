@@ -102,6 +102,15 @@ body {
   gap: 0.2rem;
 }
 
+/* Issue #51: a spell/cantrip's plain-English description, shown as a
+   second, smaller line under its mechanical detail - distinct from the
+   list item's own font-size so the two don't read as equally important. */
+.spell-hint {
+  font-size: 0.75rem;
+  color: #9d94ad;
+  margin-top: 0.05rem;
+}
+
 .detail-action-unavailable {
   color: #766c87;
   text-decoration: line-through;
@@ -478,6 +487,37 @@ button.secondary {
 }
 
 .resource-quick-actions button:hover {
+  background: rgba(124, 77, 255, 0.32);
+}
+
+/* Issue #53: a prominent, blocking prompt - the whole session is paused
+   server-side until this is answered, so it should read as more urgent
+   than the passive resource-quick-actions row above. */
+.bardic-inspiration-offer {
+  border: 1px solid #7c4dff;
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  background: rgba(124, 77, 255, 0.12);
+}
+
+.bardic-inspiration-offer p {
+  margin: 0 0 0.5rem;
+}
+
+.bardic-inspiration-offer-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.bardic-inspiration-offer-buttons button {
+  background: rgba(124, 77, 255, 0.18);
+  border: 1px solid #7c4dff;
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+}
+
+.bardic-inspiration-offer-buttons button:hover {
   background: rgba(124, 77, 255, 0.32);
 }
 

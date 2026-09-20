@@ -3,7 +3,7 @@ import { api, type EquipmentSummary, type SpellSummary } from '../api/client'
 import type { CombatAttackSummary, CombatSummary, LiveCharacter } from '../ws/sessionClient'
 import { equipmentDetail } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
-import { nameWithSpellDetail } from '../utils/spellDetail'
+import { nameWithSpellDetail, spellHint } from '../utils/spellDetail'
 
 const ABILITIES: (keyof LiveCharacter['stats'])[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 
@@ -59,6 +59,25 @@ function resourceLabel(key: string): string {
     .split('_')
     .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(' ')
+}
+
+// Issue #51 follow-up: unlike spells, class_resources keys have no SRD
+// `desc` field anywhere - they're this project's own bookkeeping for
+// class features (character_creation.CLASS_RESOURCES_AT_LEVEL_1, plus
+// ki/wild_shape/bardic_inspiration granted via level_up), so these are
+// hand-authored one-liners, not surfaced backend data. Kept to the 6 real
+// keys this engine currently implements.
+const RESOURCE_HINTS: Record<string, string> = {
+  second_wind: 'Bonus action: heal 1d10 + your level, once per short or long rest.',
+  rage: 'Bonus action: resistance to bludgeoning/piercing/slashing damage and bonus melee damage, until a rest.',
+  ki: 'Fuels Flurry of Blows and other Monk features - regained on a short or long rest.',
+  wild_shape: "Action: transform into a beast you've seen, regained on a short or long rest.",
+  arcane_recovery: 'Once per day during a short rest, recover spent spell slots.',
+  bardic_inspiration: 'Bonus action: give an ally a die to add to one attack roll, ability check, or saving throw.',
+}
+
+function resourceHint(key: string): string | null {
+  return RESOURCE_HINTS[key] ?? null
 }
 
 /** The player's own full character sheet - a detailed, always-visible
@@ -275,9 +294,12 @@ export default function CharacterDetailSheet({
           <ul className="detail-action-list">
             {resourceEntries.map(([key, remaining]) => (
               <li key={key} className={remaining <= 0 ? 'detail-action-unavailable' : ''}>
-                {resourceLabel(key)}: {remaining} remaining
-                {key === 'rage' && character.is_raging && ' (already raging)'}
-                {character.bonus_action_used && ' - bonus action already used this turn'}
+                <div>
+                  {resourceLabel(key)}: {remaining} remaining
+                  {key === 'rage' && character.is_raging && ' (already raging)'}
+                  {character.bonus_action_used && ' - bonus action already used this turn'}
+                </div>
+                {resourceHint(key) && <div className="spell-hint">{resourceHint(key)}</div>}
               </li>
             ))}
           </ul>
@@ -303,7 +325,10 @@ export default function CharacterDetailSheet({
           <strong>Known spells:</strong>
           <ul className="detail-action-list">
             {knownSpells.map((s) => (
-              <li key={s.index}>{nameWithSpellDetail(s)}</li>
+              <li key={s.index}>
+                <div>{nameWithSpellDetail(s)}</div>
+                <div className="spell-hint">{spellHint(s)}</div>
+              </li>
             ))}
           </ul>
         </div>
