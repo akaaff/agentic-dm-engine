@@ -274,6 +274,19 @@ structure exactly (`_spell_save_params` reads `dc_info["dc_type"]["index"]`/
 real field would have been, with no other code path changes."""
 
 
+_SPELL_CLASS_OVERRIDES: dict[str, set[str]] = {
+    "faerie-fire": {"bard"},
+}
+"""Live-found (Bard character creation): real SRD 5e has Faerie Fire as a
+Bard spell too, but the vendored 5e-SRD-Spells.json's own `classes` list
+tags it Druid-only - an upstream data gap, confirmed by checking the
+vendored entry directly rather than assuming from general D&D knowledge.
+Adds classes on top of whatever the vendored `classes` list already says;
+never removes one. Add an entry here only after confirming directly (as
+this one was) that the vendored data is genuinely missing a class a real
+SRD spell should have - not a guess from memory."""
+
+
 @dataclass(frozen=True)
 class ConditionSpellSpec:
     condition: ConditionName
@@ -383,7 +396,10 @@ def class_spell_indices(class_index: str, srd: SrdIndex, level: int | None = Non
         spell["index"]
         for spell in srd.spells.values()
         if (spell.get("level") == level if level is not None else spell.get("level", 0) >= 1)
-        and any(c["index"] == class_index for c in spell.get("classes", []))
+        and (
+            any(c["index"] == class_index for c in spell.get("classes", []))
+            or class_index in _SPELL_CLASS_OVERRIDES.get(spell["index"], set())
+        )
     }
 
 

@@ -9,6 +9,7 @@ from src.engine.rules import (
     armor_ac_breakdown,
     bardic_inspiration_die_sides,
     class_equipment_options,
+    class_spell_indices,
     condition_attack_advantage,
     condition_attack_disadvantage,
     condition_check_disadvantage,
@@ -281,6 +282,17 @@ def test_class_equipment_options_rogue_gets_hand_crossbow_despite_naming() -> No
     srd = load_srd()
     options = set(class_equipment_options(srd.classes["rogue"], srd))
     assert "crossbow-hand" in options
+
+
+def test_class_spell_indices_includes_faerie_fire_for_bard_via_override() -> None:
+    # Live-found: real SRD 5e has Faerie Fire as a Bard spell, but the
+    # vendored 5e-SRD-Spells.json tags it Druid-only - _SPELL_CLASS_OVERRIDES
+    # patches this without touching the vendored data.
+    srd = load_srd()
+    bard_level_1 = class_spell_indices("bard", srd, level=1)
+    assert "faerie-fire" in bard_level_1
+    druid_level_1 = class_spell_indices("druid", srd, level=1)
+    assert "faerie-fire" in druid_level_1  # the override adds, never removes
 
 
 def test_is_class_proficient_with_checks_the_actual_equipped_item() -> None:
