@@ -6,9 +6,10 @@ import type {
   RaceSummary,
   StartingEquipmentItem,
 } from '../api/client'
+import InfoTip from './InfoTip'
 import { nameWithEquipmentDetail } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
-import { nameWithSpellDetail, spellHint } from '../utils/spellDetail'
+import { nameWithSpellDetail } from '../utils/spellDetail'
 
 const ABILITIES: AbilityScore[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 
@@ -143,8 +144,8 @@ export default function CharacterPreviewSheet({
           <ul className="detail-action-list">
             {classDetail.cantrips.map((c) => (
               <li key={c.index}>
-                <div>{nameWithSpellDetail(c)}</div>
-                <div className="spell-hint">{spellHint(c)}</div>
+                {nameWithSpellDetail(c)}
+                <InfoTip text={c.desc.trim()} />
               </li>
             ))}
           </ul>
@@ -164,8 +165,8 @@ export default function CharacterPreviewSheet({
                 .filter((s): s is (typeof classDetail.known_spells_pool)[number] => s !== undefined)
                 .map((s) => (
                   <li key={s.index}>
-                    <div>{nameWithSpellDetail(s)}</div>
-                    <div className="spell-hint">{spellHint(s)}</div>
+                    {nameWithSpellDetail(s)}
+                    <InfoTip text={s.desc.trim()} />
                   </li>
                 ))}
             </ul>

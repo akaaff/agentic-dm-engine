@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api, type EquipmentSummary, type SpellSummary } from '../api/client'
 import type { CombatAttackSummary, CombatSummary, LiveCharacter } from '../ws/sessionClient'
+import InfoTip from './InfoTip'
 import { equipmentDetail } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
-import { nameWithSpellDetail, spellHint } from '../utils/spellDetail'
+import { nameWithSpellDetail } from '../utils/spellDetail'
 
 const ABILITIES: (keyof LiveCharacter['stats'])[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
 
@@ -326,8 +327,8 @@ export default function CharacterDetailSheet({
           <ul className="detail-action-list">
             {knownSpells.map((s) => (
               <li key={s.index}>
-                <div>{nameWithSpellDetail(s)}</div>
-                <div className="spell-hint">{spellHint(s)}</div>
+                {nameWithSpellDetail(s)}
+                <InfoTip text={s.desc.trim()} />
               </li>
             ))}
           </ul>

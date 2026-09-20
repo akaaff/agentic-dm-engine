@@ -12,6 +12,7 @@ import {
   type SkillSummary,
 } from '../api/client'
 import CharacterPreviewSheet from '../components/CharacterPreviewSheet'
+import InfoTip from '../components/InfoTip'
 import { equipmentDetail } from '../utils/equipmentDetail'
 import { nameWithSpellDetail } from '../utils/spellDetail'
 
@@ -104,22 +105,6 @@ function skillLabel(skillIndex: string): string {
     .split('-')
     .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(' ')
-}
-
-/** Hover/focus tooltip - keyboard-accessible (tabIndex + :focus-within),
- * dependency-free. Used for ability/skill/class explanations so the wizard
- * stays compact for players who already know the rules. */
-function InfoTip({ text }: { text: string }) {
-  return (
-    <span className="info-tip" tabIndex={0}>
-      <span aria-hidden="true" className="info-tip-icon">
-        ⓘ
-      </span>
-      <span role="tooltip" className="info-tip-bubble">
-        {text}
-      </span>
-    </span>
-  )
 }
 
 export default function CharacterCreator({ onCreated }: { onCreated: (character: Character) => void }) {
@@ -562,6 +547,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                       onChange={() => toggleSpell(spell.index)}
                     />
                     {nameWithSpellDetail(spell)}
+                    <InfoTip text={spell.desc} />
                   </label>
                 ))}
               </fieldset>
