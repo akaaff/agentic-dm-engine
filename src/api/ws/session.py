@@ -42,9 +42,16 @@ from src.engine.resting import apply_long_rest, apply_short_rest
 from src.engine.rules import ability_modifier, armor_ac_breakdown
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
-from src.engine.turn_engine import TurnEngineError, current_attack_summaries
+from src.engine.turn_engine import (
+    BardicChoicePending,
+    PendingBardicChoice,
+    TurnEngineError,
+    current_attack_summaries,
+    resolve_pending_bardic_choice,
+)
 from src.graph.graph_builder import build_graph
 from src.graph.nodes.intent_parser import parse_intent_sequence
+from src.graph.nodes.narrator import narrator_node
 from src.graph.state_schema import GraphState
 
 router = APIRouter()
@@ -119,6 +126,13 @@ class Session:
     once - never removed, unlike connected_human_character_ids above, so a
     later reconnect can still be told apart from a first connect after the
     character has since disconnected."""
+    pending_bardic_choice: PendingBardicChoice | None = None
+    """Issue #53: set the instant a single attack roll pauses waiting for
+    its Bardic Inspiration holder to decide whether to spend their banked
+    die (BardicChoicePending, raised from turn_engine) - cleared the moment
+    a bardic_inspiration_response message resumes it. While set, the turn
+    loop stays paused (no autoplay, no awaiting_input) - the only thing this
+    session should be receiving next is that response."""
 
 
 _sessions: dict[str, Session] = {}
@@ -371,6 +385,33 @@ def _combat_summaries(session: Session) -> dict[str, object]:
     return summaries
 
 
+def _resolve_and_narrate_bardic_choice(
+    session: Session, choice: PendingBardicChoice, use_die: bool
+) -> str:
+    """Issue #53: resolves a paused attack roll once the die-or-not decision
+    is known (either a real human answer via bardic_inspiration_response, or
+    autoplay's own always-yes auto-decision for an AI-controlled companion -
+    see _autoplay_non_human_turns's catch, which has no human to ask) and
+    generates real narration for it via the narrator LLM directly - this
+    resume path doesn't go through the full graph (intent_parser/rules_engine
+    already ran once for the original probe; only the mechanical finish and
+    the narration for it are still needed), so narrator_node is called
+    standalone rather than re-invoking the whole compiled graph."""
+    events_before = len(session.game_state.events)
+    srd = session.srd or load_srd()
+    resolve_pending_bardic_choice(session.game_state, choice, use_die, session.action_rng, srd)
+    narrator_state: GraphState = {
+        "game_state": session.game_state,
+        "raw_text": "",
+        "parsed_action": None,
+        "events_before": events_before,
+        "round_before": session.game_state.round,
+        "narration": None,
+        "scene_image_url": None,
+    }
+    return str(narrator_node(narrator_state)["narration"])
+
+
 def _state_update_message(session: Session) -> dict[str, object]:
     return {
         "type": "state_update",
@@ -449,6 +490,18 @@ async def _autoplay_non_human_turns(session: Session) -> None:
         }
         try:
             result = session.graph.invoke(graph_input)
+        except BardicChoicePending as exc:
+            # Issue #53: an AI-controlled companion (not a human) can hold a
+            # banked die too - there's no one to ask during autoplay, so it
+            # auto-decides yes, exactly reproducing this project's own
+            # pre-#53 behavior (the die always got applied to a miss
+            # unconditionally). Only a real human's own turn (see
+            # _handle_client_message) actually pauses to ask.
+            narration = _resolve_and_narrate_bardic_choice(session, exc.choice, True)
+            await _broadcast(session, {"type": "narration", "text": narration})
+            await _broadcast(session, _state_update_message(session))
+            consecutive_invalid = 0
+            continue
         except (TurnEngineError, NotImplementedError) as exc:
             await _broadcast(session, {"type": "error", "detail": str(exc)})
             consecutive_invalid += 1
@@ -585,6 +638,39 @@ async def _handle_client_message(
         await _send_awaiting_input(session)
         return
 
+    if msg_type == "bardic_inspiration_response":
+        # Issue #53: resumes the single attack roll paused by a
+        # bardic_inspiration_offer (see the BardicChoicePending catch
+        # below). Rejected if nothing is actually pending (a stale/repeated
+        # click) or this connection doesn't control the holder - the same
+        # "derive the actor from server state, not from what the client
+        # claims" discipline the turn-ownership check just above already
+        # applies to ordinary actions.
+        pending = session.pending_bardic_choice
+        if pending is None:
+            await websocket.send_json(
+                {"type": "error", "detail": "No Bardic Inspiration choice is pending."}
+            )
+            return
+        if pending.holder_id not in connection.controlled_character_ids:
+            await websocket.send_json(
+                {"type": "error", "detail": "It is not your Bardic Inspiration choice to make."}
+            )
+            return
+        session.pending_bardic_choice = None
+        # resolve_pending_bardic_choice replicates resolve_action's own
+        # victory-check/turn-advance tail itself (see its own docstring for
+        # why - the original attempt never reached that tail, aborted early
+        # by BardicChoicePending), so game_state is already fully caught up
+        # by the time this broadcasts - no extra turn-advance logic needed
+        # here, same as the ordinary action loop below.
+        narration = _resolve_and_narrate_bardic_choice(session, pending, bool(raw.get("use")))
+        await _broadcast(session, {"type": "narration", "text": narration})
+        await _broadcast(session, _state_update_message(session))
+        await _autoplay_non_human_turns(session)
+        await _send_awaiting_input(session)
+        return
+
     if msg_type in ("player_action", "player_move") and session.game_state.status == "in_progress":
         # Issue #44: with 2+ human seats now possible, nothing before this
         # stopped one player's connection from submitting an action for
@@ -688,6 +774,29 @@ async def _handle_client_message(
         }
         try:
             result = session.graph.invoke(graph_input)
+        except BardicChoicePending as exc:
+            # Issue #53: this single attack roll would miss without the
+            # holder's banked Bardic Inspiration die - pause here instead of
+            # finalizing, and stay paused (skip the trailing autoplay/
+            # awaiting_input below entirely via this early return) until a
+            # bardic_inspiration_response message resumes it. A multi-action
+            # utterance's remaining sub-actions are dropped the same way an
+            # ordinary rejection already drops them (issue #47) - whatever
+            # already resolved stands.
+            session.pending_bardic_choice = exc.choice
+            await _broadcast(
+                session,
+                {
+                    "type": "bardic_inspiration_offer",
+                    "holder": exc.choice.holder_id,
+                    "target": exc.choice.target_id,
+                    "natural": exc.choice.natural,
+                    "total_without_die": exc.choice.total_without_die,
+                    "defender_ac": exc.choice.defender_ac,
+                    "die_sides": exc.choice.die_sides,
+                },
+            )
+            return
         except (TurnEngineError, NotImplementedError) as exc:
             # Caught live, two real cases: (1) a free-text action can name a
             # real-looking but invalid item/spell (e.g. the LLM extracting

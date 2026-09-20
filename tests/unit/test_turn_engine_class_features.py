@@ -16,7 +16,12 @@ from src.engine.encounter import monster_to_character
 from src.engine.position import BattleMap, Position
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
-from src.engine.turn_engine import TurnEngineError, resolve_action
+from src.engine.turn_engine import (
+    BardicChoicePending,
+    TurnEngineError,
+    resolve_action,
+    resolve_pending_bardic_choice,
+)
 
 
 class _FixedRandom:
@@ -979,9 +984,11 @@ def _bard(position: Position | None = None) -> Character:
 
 def test_bardic_inspiration_die_boosts_an_allys_next_attack_roll_once() -> None:
     # Thorin (STR16->mod3, proficient longsword -> attack_bonus 5) vs a
-    # goblin AC15. Natural 8 -> total 13 < 15 -> would normally miss, but
-    # Pip's banked 1d6 rolling 4 pushes it to 17 -> hit. Damage die 5 +
-    # STR mod 3 = 8.
+    # goblin AC15. Natural 8 -> total 13 < 15 -> would miss - issue #53:
+    # this pauses the attack (BardicChoicePending) instead of auto-boosting,
+    # since a single non-Extra-Attack PC swing now lets the holder decide.
+    # Opting in: Pip's banked 1d6 rolling 4 pushes it to 17 -> hit. Damage
+    # die 5 + STR mod 3 = 8.
     pip = _bard(Position(x=0, y=0))
     thorin = _fighter(Position(x=1, y=0))
     goblin = _goblin("goblin_1", Position(x=1, y=0))
@@ -1007,15 +1014,33 @@ def test_bardic_inspiration_die_boosts_an_allys_next_attack_roll_once() -> None:
         item_or_spell="longsword",
         raw_text="I attack",
     )
-    resolve_action(state, attack_action, _FixedRandom([8, 4, 5]))  # type: ignore[arg-type]
+    with pytest.raises(BardicChoicePending) as exc_info:
+        resolve_action(state, attack_action, _FixedRandom([8]))  # type: ignore[arg-type]
+    choice = exc_info.value.choice
+    assert choice.holder_id == "thorin"
+    assert choice.natural == 8
+    assert choice.total_without_die == 13
+    assert choice.defender_ac == 15
+    # The die is untouched while the decision is pending - not yet spent.
+    assert thorin.bardic_inspiration_die == 6
+
+    resolve_pending_bardic_choice(state, choice, True, _FixedRandom([4, 5]), load_srd())  # type: ignore[arg-type]
 
     attack_events = [e for e in state.events if e.type == "attack_roll"]
     assert attack_events[-1].payload["roll_total"] == 17
     assert attack_events[-1].payload["hit"] is True
     assert attack_events[-1].payload["bardic_inspiration_die_sides"] == 6
+    assert thorin.bardic_inspiration_die is None  # now spent
     damage_event = next(e for e in state.events if e.type == "damage_dealt")
     assert damage_event.payload["amount"] == 8
     assert thorin.bardic_inspiration_die is None  # consumed
+    # resolve_pending_bardic_choice replicates resolve_action's own
+    # victory-check/turn-advance tail (the original attempt never reached
+    # it, aborted early by BardicChoicePending) - a real bug caught live
+    # in this same pass: without it, the turn pointer would still show
+    # "thorin" even though his attack (which always ends the turn) had
+    # genuinely finished.
+    assert state.turn_order[state.current_turn] != "thorin"
 
     # A second attack, no fresh inspiration - no more bonus applied.
     state.current_turn = state.turn_order.index("thorin")
@@ -1023,6 +1048,118 @@ def test_bardic_inspiration_die_boosts_an_allys_next_attack_roll_once() -> None:
     second_attack_event = [e for e in state.events if e.type == "attack_roll"][-1]
     assert second_attack_event.payload["roll_total"] == 13  # 8 + 5, no bardic bonus this time
     assert "bardic_inspiration_die_sides" not in second_attack_event.payload
+
+
+def test_declining_the_bardic_offer_finalizes_the_miss_and_keeps_the_die_banked() -> None:
+    # Issue #53: real SRD only spends the die the moment it's actually
+    # added to a roll - declining costs nothing, the holder can still use
+    # it on a later roll this same encounter.
+    pip = _bard(Position(x=0, y=0))
+    thorin = _fighter(Position(x=1, y=0))
+    goblin = _goblin("goblin_1", Position(x=1, y=0))
+    state = _make_state(pip, thorin, goblin)
+    resolve_action(
+        state,
+        ParsedAction(actor="pip", verb="bardic_inspiration", target="thorin", raw_text="x"),
+        _FixedRandom([]),  # type: ignore[arg-type]
+    )
+    state.current_turn = state.turn_order.index("thorin")
+    attack_action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", item_or_spell="longsword", raw_text="x"
+    )
+    with pytest.raises(BardicChoicePending) as exc_info:
+        resolve_action(state, attack_action, _FixedRandom([8]))  # type: ignore[arg-type]
+    choice = exc_info.value.choice
+
+    resolve_pending_bardic_choice(state, choice, False, _FixedRandom([]), load_srd())  # type: ignore[arg-type]
+
+    attack_events = [e for e in state.events if e.type == "attack_roll"]
+    assert attack_events[-1].payload["roll_total"] == 13
+    assert attack_events[-1].payload["hit"] is False
+    assert "bardic_inspiration_die_sides" not in attack_events[-1].payload
+    assert thorin.bardic_inspiration_die == 6  # still banked, not spent
+    # The miss still ends the turn, same as any other attack - declining
+    # doesn't leave the turn pointer stuck.
+    assert state.turn_order[state.current_turn] != "thorin"
+
+
+def test_bardic_offer_not_made_on_a_natural_1_no_bonus_could_fix_it() -> None:
+    pip = _bard(Position(x=0, y=0))
+    thorin = _fighter(Position(x=1, y=0))
+    goblin = _goblin("goblin_1", Position(x=1, y=0))
+    state = _make_state(pip, thorin, goblin)
+    resolve_action(
+        state,
+        ParsedAction(actor="pip", verb="bardic_inspiration", target="thorin", raw_text="x"),
+        _FixedRandom([]),  # type: ignore[arg-type]
+    )
+    state.current_turn = state.turn_order.index("thorin")
+    attack_action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", item_or_spell="longsword", raw_text="x"
+    )
+    # No BardicChoicePending raised - a natural 1 always misses regardless
+    # of any bonus, so there's nothing worth offering.
+    resolve_action(state, attack_action, _FixedRandom([1]))  # type: ignore[arg-type]
+    attack_events = [e for e in state.events if e.type == "attack_roll"]
+    assert attack_events[-1].payload["natural"] == 1
+    assert attack_events[-1].payload["hit"] is False
+    assert thorin.bardic_inspiration_die == 6  # untouched, still banked
+
+
+def test_bardic_offer_not_made_when_the_roll_already_hits() -> None:
+    pip = _bard(Position(x=0, y=0))
+    thorin = _fighter(Position(x=1, y=0))
+    goblin = _goblin("goblin_1", Position(x=1, y=0))
+    state = _make_state(pip, thorin, goblin)
+    resolve_action(
+        state,
+        ParsedAction(actor="pip", verb="bardic_inspiration", target="thorin", raw_text="x"),
+        _FixedRandom([]),  # type: ignore[arg-type]
+    )
+    state.current_turn = state.turn_order.index("thorin")
+    attack_action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", item_or_spell="longsword", raw_text="x"
+    )
+    # Natural 14 -> total 19 >= AC 15, already a hit - no need to offer,
+    # the die is never touched.
+    resolve_action(state, attack_action, _FixedRandom([14, 5]))  # type: ignore[arg-type]
+    attack_events = [e for e in state.events if e.type == "attack_roll"]
+    assert attack_events[-1].payload["hit"] is True
+    assert "bardic_inspiration_die_sides" not in attack_events[-1].payload
+    assert thorin.bardic_inspiration_die == 6  # never spent
+
+
+def test_extra_attack_eligible_pc_still_auto_applies_the_die_immediately() -> None:
+    # Issue #53's own documented scope narrowing: the pause-and-ask is only
+    # offered for a plain single swing. A level-5+ Fighter/Barbarian/
+    # Paladin/Ranger's Extra Attack still auto-applies the die on the first
+    # roll that needs it, exactly like every attack roll behaved before
+    # this issue - no BardicChoicePending here.
+    pip = _bard(Position(x=0, y=0))
+    thorin = _fighter(Position(x=1, y=0))
+    thorin.level = 5  # Extra Attack eligible
+    goblin = _goblin("goblin_1", Position(x=1, y=0))
+    state = _make_state(pip, thorin, goblin)
+    resolve_action(
+        state,
+        ParsedAction(actor="pip", verb="bardic_inspiration", target="thorin", raw_text="x"),
+        _FixedRandom([]),  # type: ignore[arg-type]
+    )
+    state.current_turn = state.turn_order.index("thorin")
+    attack_action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", item_or_spell="longsword", raw_text="x"
+    )
+    # First swing: natural 8 -> 13, misses without the die - auto-boosted
+    # by the banked 1d6 (rolling 4) to 17, a hit, exactly like the
+    # pre-issue-#53 behavior (damage die 5). Second swing (Extra Attack):
+    # natural 10 -> 15, hits (AC 15 exactly), no die left to apply (damage
+    # die 3).
+    resolve_action(state, attack_action, _FixedRandom([8, 4, 5, 10, 3]))  # type: ignore[arg-type]
+    attack_events = [e for e in state.events if e.type == "attack_roll"]
+    assert len(attack_events) == 2
+    assert attack_events[0].payload["roll_total"] == 17
+    assert attack_events[0].payload["bardic_inspiration_die_sides"] == 6
+    assert thorin.bardic_inspiration_die is None
 
 
 def test_bardic_inspiration_rejects_targeting_self() -> None:

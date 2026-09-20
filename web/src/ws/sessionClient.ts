@@ -108,6 +108,18 @@ export interface CombatSummary {
   attacks: CombatAttackSummary[]
 }
 
+// Issue #53: mirrors the bardic_inspiration_offer server message exactly -
+// pulled out as its own named type so LivePlay.tsx can type its prompt UI
+// against it without repeating the shape inline.
+export interface BardicInspirationOffer {
+  holder: string
+  target: string
+  natural: number
+  total_without_die: number
+  defender_ac: number
+  die_sides: number
+}
+
 export type TerrainType = 'floor' | 'wall' | 'difficult' | 'hazard'
 
 export interface LiveBattleMap {
@@ -161,6 +173,13 @@ type ServerMessage =
   // isn't left guessing why the game is paused on a character's turn.
   | { type: 'player_disconnected'; actor: string }
   | { type: 'player_reconnected'; actor: string }
+  // Issue #53: an attack roll paused waiting for its Bardic Inspiration
+  // holder to decide whether to spend their banked die - broadcast to
+  // everyone (so the rest of the party sees why play is paused), but only
+  // the holder's own connection can actually answer (see
+  // sendBardicInspirationResponse and the server's own authorization
+  // check).
+  | ({ type: 'bardic_inspiration_offer' } & BardicInspirationOffer)
 
 export interface NarrationEntry {
   text: string
@@ -198,7 +217,7 @@ export interface NarrationEntry {
 // e.g. companion/monster turns auto-playing after the human's own action);
 // an isolated entry that arrives on its own still reveals immediately, see
 // drainNext's "queue empty after this one" branch below.
-const ENTRY_REVEAL_DELAY_MS = 3000
+const ENTRY_REVEAL_DELAY_MS = 8000
 
 export function useSessionSocket(sessionId: string) {
   const [gameState, setGameState] = useState<LiveGameState | null>(null)
@@ -207,6 +226,7 @@ export function useSessionSocket(sessionId: string) {
   const [logCaughtUp, setLogCaughtUp] = useState(true)
   const [sceneImageUrl, setSceneImageUrl] = useState<string | null>(null)
   const [awaitingActor, setAwaitingActor] = useState<string | null>(null)
+  const [bardicOffer, setBardicOffer] = useState<BardicInspirationOffer | null>(null)
   // Issue #46: character ids whose player is currently disconnected - reset
   // on every fresh connect (a stale "so-and-so disconnected" banner
   // shouldn't survive this client's own reconnect, which starts blind to
@@ -249,6 +269,7 @@ export function useSessionSocket(sessionId: string) {
     lastRevealTimeRef.current = -Infinity
     setLogCaughtUp(true)
     setDisconnectedActors([])
+    setBardicOffer(null)
 
     // Paces the queue by real elapsed time since the last reveal, not by
     // whether the queue happened to look empty at the instant a new entry
@@ -387,6 +408,9 @@ export function useSessionSocket(sessionId: string) {
         case 'player_reconnected':
           setDisconnectedActors((prev) => prev.filter((id) => id !== message.actor))
           break
+        case 'bardic_inspiration_offer':
+          setBardicOffer(message)
+          break
       }
     }
 
@@ -425,6 +449,16 @@ export function useSessionSocket(sessionId: string) {
     setError(null)
   }
 
+  // Issue #53: clears bardicOffer optimistically the moment an answer is
+  // sent (same "don't wait for the round trip" pattern sendPlayerAction
+  // already uses for awaitingActor) - the server's own narration/
+  // state_update that follows doesn't re-send or clear it itself.
+  function sendBardicInspirationResponse(use: boolean) {
+    wsRef.current?.send(JSON.stringify({ type: 'bardic_inspiration_response', use }))
+    setBardicOffer(null)
+    setError(null)
+  }
+
   return {
     gameState,
     combatSummaries,
@@ -433,11 +467,13 @@ export function useSessionSocket(sessionId: string) {
     sceneImageUrl,
     awaitingActor,
     disconnectedActors,
+    bardicOffer,
     error,
     connected,
     sendPlayerAction,
     sendPlayerMove,
     sendRest,
     sendContinueCampaign,
+    sendBardicInspirationResponse,
   }
 }

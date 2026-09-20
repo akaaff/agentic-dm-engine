@@ -126,12 +126,13 @@ from dataclasses import dataclass, field, replace
 from src.engine.actions import ParsedAction
 from src.engine.character_creation import SPELLS_KNOWN_BY_LEVEL, is_eligible_for_extra_attack
 from src.engine.conditions import apply_condition, has_condition, remove_condition, tick_conditions
-from src.engine.dice import roll
+from src.engine.dice import RollResult, roll
 from src.engine.encounter import monster_to_character
 from src.engine.events import Event
 from src.engine.movement import can_afford_move, move_cost_feet
 from src.engine.position import Position, distance_feet
 from src.engine.rules import (
+    AttackResult,
     ability_check_modifier,
     ability_modifier,
     apply_damage,
@@ -231,6 +232,52 @@ SPELL_SLOTS_BY_LEVEL in character_creation.py)."""
 
 class TurnEngineError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class PendingBardicChoice:
+    """Issue #53: everything needed to resume a single attack roll once the
+    Bardic Inspiration holder decides whether to spend their banked die -
+    captured the instant a probe roll (made WITHOUT the die) comes back a
+    miss that isn't a natural 1 (a natural 1 is an automatic miss no bonus
+    can fix, so there's nothing to offer). Deliberately scoped to a PC's
+    single, non-Extra-Attack `attack` action (see _resolve_attack's own
+    `defer_bardic_choice` wiring) - Extra Attack/Multiattack/spell attacks
+    still auto-apply the die immediately, exactly as before this issue, a
+    documented narrowing rather than threading the pause through every
+    attack-roll call site in one pass."""
+
+    holder_id: str
+    target_id: str
+    natural: int
+    total_without_die: int
+    defender_ac: int
+    die_sides: int
+    damage_dice_count: int
+    damage_dice_sides: int
+    damage_bonus: int
+    damage_type: str
+    source_name: str
+    attack_bonus_breakdown: list[tuple[str, int]]
+    force_critical: bool
+    is_finesse_or_ranged: bool
+    had_advantage: bool
+    smite_slot_level: int | None = None
+
+
+class BardicChoicePending(Exception):  # noqa: N818 - a control-flow signal, not an error
+    """Raised instead of finalizing an attack roll when the actor holds a
+    Bardic Inspiration die and the roll (without it) would otherwise miss -
+    caught specifically in api/ws/session.py, which stores `.choice` on the
+    Session, sends the offer to whichever connection controls the holder,
+    and pauses the turn loop until a bardic_inspiration_response message
+    resumes it via resolve_pending_bardic_choice. Not a TurnEngineError:
+    this isn't a rejection, so it must never be caught by the generic
+    "something went wrong" handling every other action rejection uses."""
+
+    def __init__(self, choice: PendingBardicChoice) -> None:
+        super().__init__("Bardic Inspiration choice pending")
+        self.choice = choice
 
 
 def parse_dice_notation(notation: str) -> tuple[int, int, int]:
@@ -656,11 +703,20 @@ def _resolve_single_attack(
     params: AttackParams,
     rng: random.Random,
     srd: SrdIndex,
+    defer_bardic_choice: bool = False,
 ) -> None:
     """One full attack roll (range check through hit/damage/downing) against
     `target` - the body every single `attack` action resolves, and what a
     Multiattack action (Phase 9F, see _resolve_multiattack) calls once per
-    named sub-attack within the same turn."""
+    named sub-attack within the same turn.
+
+    `defer_bardic_choice` (issue #53, default False so every pre-existing
+    caller - Multiattack, Extra Attack's own loop, monster attacks, spell
+    attacks - keeps the original "auto-apply the die immediately" behavior
+    unchanged): when True and the actor holds a Bardic Inspiration die, a
+    roll that would miss without the die raises BardicChoicePending instead
+    of finalizing, letting the holder decide whether to spend it - see
+    PendingBardicChoice's own docstring for the full reasoning and scope."""
     # Caught live: a combat grid can show attacker and target several
     # squares apart while a melee attack still resolved as a hit - this
     # engine never checked range at all. Beyond the weapon/action's max
@@ -726,6 +782,65 @@ def _resolve_single_attack(
     # it on.
     bardic_die_sides = actor.bardic_inspiration_die
 
+    disadvantage = (
+        target.is_dodging
+        or has_non_proficient_armor(actor, srd)
+        or long_range_disadvantage
+        or engaged_disadvantage
+        or condition_attack_disadvantage(actor, target, distance)
+    )
+
+    if defer_bardic_choice and bardic_die_sides:
+        # Probe: roll WITHOUT the die first - this genuinely is the roll
+        # (real RNG draws, not a discardable peek), just not yet decided
+        # whether the die gets added to it.
+        probe = resolve_attack(
+            defender_ac=target.ac,
+            attack_bonus=params.attack_bonus,
+            damage_dice_count=params.damage_dice_count,
+            damage_dice_sides=params.damage_dice_sides,
+            damage_bonus=params.damage_bonus,
+            damage_type=params.damage_type,
+            rng=rng,
+            advantage=advantage,
+            disadvantage=disadvantage,
+            force_critical=already_unconscious,
+            lucky=has_lucky_trait(actor),
+        )
+        natural = probe.attack_roll.kept[0]
+        if not probe.hit and natural != 1:
+            # A miss the die could still turn into a hit - pause here
+            # instead of finalizing; api/ws/session.py catches this,
+            # offers the choice to whoever controls the holder, and
+            # resumes via resolve_pending_bardic_choice once they answer.
+            raise BardicChoicePending(
+                PendingBardicChoice(
+                    holder_id=actor.id,
+                    target_id=target.id,
+                    natural=natural,
+                    total_without_die=probe.attack_roll.total,
+                    defender_ac=target.ac,
+                    die_sides=bardic_die_sides,
+                    damage_dice_count=params.damage_dice_count,
+                    damage_dice_sides=params.damage_dice_sides,
+                    damage_bonus=params.damage_bonus,
+                    damage_type=params.damage_type,
+                    source_name=params.source_name,
+                    attack_bonus_breakdown=params.attack_bonus_breakdown,
+                    force_critical=already_unconscious,
+                    is_finesse_or_ranged=params.is_finesse_or_ranged,
+                    had_advantage=advantage,
+                    smite_slot_level=params.smite_slot_level,
+                )
+            )
+        # Already a hit, or a natural 1 the die couldn't have fixed anyway -
+        # nothing to offer, finalize with this real roll. The die stays
+        # banked (never added, never consumed) for a future roll.
+        _finalize_attack_result(
+            state, actor, target, params, probe, advantage, already_unconscious, None, rng, srd
+        )
+        return
+
     result = resolve_attack(
         defender_ac=target.ac,
         attack_bonus=params.attack_bonus,
@@ -735,18 +850,47 @@ def _resolve_single_attack(
         damage_type=params.damage_type,
         rng=rng,
         advantage=advantage,
-        disadvantage=target.is_dodging
-        or has_non_proficient_armor(actor, srd)
-        or long_range_disadvantage
-        or engaged_disadvantage
-        or condition_attack_disadvantage(actor, target, distance),
+        disadvantage=disadvantage,
         force_critical=already_unconscious,
         lucky=has_lucky_trait(actor),
         bardic_die_sides=bardic_die_sides,
     )
     if bardic_die_sides:
         actor.bardic_inspiration_die = None
+    _finalize_attack_result(
+        state,
+        actor,
+        target,
+        params,
+        result,
+        advantage,
+        already_unconscious,
+        bardic_die_sides,
+        rng,
+        srd,
+    )
 
+
+def _finalize_attack_result(
+    state: GameState,
+    actor: Character,
+    target: Character,
+    params: AttackParams,
+    result: AttackResult,
+    advantage: bool,
+    already_unconscious: bool,
+    bardic_die_sides: int | None,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """The event/Sneak-Attack/Smite/damage/unconscious-death-save tail every
+    attack roll ends with, regardless of whether it got here via the normal
+    synchronous path or issue #53's resume-after-a-Bardic-Inspiration-
+    choice path - extracted so the two can never drift, the same "one real
+    implementation, not two copies that happen to agree" precedent this
+    project always follows for a shared tail. `bardic_die_sides` is only
+    non-None when the die was actually added to this specific roll (for the
+    event payload/narration), not merely available."""
     state.events.append(
         Event(
             round=state.round,
@@ -825,6 +969,114 @@ def _resolve_single_attack(
     # function was split out of a single, non-reusable _resolve_attack body.
     if result.hit and already_unconscious and target.is_pc and not target.is_dead:
         _apply_unconscious_hit_death_save_failures(state, target)
+
+
+def resolve_pending_bardic_choice(
+    state: GameState,
+    choice: PendingBardicChoice,
+    use_die: bool,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """Issue #53: resumes a single attack roll that paused waiting for the
+    Bardic Inspiration holder's decision (see BardicChoicePending). Declining
+    finalizes the already-known miss exactly as it was, at no cost - the die
+    stays banked, since real SRD only spends it the moment it's actually
+    added to a roll. Accepting rolls the die fresh (a real, new RNG draw
+    made now, not reused from the original probe - the probe deliberately
+    never rolled it at all) and rebuilds an AttackResult from the boosted
+    total, then hands off to the exact same _finalize_attack_result every
+    other attack roll in this engine ends through - Sneak Attack, Divine
+    Smite, damage, and the unconscious-hit death-save rule all still apply
+    normally if the die turns this into a hit, with no separate copy of
+    that logic to keep in sync."""
+    actor = state.characters[choice.holder_id]
+    target = state.characters[choice.target_id]
+    params = AttackParams(
+        attack_bonus=0,  # unused below - the roll already happened
+        damage_dice_count=choice.damage_dice_count,
+        damage_dice_sides=choice.damage_dice_sides,
+        damage_bonus=choice.damage_bonus,
+        damage_type=choice.damage_type,
+        source_name=choice.source_name,
+        range_normal_feet=0,  # unused - range was already validated during the probe
+        range_long_feet=None,
+        is_finesse_or_ranged=choice.is_finesse_or_ranged,
+        attack_bonus_breakdown=choice.attack_bonus_breakdown,
+        smite_slot_level=choice.smite_slot_level,
+    )
+
+    if not use_die:
+        roll_result = RollResult(
+            dice=[choice.natural], kept=[choice.natural], modifier=0, total=choice.total_without_die
+        )
+        result = AttackResult(
+            attack_roll=roll_result, hit=False, critical=False, damage=None, damage_type=None
+        )
+        _finalize_attack_result(
+            state,
+            actor,
+            target,
+            params,
+            result,
+            choice.had_advantage,
+            choice.force_critical,
+            None,
+            rng,
+            srd,
+        )
+    else:
+        actor.bardic_inspiration_die = None
+        bonus = rng.randint(1, choice.die_sides)
+        total = choice.total_without_die + bonus
+        hit = total >= choice.defender_ac
+        roll_result = RollResult(
+            dice=[choice.natural], kept=[choice.natural], modifier=0, total=total
+        )
+        if not hit:
+            result = AttackResult(
+                attack_roll=roll_result, hit=False, critical=False, damage=None, damage_type=None
+            )
+        else:
+            # A natural 20 always already hit on the probe roll (before the
+            # die was even offered), so it never reaches this branch -
+            # force_critical here is purely the pre-existing "already
+            # unconscious" auto-crit rule.
+            critical = choice.force_critical
+            dice_count = choice.damage_dice_count * 2 if critical else choice.damage_dice_count
+            damage_roll = roll(
+                dice_count, choice.damage_dice_sides, modifier=choice.damage_bonus, rng=rng
+            )
+            result = AttackResult(
+                attack_roll=roll_result,
+                hit=True,
+                critical=critical,
+                damage=max(0, damage_roll.total),
+                damage_type=choice.damage_type,
+            )
+        _finalize_attack_result(
+            state,
+            actor,
+            target,
+            params,
+            result,
+            choice.had_advantage,
+            choice.force_critical,
+            choice.die_sides,
+            rng,
+            srd,
+        )
+
+    # Issue #53: this call sits outside resolve_action's own dispatch (the
+    # original attempt was fully aborted by BardicChoicePending before its
+    # tail ever ran - see resolve_action's own victory-check/turn-advance
+    # lines at the very end of its dispatch), so this resume needs to
+    # replicate that same tail itself. An `attack` action always ends the
+    # turn (never one of the bonus-action-verb exceptions), so there's no
+    # ends_turn branching to reproduce here, just the two calls themselves.
+    _check_victory_defeat(state)
+    if state.status == "in_progress":
+        _advance_turn_skipping_dead(state)
 
 
 def _apply_unconscious_hit_death_save_failures(state: GameState, target: Character) -> None:
@@ -924,10 +1176,18 @@ def _resolve_attack(
     # first - _resolve_single_attack only actually spends/rolls it if that
     # specific swing hits and a slot is still available at that moment.
     num_attacks = 2 if is_eligible_for_extra_attack(actor) else 1
+    # Issue #53: the Bardic-Inspiration pause-and-ask is only offered for a
+    # plain single swing (num_attacks == 1) - an Extra-Attack-eligible PC's
+    # two rolls still auto-apply the die immediately on the first one that
+    # needs it, a documented, narrower scope for this first pass (see
+    # PendingBardicChoice's own docstring).
+    defer_bardic_choice = num_attacks == 1
     for _ in range(num_attacks):
         if target.is_dead:
             return
-        _resolve_single_attack(state, actor, target, params, rng, srd)
+        _resolve_single_attack(
+            state, actor, target, params, rng, srd, defer_bardic_choice=defer_bardic_choice
+        )
 
 
 def _resolve_offhand_attack(

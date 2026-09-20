@@ -23,12 +23,14 @@ export default function LivePlay({
     sceneImageUrl,
     awaitingActor,
     disconnectedActors,
+    bardicOffer,
     error,
     connected,
     sendPlayerAction,
     sendPlayerMove,
     sendRest,
     sendContinueCampaign,
+    sendBardicInspirationResponse,
   } = useSessionSocket(sessionId)
   const [draft, setDraft] = useState('')
   // Issue #38: a per-viewer convenience toggle (localStorage, not shared
@@ -174,6 +176,34 @@ export default function LivePlay({
           actorColors={actorColors}
           debugMode={debugMode}
         />
+        {bardicOffer && bardicOffer.holder === myCharacterId && (
+          // Issue #53: the recipient's own choice - shown only to the
+          // connection controlling the holder (the server broadcasts the
+          // offer to everyone so the rest of the party sees why play is
+          // paused, but only this connection can actually answer it - see
+          // the informational-only branch just below for everyone else).
+          <div className="bardic-inspiration-offer">
+            <p>
+              Your attack rolled <strong>{bardicOffer.natural}</strong> (total{' '}
+              {bardicOffer.total_without_die} vs AC {bardicOffer.defender_ac}) - a miss. Spend your
+              Bardic Inspiration (1d{bardicOffer.die_sides}) to try to turn it into a hit?
+            </p>
+            <div className="bardic-inspiration-offer-buttons">
+              <button type="button" onClick={() => sendBardicInspirationResponse(true)}>
+                Use it
+              </button>
+              <button type="button" onClick={() => sendBardicInspirationResponse(false)}>
+                Save it
+              </button>
+            </div>
+          </div>
+        )}
+        {bardicOffer && bardicOffer.holder !== myCharacterId && (
+          <p className="companion-meta">
+            {characters?.[bardicOffer.holder]?.name ?? bardicOffer.holder} is deciding whether to
+            spend their Bardic Inspiration...
+          </p>
+        )}
         {resourceQuickActions.length > 0 && (
           // Issue #27: a prominent, actionable callout - not the passive
           // sidebar stat list - naming exactly what to type. Clicking fills
