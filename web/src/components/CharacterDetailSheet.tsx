@@ -295,12 +295,10 @@ export default function CharacterDetailSheet({
           <ul className="detail-action-list">
             {resourceEntries.map(([key, remaining]) => (
               <li key={key} className={remaining <= 0 ? 'detail-action-unavailable' : ''}>
-                <div>
-                  {resourceLabel(key)}: {remaining} remaining
-                  {key === 'rage' && character.is_raging && ' (already raging)'}
-                  {character.bonus_action_used && ' - bonus action already used this turn'}
-                </div>
-                {resourceHint(key) && <div className="spell-hint">{resourceHint(key)}</div>}
+                {resourceLabel(key)}: {remaining} remaining
+                {key === 'rage' && character.is_raging && ' (already raging)'}
+                {character.bonus_action_used && ' - bonus action already used this turn'}
+                {resourceHint(key) && <InfoTip text={resourceHint(key) as string} />}
               </li>
             ))}
           </ul>
