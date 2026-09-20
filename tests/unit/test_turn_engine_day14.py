@@ -173,21 +173,25 @@ def test_cast_spell_rejects_still_unsupported_no_roll_spells() -> None:
     # spells, and issue #35 added Magic Missile specifically (an explicit
     # allowlist entry - see rules.spell_mechanic/_AUTO_HIT_SPELLS), so
     # neither sacred flame (dc-based) nor magic missile are valid cases for
-    # this regression any more. scorching-ray shares Magic Missile's exact
-    # field shape (has `damage`, no `attack_type`/`dc`/`heal_at_slot_level`)
-    # but is a real 3-ray attack-roll spell whose vendored SRD entry simply
-    # lacks the attack_type field - confirmed directly against load_srd(),
-    # not assumed - so it must stay correctly unsupported rather than
-    # silently auto-hitting via the same field-shape inference Magic
-    # Missile's allowlist deliberately avoids.
+    # this regression any more. scorching-ray used to be this test's own
+    # case (shared Magic Missile's exact field shape but was a real
+    # attack-roll spell the vendored data just didn't tag) - issue #55
+    # fixed it via _ATTACK_TYPE_OVERRIDES, so it's genuinely supported now
+    # and no longer a valid "still unsupported" case. flaming-sphere shares
+    # the identical field shape (has `damage`, no `attack_type`/`dc`/
+    # `heal_at_slot_level`) but is a move-and-ram hazard spell, not a plain
+    # attack-roll or save-for-half one - confirmed directly against
+    # load_srd(), still correctly unsupported rather than silently
+    # auto-hitting via the same field-shape inference Magic Missile's
+    # allowlist deliberately avoids.
     state = _build_demo_state(_INITIATIVE)
     _end_turn(state, "thorin")
     action = ParsedAction(
         actor="elrond",
         verb="cast_spell",
         target="goblin_1",
-        item_or_spell="scorching ray",
-        raw_text="I cast scorching ray",
+        item_or_spell="flaming sphere",
+        raw_text="I cast flaming sphere",
     )
     with pytest.raises(TurnEngineError, match="not supported"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]

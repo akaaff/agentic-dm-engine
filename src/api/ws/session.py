@@ -349,6 +349,8 @@ def _combat_summaries(session: Session) -> dict[str, object]:
             character.class_index,
             wis_mod,
             con_mod,
+            character.mage_armor_active,
+            character.temporary_ac_bonus,
         )
         attacks = current_attack_summaries(character, session.srd)
         summaries[character.id] = {

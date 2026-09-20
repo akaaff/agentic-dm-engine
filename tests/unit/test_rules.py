@@ -415,12 +415,19 @@ def test_spell_mechanic_does_not_auto_hit_spells_that_merely_lack_the_fields() -
     # shape (has `damage`, no `attack_type`/`dc`/`heal_at_slot_level`) but
     # are genuine attack-roll/save spells whose vendored entry simply lacks
     # that field - not real no-roll effects. Confirmed directly against
-    # load_srd() rather than assumed; must stay None (unsupported), not
-    # silently become "auto_hit", since _AUTO_HIT_SPELLS is an explicit
-    # allowlist rather than inferred from field absence.
+    # load_srd() rather than assumed; must never silently become
+    # "auto_hit", since _AUTO_HIT_SPELLS is an explicit allowlist rather
+    # than inferred from field absence.
     srd = load_srd()
-    assert spell_mechanic(srd.spells["scorching-ray"]) is None
-    assert spell_mechanic(srd.spells["call-lightning"]) is None
+    # scorching-ray/call-lightning are now correctly classified via the
+    # _ATTACK_TYPE_OVERRIDES/_DC_OVERRIDES tables (issue #55) - confirmed
+    # attack-roll/save spells respectively, not auto_hit either way.
+    assert spell_mechanic(srd.spells["scorching-ray"]) == "attack"
+    assert spell_mechanic(srd.spells["call-lightning"]) == "save"
+    # flaming-sphere shares the same field shape but is neither an
+    # attack-roll nor a plain save-for-half spell (it's a move-and-ram
+    # hazard, more complex than either override table models) - stays
+    # unsupported (None), not auto_hit.
     assert spell_mechanic(srd.spells["flaming-sphere"]) is None
 
 

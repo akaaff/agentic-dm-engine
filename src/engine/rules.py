@@ -248,33 +248,116 @@ confirming directly (like Magic Missile was) that it truly has no roll in
 real SRD text, not just because it happens to lack these two fields."""
 
 
+_ATTACK_TYPE_OVERRIDES = {"scorching-ray", "flame-blade"}
+"""Issue #55 (spell audit, bucket 2): real attack-roll spells confirmed
+directly against their own `desc` text ("Make a ranged spell attack for
+each ray" / "make a melee spell attack with the fiery blade") whose
+vendored SRD entry simply omits `attack_type` - the same data-gap shape
+_AUTO_HIT_SPELLS already documents for scorching-ray specifically (issue
+#35's own writeup flagged this exact spell once, never separately fixed).
+Deliberately a per-spell allowlist, not inferred from "has `damage`" -
+other spells share that shape without being attack-roll spells at all
+(e.g. flaming-sphere and branding-smite, checked directly and found to be
+a save-based hazard and a banked weapon-damage buff respectively, not
+attack-roll spells - do not add them here)."""
+
+_DC_OVERRIDES: dict[str, SrdEntry] = {
+    "call-lightning": {"dc_type": {"index": "dex"}, "dc_success": "half"},
+}
+"""Issue #55: real save-based spells confirmed directly against their own
+`desc` text ("must make a dexterity saving throw... half as much damage on
+a successful one") whose vendored entry omits the structured `dc` field -
+same data-gap shape as _ATTACK_TYPE_OVERRIDES above, just for the "save"
+mechanic instead of "attack". Shaped to match `spell["dc"]`'s own real
+structure exactly (`_spell_save_params` reads `dc_info["dc_type"]["index"]`/
+`dc_info["dc_success"]`) so a caller can substitute this in wherever the
+real field would have been, with no other code path changes."""
+
+
+@dataclass(frozen=True)
+class ConditionSpellSpec:
+    condition: ConditionName
+    duration_rounds: int | None
+    """1 minute (a common real-SRD buff duration) -> 10 combat rounds (6s
+    each). None means "until removed by something else" - not used by any
+    entry here yet, but left open for a future one that genuinely has no
+    duration to tick down (e.g. an instantaneous effect with a lingering
+    condition)."""
+
+
+_CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
+    "invisibility": ConditionSpellSpec(condition="invisible", duration_rounds=10),
+    "greater-invisibility": ConditionSpellSpec(condition="invisible", duration_rounds=10),
+}
+"""Issue #55 spell audit (bucket 4's "general condition mechanic" - see
+#54): spells whose entire real effect is "apply this existing ConditionName
+to a willing target for a while," reusing the condition machinery
+(conditions.apply_condition, already-wired mechanical effects like
+condition_attack_advantage/disadvantage) rather than inventing a second
+one. Deliberately narrow - a full 25-spell table wasn't built in one pass;
+this is the first, representative slice (both spells map onto the exact
+same already-fully-wired "invisible" condition) with the mechanism proven
+out so more entries are now a cheap, low-risk table addition, not new
+plumbing. No save modeled: every spell here is a beneficial buff cast on a
+willing ally (or the caster), matching real SRD's own "willing creature"
+targeting - there's nothing to resist. Debuffs with a save already have
+their own real mechanic ("save", via `dc`), not this one."""
+
+
 def spell_mechanic(spell: SrdEntry) -> str | None:
-    """Classifies a spell into one of the four mechanics cast_spell
-    resolves: "attack" (SRD `attack_type` present - e.g. Fire Bolt, Guiding
-    Bolt), "save" (`dc` present - e.g. Fireball, Hold Person), "heal"
-    (`heal_at_slot_level` present - e.g. Cure Wounds), or "auto_hit" (an
+    """Classifies a spell into one of the five mechanics cast_spell
+    resolves: "attack" (SRD `attack_type` present, or in
+    _ATTACK_TYPE_OVERRIDES - e.g. Fire Bolt, Guiding Bolt), "save" (`dc`
+    present, or in _DC_OVERRIDES - e.g. Fireball, Hold Person), "heal"
+    (`heal_at_slot_level` present - e.g. Cure Wounds), "auto_hit" (an
     explicit allowlist - see _AUTO_HIT_SPELLS - for a no-roll spell like
-    Magic Missile). Checked in this order since a real SRD spell only ever
-    has one of the first three shapes (confirmed by inspecting several of
-    each directly via load_srd()); auto_hit is checked last since an
-    allowlisted spell has none of the other fields anyway. None for
-    anything else - a pure buff/utility spell, or a spell whose real SRD
+    Magic Missile), or "condition" (an explicit allowlist - see
+    _CONDITION_SPELLS - for a spell that just applies an existing
+    ConditionName, e.g. Invisibility). Checked in this order since a real
+    SRD spell only ever has one of the first three shapes (confirmed by
+    inspecting several of each directly via load_srd()); auto_hit/condition
+    are checked last since an allowlisted spell has none of the other
+    fields anyway. None for anything else - a pure buff/utility spell this
+    project hasn't built a mechanic for yet, or a spell whose real SRD
     mechanic (attack/save) the vendored data doesn't structurally capture
-    - still out of scope for cast_spell to resolve. Moved here from
-    turn_engine (issue #22) so monster_ai's innate-spell selection can
-    share the same classification a PC's/monster's actual cast later uses,
-    rather than a second, potentially drifting copy - this module has no
-    TurnEngineError of its own, so a caller that needs a resolved spell
-    (not just a probe) raises its own clear rejection for None."""
-    if spell.get("attack_type"):
+    and hasn't been confirmed/added to the override tables above - still
+    out of scope for cast_spell to resolve. Moved here from turn_engine
+    (issue #22) so monster_ai's innate-spell selection can share the same
+    classification a PC's/monster's actual cast later uses, rather than a
+    second, potentially drifting copy - this module has no TurnEngineError
+    of its own, so a caller that needs a resolved spell (not just a probe)
+    raises its own clear rejection for None."""
+    if spell.get("attack_type") or spell.get("index") in _ATTACK_TYPE_OVERRIDES:
         return "attack"
-    if spell.get("dc"):
+    if spell.get("dc") or spell.get("index") in _DC_OVERRIDES:
         return "save"
     if spell.get("heal_at_slot_level"):
         return "heal"
     if spell.get("index") in _AUTO_HIT_SPELLS:
         return "auto_hit"
+    if spell.get("index") in _CONDITION_SPELLS:
+        return "condition"
     return None
+
+
+def condition_spell_spec(spell: SrdEntry) -> ConditionSpellSpec:
+    """The `_CONDITION_SPELLS` entry for a spell already classified as
+    `spell_mechanic(spell) == "condition"` - kept as a real accessor
+    (rather than importing the private table directly) for the same reason
+    `spell_dc_info` exists for `_DC_OVERRIDES`: callers outside this module
+    shouldn't reach into a leading-underscore name."""
+    return _CONDITION_SPELLS[spell["index"]]
+
+
+def spell_dc_info(spell: SrdEntry) -> SrdEntry:
+    """The real `spell["dc"]` field, or its `_DC_OVERRIDES` substitute when
+    the vendored data omits it - the one place both need to be resolved
+    (spell_mechanic only classifies; this actually hands back the dict a
+    save-spell resolver reads dc_type/dc_success from)."""
+    dc: SrdEntry | None = spell.get("dc")
+    if dc is not None:
+        return dc
+    return _DC_OVERRIDES[spell["index"]]
 
 
 def normalize_spell_name(raw: str) -> str:
@@ -603,6 +686,8 @@ def armor_ac_breakdown(
     class_index: str | None = None,
     wis_mod: int = 0,
     con_mod: int = 0,
+    mage_armor_active: bool = False,
+    temporary_ac_bonus: int = 0,
 ) -> list[tuple[str, int]]:
     """The named components that sum to `armor_ac`'s own return value -
     extracted so the two can never drift (armor_ac is now just
@@ -616,17 +701,32 @@ def armor_ac_breakdown(
     shield and still gain this benefit") had never been implemented at all,
     silently under-computing every Barbarian's AC since this engine only
     ever checked for Monk. `con_mod` defaults to 0 so every pre-existing
-    caller is unaffected. See armor_ac's own docstring for the rest of the
+    caller is unaffected. `mage_armor_active`/`temporary_ac_bonus` (issue
+    #55 spell audit - Mage Armor, Shield of Faith) both default to "no
+    effect" the same way. See armor_ac's own docstring for the rest of the
     rules this reproduces exactly."""
     breakdown: list[tuple[str, int]] = []
 
     armor_item = equipment.get(equipped_armor) if equipped_armor else None
     if armor_item is None:
-        breakdown.append(("base (unarmored)", 10))
+        # Mage Armor (issue #55): 13 + DEX mod instead of the plain 10 +
+        # DEX unarmored base, per its own real SRD text ("while you are
+        # wearing no armor") - checked before Monk/Barbarian's own
+        # Unarmored Defense variants below, since a caster with one of
+        # those class features casting Mage Armor on themselves should get
+        # whichever is actually better, not silently lose their class
+        # feature's bonus to a flat spell effect. Simplification: always
+        # takes the higher of the two rather than genuinely comparing
+        # (documented, not silently assumed - Mage Armor is rare on a
+        # Monk/Barbarian in practice, since neither wants to spend a slot
+        # replacing a class feature that's usually already as good or
+        # better).
+        base = 13 if mage_armor_active else 10
+        breakdown.append(("Mage Armor base" if mage_armor_active else "base (unarmored)", base))
         breakdown.append(("DEX mod", dex_mod))
-        if class_index == "monk" and equipped_shield is None and wis_mod:
+        if class_index == "monk" and equipped_shield is None and wis_mod and not mage_armor_active:
             breakdown.append(("WIS mod (Unarmored Defense)", wis_mod))
-        elif class_index == "barbarian" and con_mod:
+        elif class_index == "barbarian" and con_mod and not mage_armor_active:
             breakdown.append(("CON mod (Unarmored Defense)", con_mod))
     else:
         ac_info = armor_item["armor_class"]
@@ -647,6 +747,9 @@ def armor_ac_breakdown(
     if fighting_style == "defense" and armor_item is not None:
         breakdown.append(("Defense fighting style", 1))
 
+    if temporary_ac_bonus:
+        breakdown.append(("temporary AC bonus", temporary_ac_bonus))
+
     return breakdown
 
 
@@ -659,6 +762,8 @@ def armor_ac(
     class_index: str | None = None,
     wis_mod: int = 0,
     con_mod: int = 0,
+    mage_armor_active: bool = False,
+    temporary_ac_bonus: int = 0,
 ) -> int:
     """AC from a character's two armor slots (issue #13) - the same formula
     character_creation._compute_ac originally computed once at creation by
@@ -685,7 +790,13 @@ def armor_ac(
     same way `wis_mod` does): 10 + DEX mod + CON mod, and *unlike* Monk's
     version a shield does NOT disable it - SRD's literal "you can use a
     shield and still gain this benefit" - so it's checked independently of
-    `equipped_shield`, not gated on it."""
+    `equipped_shield`, not gated on it. Plus Mage Armor (issue #55 spell
+    audit, `mage_armor_active` defaults to False): 13 + DEX mod instead of
+    the plain unarmored base, while genuinely unarmored (armor still wins
+    over it, matching real SRD - casting Mage Armor while already in armor
+    plate does nothing until the armor comes off). Plus a flat
+    `temporary_ac_bonus` (Shield of Faith) added on top of whatever else
+    applies, defaults to 0."""
     return sum(
         value
         for _, value in armor_ac_breakdown(
@@ -697,6 +808,8 @@ def armor_ac(
             class_index,
             wis_mod,
             con_mod,
+            mage_armor_active,
+            temporary_ac_bonus,
         )
     )
 

@@ -142,6 +142,25 @@ class Character(BaseModel):
     ability check or saving throw of the holder's choice - narrowed to
     attack rolls only here (a documented, smaller first cut rather than
     re-threading every d20 call site the way issue #23's Lucky trait did)."""
+    true_strike_advantage: bool = False
+    """True Strike (issue #55 spell audit): grants advantage on this
+    character's own next attack roll, consumed (cleared) the same moment
+    has_help_advantage is - the identical "banked, one-shot, cleared on the
+    next attack" shape, just a flat flag instead of a die (True Strike has
+    no die to roll, just advantage)."""
+    temporary_ac_bonus: int = 0
+    """Shield of Faith (issue #55 spell audit) and any future flat-AC-bonus
+    spell - added on top of armor_ac's own computed total (rules.armor_ac
+    reads this the same way it already reads equipped_armor/shield/
+    fighting_style), cleared when the spell's duration ends (concentration
+    breaking or a round-count expiry - see _resolve_cast_spell's ac_buff
+    branch for how it's set)."""
+    mage_armor_active: bool = False
+    """Mage Armor (issue #55 spell audit): while unarmored, AC becomes
+    13 + DEX mod instead of the plain 10 + DEX mod unarmored base - checked
+    in rules.armor_ac_breakdown alongside Monk/Barbarian's own Unarmored
+    Defense variants. Does nothing while actual armor is worn, matching
+    real SRD ("while you are wearing no armor")."""
     bonus_action_used: bool = False
     """Phase 9H: True once this character has cast a bonus-action spell
     (SRD casting_time "1 bonus action", e.g. Healing Word) this turn.

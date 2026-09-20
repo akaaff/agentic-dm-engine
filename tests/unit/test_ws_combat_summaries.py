@@ -66,6 +66,31 @@ def test_combat_summaries_includes_ac_breakdown_and_attacks_for_a_pc() -> None:
     assert attack["attack_bonus_breakdown"] == [("STR mod", 3), ("proficiency", 2)]
 
 
+def test_combat_summaries_reflects_mage_armor_and_temporary_ac_bonus() -> None:
+    # Live-found (issue #55): the display breakdown here is a SEPARATE
+    # computation from the character's own real `.ac` (turn_engine's
+    # _recompute_ac) - adding mage_armor_active/temporary_ac_bonus to
+    # armor_ac_breakdown's signature didn't automatically mean every call
+    # site passed them. Confirmed live: casting Mage Armor correctly moved
+    # a real character's .ac from 13 to 16, but this endpoint's own
+    # ac_breakdown silently kept showing the old unarmored formula until
+    # this call site was fixed to pass the two new fields too.
+    srd = load_srd()
+    fighter = _fighter()
+    fighter.equipped_armor = None
+    fighter.mage_armor_active = True
+    fighter.temporary_ac_bonus = 2
+    session = _session_with(fighter, srd_index=srd)
+
+    summaries = _combat_summaries(session)
+
+    entry = summaries["thorin"]
+    assert isinstance(entry, dict)
+    breakdown = entry["ac_breakdown"]
+    assert ("Mage Armor base", 13) in breakdown
+    assert ("temporary AC bonus", 2) in breakdown
+
+
 def test_combat_summaries_excludes_monsters() -> None:
     srd = load_srd()
     fighter = _fighter()

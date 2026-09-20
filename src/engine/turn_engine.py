@@ -141,6 +141,7 @@ from src.engine.rules import (
     condition_attack_disadvantage,
     condition_check_disadvantage,
     condition_save_disadvantage,
+    condition_spell_spec,
     effective_speed,
     has_lucky_trait,
     has_non_proficient_armor,
@@ -166,6 +167,7 @@ from src.engine.rules import (
     saving_throw_bonus,
     skill_ability,
     spell_damage_notation,
+    spell_dc_info,
     spell_mechanic,
     spell_range_feet,
     weapon_combo_is_legal,
@@ -701,8 +703,10 @@ def _resolve_single_attack(
         actor.has_help_advantage
         or condition_attack_advantage(actor, target, distance)
         or pack_tactics_advantage
+        or actor.true_strike_advantage
     )
     actor.has_help_advantage = False
+    actor.true_strike_advantage = False
 
     # Phase 9C: per SRD, any hit against an unconscious creature is a
     # critical hit - checked before resolve_attack runs (not after) since it
@@ -1273,6 +1277,26 @@ def _apply_damage_and_handle_downing(
     # substring-matching rationale. int() truncation matches SRD's
     # "resistance halves damage, rounded down" for the 0.5 case.
     damage = int(damage * monster_damage_multiplier(target, damage_type, srd))
+
+    # Sleep (issue #55): unlike the ordinary "downed at 0 HP" unconscious,
+    # which never lifts on its own, a Sleep-induced one ends the instant
+    # the sleeper takes ANY damage, per SRD - checked before apply_damage
+    # mutates HP (this only cares whether real damage landed, not the
+    # resulting HP total) and gated on the distinct _SLEEP_UNCONSCIOUS_
+    # SOURCE tag so this can never fire for the "0 HP"/"hazard" sources
+    # that already use the same "unconscious" condition name.
+    if damage > 0:
+        sleeping = next(
+            (
+                c
+                for c in target.conditions
+                if c.name == "unconscious" and c.source == _SLEEP_UNCONSCIOUS_SOURCE
+            ),
+            None,
+        )
+        if sleeping is not None:
+            remove_condition(target, "unconscious")
+
     actual_loss = apply_damage(target, damage)
 
     # Druid's Wild Shape (issue #24): the beast form, not the Druid's real
@@ -1734,6 +1758,30 @@ def _resolve_rage(state: GameState, actor: Character, rng: random.Random) -> boo
     return False
 
 
+def _recompute_ac(actor: Character, srd: SrdIndex) -> None:
+    """Rebuilds `actor.ac` from every currently-live input - extracted
+    (issue #55 spell audit) since armor_ac's own param list has grown with
+    each new AC-affecting feature (Monk/Barbarian Unarmored Defense, Mage
+    Armor, Shield of Faith...) and every call site needs to pass all of
+    them or silently drop one - a real, easy-to-miss drift risk this
+    collects in one place instead. Called whenever something that could
+    change AC happens after creation: equipping/unequipping armor or a
+    shield, and any spell that sets/clears mage_armor_active or
+    temporary_ac_bonus."""
+    actor.ac = armor_ac(
+        actor.equipped_armor,
+        actor.equipped_shield,
+        ability_modifier(actor.stats["DEX"]),
+        actor.fighting_style,
+        srd.equipment,
+        class_index=actor.class_index,
+        wis_mod=ability_modifier(actor.stats["WIS"]),
+        con_mod=ability_modifier(actor.stats["CON"]),
+        mage_armor_active=actor.mage_armor_active,
+        temporary_ac_bonus=actor.temporary_ac_bonus,
+    )
+
+
 def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd: SrdIndex) -> bool:
     """Phase C: SRD's free "object interaction" to draw/switch weapons -
     changes which of the actor's owned weapons _pc_attack_params will
@@ -1832,17 +1880,7 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
         actor.equipped_shield = resolved_shield
         changed_items.append(resolved_shield)
     if resolved_armor is not None or resolved_shield is not None:
-        dex_mod = ability_modifier(actor.stats["DEX"])
-        actor.ac = armor_ac(
-            actor.equipped_armor,
-            actor.equipped_shield,
-            dex_mod,
-            actor.fighting_style,
-            srd.equipment,
-            class_index=actor.class_index,
-            wis_mod=ability_modifier(actor.stats["WIS"]),
-            con_mod=ability_modifier(actor.stats["CON"]),
-        )
+        _recompute_ac(actor, srd)
 
     actor.equip_used_this_turn = True
     state.events.append(
@@ -2137,8 +2175,13 @@ def _cast_attack_spell_at_target(
     so an attack-roll spell against a downed ally gets the same treatment a
     melee/ranged weapon attack does."""
     distance = distance_feet(actor.position, target.position)
-    advantage = actor.has_help_advantage or condition_attack_advantage(actor, target, distance)
+    advantage = (
+        actor.has_help_advantage
+        or condition_attack_advantage(actor, target, distance)
+        or actor.true_strike_advantage
+    )
     actor.has_help_advantage = False
+    actor.true_strike_advantage = False
 
     already_unconscious = has_condition(target, "unconscious")
 
@@ -2217,8 +2260,12 @@ class SaveSpellParams:
 def _spell_save_params(
     actor: Character, spell: SrdEntry, spell_level: int, srd: SrdIndex
 ) -> SaveSpellParams:
-    """Save-based spell parameters (e.g. Fireball, Hold Person)."""
-    dc_info = spell["dc"]
+    """Save-based spell parameters (e.g. Fireball, Hold Person). `spell_dc_
+    info` (not a raw `spell["dc"]` read) so a spell in rules._DC_OVERRIDES
+    (issue #55 - e.g. Call Lightning, whose vendored entry omits `dc`
+    despite being a real DEX-save spell) resolves identically to one with
+    the field natively present."""
+    dc_info = spell_dc_info(spell)
     dc_ability: AbilityScore = dc_info["dc_type"]["index"].upper()
     _, ability_mod = _spellcasting_ability_mod(actor, srd)
     # Spell save DC = 8 + proficiency bonus + spellcasting ability modifier -
@@ -2391,6 +2438,237 @@ def _cast_heal_spell_at_target(
                 "target": target.id,
                 "hp_remaining": target.hp,
             },
+        )
+    )
+
+
+_SPECIAL_CAST_SPELLS = {"spare-the-dying", "sleep", "true-strike", "mage-armor", "shield-of-faith"}
+"""Issue #55 spell audit: spells whose real mechanic doesn't fit any of the
+generic attack/save/heal/auto_hit/condition buckets `spell_mechanic`
+classifies (an HP-pool targeting rule, a banked-advantage buff, a flat AC
+buff, a no-roll stabilize) - each resolved by its own dedicated function,
+dispatched by name inside _resolve_cast_spell's `mechanic is None` branch
+rather than forced into a shape that doesn't fit."""
+
+
+def _resolve_spare_the_dying(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry, srd: SrdIndex
+) -> None:
+    """Spare the Dying (issue #55 spell audit): mechanically identical to
+    the existing "stabilize" verb's *effect* (a dying creature becomes
+    stable) but with none of its roll - real SRD has no check at all here,
+    it just works on a touch. Bucket 1 of the audit's own finding: this
+    didn't need a new mechanic, just a new entry point into logic that
+    already exists (target.is_stable = True, the same field 3 death-save
+    successes or a successful stabilize check already set)."""
+    if action.target is None:
+        raise TurnEngineError("Spare the Dying requires a target")
+    target = state.characters.get(action.target)
+    if target is None:
+        raise TurnEngineError(f"Unknown spell target: {action.target}")
+    if target.is_dead or target.is_stable or not has_condition(target, "unconscious"):
+        raise TurnEngineError(
+            f"{target.id} is not a valid Spare the Dying target - must be unconscious, "
+            "not already stable, and not dead"
+        )
+    distance = distance_feet(actor.position, target.position)
+    range_normal_feet = spell_range_feet(spell)
+    if distance > range_normal_feet:
+        raise TurnEngineError(
+            f"{target.id} is {distance}ft away - out of range for {spell['name']} "
+            f"(max {range_normal_feet}ft)"
+        )
+    target.is_stable = True
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=target.id,
+            type="condition_applied",
+            payload={"condition": "stable"},
+        )
+    )
+
+
+_SLEEP_UNCONSCIOUS_SOURCE = "sleep"
+"""Distinct source tag (issue #55) so _apply_damage_and_handle_downing can
+tell a Sleep-induced unconsciousness apart from the ordinary "0 HP" one
+(which must never be removed just because the character took more
+damage - dropping further below 0 doesn't wake anyone up) and wake the
+target the instant it takes any damage, per SRD."""
+
+
+def _resolve_sleep_spell(
+    state: GameState,
+    actor: Character,
+    action: ParsedAction,
+    spell: SrdEntry,
+    spell_level: int,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """Sleep (issue #55 spell audit): structurally unlike every other spell
+    mechanic this engine resolves - no attack roll, no saving throw. Real
+    SRD: roll 5d8 as a shared "hit point pool," creatures within 20ft of a
+    chosen point fall unconscious in ascending order of their *current* HP,
+    each one's HP subtracted from the pool, until it runs out; undead and
+    charm-immune creatures are unaffected.
+
+    This engine has no point/AOE targeting concept (every other spell
+    targets specific character ids), so `action.targets` stands in for
+    "creatures within range of the chosen point" - a documented adaptation,
+    not the literal SRD area-of-effect. Undead/charm-immune targets in the
+    list are silently skipped (not rejected outright - a real caster
+    naming a mixed group of enemies shouldn't have the whole spell fail
+    over one immune creature, matching how a real DM would just narrate
+    "the skeleton is unaffected").
+
+    Duration 1 minute -> 10 rounds. Unlike an ordinary 0-HP unconscious
+    (which never lifts on its own), this specifically ends the instant the
+    sleeper takes ANY damage - see _apply_damage_and_handle_downing's own
+    check for _SLEEP_UNCONSCIOUS_SOURCE.
+
+    Found live: "I cast sleep on the goblins" reliably set only the
+    singular `target` field, not `targets`, even with several goblins
+    visible - the same single-vs-list ambiguity every other multi-target
+    spell already falls back for (see the generic target_ids computation
+    in _resolve_cast_spell), so this does the same rather than rejecting a
+    perfectly reasonable-sounding cast."""
+    target_ids = action.targets or ([action.target] if action.target else None)
+    if not target_ids:
+        raise TurnEngineError("Sleep requires at least one target (creatures within its area)")
+
+    range_normal_feet = spell_range_feet(spell)
+    candidates: list[Character] = []
+    for target_id in target_ids:
+        target = state.characters.get(target_id)
+        if target is None:
+            raise TurnEngineError(f"Unknown spell target: {target_id}")
+        _validate_attack_target(actor, target)
+        distance = distance_feet(actor.position, target.position)
+        if distance > range_normal_feet:
+            raise TurnEngineError(
+                f"{target.id} is {distance}ft away - out of range for {spell['name']} "
+                f"(max {range_normal_feet}ft)"
+            )
+        candidates.append(target)
+
+    pool = roll(5, 8, rng=rng).total
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "hp_pool": pool},
+        )
+    )
+
+    # Undead/charm-immune creatures are unaffected - checked directly
+    # against the vendored monster `type` field (not
+    # monster_is_undead_or_fiend, which also exempts fiends - Sleep's own
+    # SRD text only exempts undead) and the existing condition-immunity
+    # helper for charm.
+    eligible = [
+        c
+        for c in candidates
+        if not c.is_dead
+        and not (
+            c.monster_index is not None
+            and srd.monsters.get(c.monster_index, {}).get("type") == "undead"
+        )
+        and not monster_is_immune_to_condition(c, "charmed", srd)
+    ]
+    eligible.sort(key=lambda c: c.hp)
+
+    remaining = pool
+    for target in eligible:
+        if remaining <= 0:
+            break
+        if target.hp > remaining:
+            continue
+        remaining -= target.hp
+        apply_condition(
+            target,
+            Condition(name="unconscious", duration_rounds=10, source=_SLEEP_UNCONSCIOUS_SOURCE),
+        )
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=target.id,
+                type="condition_applied",
+                payload={"condition": "unconscious", "source": "sleep"},
+            )
+        )
+
+
+def _resolve_true_strike(state: GameState, actor: Character, spell: SrdEntry) -> None:
+    """True Strike (issue #55 spell audit): real SRD grants advantage on
+    your next attack roll *against the specific target you pointed at*,
+    before the end of your next turn. Narrowed here to "your very next
+    attack roll, whoever it's against" - the same class of documented
+    simplification Bardic Inspiration's own die already makes (no
+    per-target tracking, just a banked flag cleared on next use) - not
+    tracking a specific target id keeps this consistent with
+    has_help_advantage's existing "banked, one-shot" shape rather than
+    inventing a second, narrower kind of banked bonus."""
+    actor.true_strike_advantage = True
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "effect": "advantage on next attack roll"},
+        )
+    )
+
+
+def _resolve_ac_buff_spell(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry, srd: SrdIndex
+) -> None:
+    """Mage Armor / Shield of Faith (issue #55 spell audit): both reduce to
+    "set a flag/bonus on the target, recompute their AC" - Mage Armor
+    (self/touch only in practice, but real SRD range is Touch, not
+    Self - modeled as any target within touch range) flips
+    Character.mage_armor_active; Shield of Faith adds a flat +2 to
+    Character.temporary_ac_bonus. Both read by rules.armor_ac_breakdown,
+    recomputed here via _recompute_ac the same way equipping gear already
+    triggers a recompute - no separate "AC is stale" bug class to
+    introduce.
+
+    Found live: "I cast mage armor on myself" left `target` unset entirely
+    (the model apparently treats a reflexive "myself" as needing no
+    explicit target the way an unambiguous ally name would) - both spells
+    are overwhelmingly self-cast in practice, so a missing target falls
+    back to the caster rather than rejecting a perfectly reasonable
+    self-buff."""
+    target_id = action.target or actor.id
+    target = state.characters.get(target_id)
+    if target is None:
+        raise TurnEngineError(f"Unknown spell target: {target_id}")
+    distance = distance_feet(actor.position, target.position)
+    range_normal_feet = spell_range_feet(spell)
+    if distance > range_normal_feet:
+        raise TurnEngineError(
+            f"{target.id} is {distance}ft away - out of range for {spell['name']} "
+            f"(max {range_normal_feet}ft)"
+        )
+
+    if spell["index"] == "mage-armor":
+        target.mage_armor_active = True
+    else:  # shield-of-faith
+        target.temporary_ac_bonus = 2
+    _recompute_ac(target, srd)
+
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "target": target.id, "target_ac": target.ac},
         )
     )
 
@@ -2652,13 +2930,48 @@ def _resolve_cast_spell(
         )
 
     mechanic = spell_mechanic(spell)
+    spell_level = spell["level"]
+
     if mechanic is None:
+        # Issue #55 spell audit, buckets 1/3/5: a small set of spells whose
+        # real mechanic doesn't fit any of the generic attack/save/heal/
+        # auto_hit/condition shapes above (Sleep's HP-pool targeting, a
+        # banked-advantage buff, a flat AC buff) - each gets its own
+        # resolver instead. Slot consumption/concentration still apply
+        # generically (every real spell needs both, regardless of which
+        # mechanic resolves the actual effect), so those two steps happen
+        # here too rather than being duplicated inside each resolver.
+        if normalized in _SPECIAL_CAST_SPELLS:
+            if spell_level > 0:
+                remaining = actor.spell_slots.get(spell_level, 0)
+                if remaining <= 0:
+                    raise TurnEngineError(
+                        f"{actor.id} has no level-{spell_level} spell slots remaining"
+                    )
+                actor.spell_slots[spell_level] = remaining - 1
+            if spell.get("concentration"):
+                actor.concentrating_on = spell["name"]
+
+            if normalized == "spare-the-dying":
+                _resolve_spare_the_dying(state, actor, action, spell, srd)
+            elif normalized == "sleep":
+                _resolve_sleep_spell(state, actor, action, spell, spell_level, rng, srd)
+            elif normalized == "true-strike":
+                _resolve_true_strike(state, actor, spell)
+            else:  # mage-armor, shield-of-faith
+                _resolve_ac_buff_spell(state, actor, action, spell, srd)
+
+            if is_bonus_action:
+                actor.bonus_action_used = True
+                return False
+            return True
+
         raise TurnEngineError(
             f"{spell['name']} is not supported - cast_spell resolves attack-roll, save-based, "
-            "heal, and auto-hit spells; other no-roll/no-damage effects (buffs, utility) "
-            "aren't implemented"
+            "heal, auto-hit, and condition spells, plus a small set of individually-"
+            "implemented ones (Sleep, True Strike, Mage Armor, Shield of Faith, Spare the "
+            "Dying); other no-roll/no-damage effects (most buffs/utility) aren't implemented"
         )
-    spell_level = spell["level"]
 
     if mechanic == "auto_hit":
         # Issue #35 (Magic Missile): darts, not independently-rolled
@@ -2697,9 +3010,17 @@ def _resolve_cast_spell(
         target = state.characters.get(target_id)
         if target is None:
             raise TurnEngineError(f"Unknown spell target: {target_id}")
-        # A heal spell targets an ally by design - only the two offensive
-        # mechanics need the friendly-fire/charmed guard.
-        if mechanic != "heal":
+        # A heal or condition (issue #55 - e.g. Invisibility) spell targets
+        # an ally by design - only the offensive mechanics need the
+        # friendly-fire/charmed guard. Condition spells get the opposite-
+        # polarity check instead: a beneficial buff on an unwilling enemy
+        # makes no real-world sense (real SRD's own "willing creature"
+        # targeting), so same-side is required, not rejected.
+        if mechanic == "condition" and target.is_pc != actor.is_pc:
+            raise TurnEngineError(
+                f"{actor.id} cannot cast {spell['name']} on {target.id} - not an ally"
+            )
+        if mechanic not in ("heal", "condition"):
             _validate_attack_target(actor, target)
         targets.append(target)
 
@@ -2742,6 +3063,28 @@ def _resolve_cast_spell(
         auto_hit_params = _auto_hit_spell_params(spell)
         for target in targets:
             _cast_auto_hit_dart_at_target(state, actor, target, auto_hit_params, rng, srd)
+    elif mechanic == "condition":
+        # Issue #55 spell audit: e.g. Invisibility - no roll, apply the
+        # spec'd ConditionName to every named (willing) target.
+        condition_spec = condition_spell_spec(spell)
+        for target in targets:
+            apply_condition(
+                target,
+                Condition(
+                    name=condition_spec.condition,
+                    duration_rounds=condition_spec.duration_rounds,
+                    source=actor.id,
+                ),
+            )
+            state.events.append(
+                Event(
+                    round=state.round,
+                    turn_index=state.current_turn,
+                    actor=target.id,
+                    type="condition_applied",
+                    payload={"condition": condition_spec.condition, "source": spell["name"]},
+                )
+            )
     else:  # heal
         heal_params = _spell_heal_params(actor, spell, spell_level, srd)
         for target in targets:
