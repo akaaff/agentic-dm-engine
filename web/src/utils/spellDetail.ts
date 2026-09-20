@@ -40,20 +40,43 @@ export function nameWithSpellDetail(spell: SpellSummary): string {
   return detail ? `${spell.name} (${detail})` : spell.name
 }
 
-const MAX_HINT_LENGTH = 140
+const MAX_HINT_LENGTH = 320
 
 // Issue #51: the mechanical detail above (level/range/damage) doesn't say
 // what a spell actually *does* - a player who doesn't already know 5e
 // spells by name can't tell what "Acid Splash" is from "cantrip, 1 action,
 // 60 ft: 1d6 acid, DEX save" alone. spell.desc carries the real SRD prose
 // (already reaching the frontend since issue #30, just never rendered) -
-// trimmed to its first sentence and capped in length for a compact list
-// context, not shown in full (a raw SRD description can run several
-// sentences, meant for a spellbook page, not a one-line list entry).
+// capped in length for a compact list context, not shown in full (a raw
+// SRD description can run several sentences, meant for a spellbook page,
+// not a one-line list entry).
+//
+// Live-found: an earlier version stopped after the *first* sentence only,
+// but roughly two-thirds of the SRD's own level 0-1 spells lead with pure
+// scene-setting flavor text before the sentence that actually explains the
+// mechanic - True Strike's first sentence is just "You extend your hand
+// and point a finger at a target in range," with the real payoff ("you
+// gain advantage on your first attack roll") two sentences later. Fixed by
+// accumulating whole sentences up to the length cap instead of stopping at
+// the first one - long enough to reach the payoff sentence for the common
+// case (confirmed against a sample including True Strike, Animal
+// Friendship, Sleep, Eldritch Blast), short enough to stay a hint rather
+// than the full description.
 export function spellHint(spell: SpellSummary): string {
   const trimmed = spell.desc.trim()
-  const firstSentence = trimmed.split(/(?<=[.!?])\s/)[0] ?? trimmed
-  return firstSentence.length > MAX_HINT_LENGTH
-    ? `${firstSentence.slice(0, MAX_HINT_LENGTH - 1).trimEnd()}...`
-    : firstSentence
+  const sentences = trimmed.split(/(?<=[.!?])\s+/)
+  let result = ''
+  for (const sentence of sentences) {
+    const candidate = result ? `${result} ${sentence}` : sentence
+    if (candidate.length > MAX_HINT_LENGTH) {
+      if (!result) {
+        // Even the first sentence alone exceeds the cap - hard-truncate it
+        // rather than return nothing.
+        return `${sentence.slice(0, MAX_HINT_LENGTH - 1).trimEnd()}...`
+      }
+      break
+    }
+    result = candidate
+  }
+  return result
 }
