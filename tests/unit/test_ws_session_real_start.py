@@ -20,12 +20,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from src import config
 from src.api.db.models import Base
 from src.api.db.session import get_db
 from src.api.main import app
 from src.api.ws import session as ws_session_module
 from src.engine.actions import ParsedAction
-from src.engine.campaign import load_campaign
+from src.engine.campaign import Campaign, Scene, load_campaign
 from src.engine.companions import build_companion, load_companion_spec
 from src.engine.encounter import GameStateBuildError, build_encounter_state, load_encounter
 from src.engine.srd_loader import load_srd
@@ -517,6 +518,337 @@ def test_party_choice_response_rejects_an_already_answered_or_unknown_sender(
         error_msg = ws.receive_json()
         assert error_msg["type"] == "error"
         assert "pending" in error_msg["detail"].lower()
+
+
+def _victory_session_at_hideout_combat(
+    campaign_scene_id: str = "hideout_combat",
+) -> tuple[ws_session_module.Session, Campaign]:
+    """Shared setup for the direct-call Phase 3 tests below: a session
+    parked right after bandit_hideout's own victory, same "set the state
+    you need rather than scripting combat to reach it" pattern the rest of
+    this file already uses. Returns (session, campaign) so a test can look
+    up scenes it spliced in."""
+    srd = load_srd()
+    campaign = load_campaign("kobold_warren_full")
+    party = [build_companion(load_companion_spec("grom_ironfist"), srd=srd)]
+    scene = campaign.scene_by_id(campaign_scene_id)
+    assert scene.encounter_ref is not None
+    game_state = build_encounter_state(
+        load_encounter(scene.encounter_ref), party, random.Random(), srd=srd
+    )
+    game_state.status = "victory"
+
+    session = ws_session_module.Session(
+        game_state=game_state,
+        action_rng=random.Random(),
+        graph=build_graph(
+            rng=random.Random(),
+            narrator_fn=_stub_narrator,
+            player_agent_fn=_stub_player_agent,
+            scene_image_fn=_stub_scene_image,
+        ),
+        campaign=campaign,
+        party=party,
+        srd=srd,
+        current_scene_id=campaign_scene_id,
+    )
+    return session, campaign
+
+
+async def test_resolve_party_choice_generates_a_live_continuation_when_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Story-adaptive-encounters Phase 3. kobold_warren_full's own
+    # "hideout_aftermath" scene (see CLAUDE.md) has no authored next_
+    # scene_id - the real trigger this phase adds. Direct-call test (same
+    # pattern as test_advance_campaign_after_victory_continues_to_the_next_
+    # encounter below) rather than a full WS round trip, since it only
+    # needs to prove _resolve_party_choice's own generation wiring, not the
+    # message plumbing around it (a separate WS-level test covers that).
+    session, campaign = _victory_session_at_hideout_combat()
+    session.pending_party_choice = ws_session_module.PendingPartyChoice(
+        scene_id="hideout_aftermath",
+        situation="The bandits lie defeated, their hideout ransacked and quiet.",
+        responses={"companion_grom": "I say we burn the ledger and be done with it."},
+    )
+    monkeypatch.setattr(
+        ws_session_module,
+        "synthesize_party_choice_narration",
+        lambda situation, responses, party: "[stub synthesis]",
+    )
+    captured: list[dict[str, object]] = []
+
+    def _fake_generate_continuation(**kwargs: object) -> list[Scene]:
+        captured.append(kwargs)
+        return [
+            Scene(
+                id="kobold_warren_full__adaptive1_1",
+                type="narrative_beat",
+                narrative_intro="[stub generated ending]",
+                next_scene_id=None,
+            )
+        ]
+
+    monkeypatch.setattr(ws_session_module, "generate_continuation", _fake_generate_continuation)
+
+    await ws_session_module._resolve_party_choice(session)
+
+    assert len(captured) == 1
+    situation = captured[0]["situation"]
+    assert isinstance(situation, str) and situation.startswith("The bandits lie defeated")
+    assert captured[0]["responses"] == {
+        "companion_grom": "I say we burn the ledger and be done with it."
+    }
+    assert captured[0]["force_ending"] is False
+    assert captured[0]["generation_index"] == 1
+    assert session.adaptive_generations_used == 1
+    # Spliced onto the live Campaign object - a real generated scene the
+    # chain walk actually reached, not just a value this function returned.
+    assert campaign.scene_by_id("kobold_warren_full__adaptive1_1") is not None
+    assert session.pending_party_choice is None
+
+
+async def test_resolve_party_choice_respects_the_adaptive_generation_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, _campaign = _victory_session_at_hideout_combat()
+    session.adaptive_generations_used = config.MAX_ADAPTIVE_GENERATIONS
+    session.pending_party_choice = ws_session_module.PendingPartyChoice(
+        scene_id="hideout_aftermath",
+        situation="The bandits lie defeated.",
+        responses={"companion_grom": "One more thing to look into..."},
+    )
+    monkeypatch.setattr(
+        ws_session_module, "synthesize_party_choice_narration", lambda *a, **k: "[stub]"
+    )
+    calls: list[int] = []
+    monkeypatch.setattr(
+        ws_session_module,
+        "generate_continuation",
+        lambda **kwargs: calls.append(1) or [],  # type: ignore[func-returns-value]
+    )
+
+    await ws_session_module._resolve_party_choice(session)
+
+    # Already at the cap - no generation call spent, the campaign simply
+    # ends here (same as a hand-authored dead end always has).
+    assert calls == []
+    assert session.adaptive_generations_used == config.MAX_ADAPTIVE_GENERATIONS
+
+
+async def test_resolve_party_choice_forces_an_ending_on_the_last_allowed_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, _campaign = _victory_session_at_hideout_combat()
+    session.adaptive_generations_used = config.MAX_ADAPTIVE_GENERATIONS - 1
+    session.pending_party_choice = ws_session_module.PendingPartyChoice(
+        scene_id="hideout_aftermath",
+        situation="The bandits lie defeated.",
+        responses={"companion_grom": "Let's see this through to the end."},
+    )
+    monkeypatch.setattr(
+        ws_session_module, "synthesize_party_choice_narration", lambda *a, **k: "[stub]"
+    )
+    captured: list[dict[str, object]] = []
+
+    def _fake_generate_continuation(**kwargs: object) -> list[Scene]:
+        captured.append(kwargs)
+        return [
+            Scene(
+                id="kobold_warren_full__adaptive2_1",
+                type="narrative_beat",
+                narrative_intro="[the real conclusion]",
+                next_scene_id=None,
+            )
+        ]
+
+    monkeypatch.setattr(ws_session_module, "generate_continuation", _fake_generate_continuation)
+
+    await ws_session_module._resolve_party_choice(session)
+
+    assert captured[0]["force_ending"] is True
+    assert session.adaptive_generations_used == config.MAX_ADAPTIVE_GENERATIONS
+
+
+def test_open_party_choice_generates_a_live_continuation_through_a_real_ws_round_trip(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The WS-message-plumbing counterpart to the direct-call tests above -
+    # confirms continue_campaign -> party_choice_offer -> party_choice_
+    # response actually reaches _resolve_party_choice's new generation path
+    # through the real handler, not just that the function itself works in
+    # isolation.
+    monkeypatch.setattr(
+        ws_session_module,
+        "generate_companion_party_choice_response",
+        lambda character, situation: f"[{character.name} stub reaction]",
+    )
+    monkeypatch.setattr(
+        ws_session_module,
+        "synthesize_party_choice_narration",
+        lambda situation, responses, party: "[stub synthesis narration]",
+    )
+
+    def _fake_generate_continuation(**kwargs: object) -> list[Scene]:
+        return [
+            Scene(
+                id="kobold_warren_full__adaptive1_1",
+                type="narrative_beat",
+                narrative_intro="[stub generated ending]",
+                next_scene_id=None,
+            )
+        ]
+
+    monkeypatch.setattr(ws_session_module, "generate_continuation", _fake_generate_continuation)
+
+    create_response = client.post("/characters", json=_VALID_FIGHTER_BODY)
+    assert create_response.status_code == 201
+    session_response = client.post(
+        "/sessions",
+        json={
+            "campaign_id": "kobold_warren_full",
+            "character_id": "thorin",
+            "companion_ids": ["companion_grom"],
+        },
+    )
+    assert session_response.status_code == 201
+    session_id: str = session_response.json()["session_id"]
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        msg = ws.receive_json()
+        while msg["type"] != "awaiting_input":
+            msg = ws.receive_json()
+
+        # Fast-forward directly to the second (bandit hideout) combat's own
+        # victory - rising_action's own party_choice (Phase 2, already
+        # tested above) doesn't need re-driving here.
+        session = ws_session_module._sessions[session_id]
+        assert session.party is not None
+        encounter = load_encounter("bandit_hideout")
+        session.game_state = build_encounter_state(
+            encounter, session.party, session.action_rng, srd=session.srd
+        )
+        session.current_scene_id = "hideout_combat"
+        session.game_state.status = "victory"
+
+        ws.send_json({"type": "continue_campaign"})
+        messages = [ws.receive_json()]
+        while messages[-1]["type"] != "party_choice_offer":
+            messages.append(ws.receive_json())
+        assert messages[-1]["awaiting"] == ["thorin"]
+
+        ws.send_json(
+            {"type": "party_choice_response", "text": "Let's turn the ledger over to the guard."}
+        )
+        messages = [ws.receive_json()]
+        while not (
+            messages[-1]["type"] == "scene_narration"
+            and "[stub generated ending]" in messages[-1]["text"]
+        ):
+            messages.append(ws.receive_json())
+
+    scene_narrations = [m["text"] for m in messages if m["type"] == "scene_narration"]
+    assert "[stub synthesis narration]" in scene_narrations
+    assert "[stub generated ending]" in scene_narrations
+    assert session.adaptive_generations_used == 1
+    assert session.pending_party_choice is None
+    # The generated ending was a plain narrative_beat (no further
+    # party_choice), so the chain genuinely ran out here - campaign_
+    # complete must reflect that even though session.current_scene_id is
+    # still frozen at "hideout_combat" (see the regression test below for
+    # why that distinction matters).
+    assert session.campaign_complete is True
+
+
+def test_a_second_continue_campaign_after_the_story_concludes_is_a_no_op(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Live-found: a story that concludes via a pure narrative generation
+    # (no further combat scene) never advances session.current_scene_id
+    # past the last combat that actually happened - it only ever moves when
+    # _advance_chain_from builds a fresh GameState. Before campaign_complete
+    # existed, a stray second "Continue" click (status is still "victory",
+    # nothing else says otherwise) silently re-walked the whole chain from
+    # that same stale point, re-resolving hideout_aftermath's party_choice
+    # from scratch and spending a real generation call on an already-told
+    # story. Reproduced live in a real browser session before this fix.
+    monkeypatch.setattr(
+        ws_session_module,
+        "generate_companion_party_choice_response",
+        lambda character, situation: f"[{character.name} stub reaction]",
+    )
+    monkeypatch.setattr(
+        ws_session_module,
+        "synthesize_party_choice_narration",
+        lambda situation, responses, party: "[stub synthesis narration]",
+    )
+    generation_calls: list[dict[str, object]] = []
+
+    def _fake_generate_continuation(**kwargs: object) -> list[Scene]:
+        generation_calls.append(kwargs)
+        return [
+            Scene(
+                id="kobold_warren_full__adaptive1_1",
+                type="narrative_beat",
+                narrative_intro="[stub generated ending]",
+                next_scene_id=None,
+            )
+        ]
+
+    monkeypatch.setattr(ws_session_module, "generate_continuation", _fake_generate_continuation)
+
+    create_response = client.post("/characters", json=_VALID_FIGHTER_BODY)
+    assert create_response.status_code == 201
+    session_response = client.post(
+        "/sessions",
+        json={
+            "campaign_id": "kobold_warren_full",
+            "character_id": "thorin",
+            "companion_ids": ["companion_grom"],
+        },
+    )
+    assert session_response.status_code == 201
+    session_id: str = session_response.json()["session_id"]
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        msg = ws.receive_json()
+        while msg["type"] != "awaiting_input":
+            msg = ws.receive_json()
+
+        session = ws_session_module._sessions[session_id]
+        assert session.party is not None
+        encounter = load_encounter("bandit_hideout")
+        session.game_state = build_encounter_state(
+            encounter, session.party, session.action_rng, srd=session.srd
+        )
+        session.current_scene_id = "hideout_combat"
+        session.game_state.status = "victory"
+
+        ws.send_json({"type": "continue_campaign"})
+        messages = [ws.receive_json()]
+        while messages[-1]["type"] != "party_choice_offer":
+            messages.append(ws.receive_json())
+
+        ws.send_json({"type": "party_choice_response", "text": "Let's head home."})
+        messages = [ws.receive_json()]
+        while not (
+            messages[-1]["type"] == "state_update" and messages[-1]["campaign_complete"] is True
+        ):
+            messages.append(ws.receive_json())
+
+        assert len(generation_calls) == 1
+        assert session.campaign_complete is True
+        # session.current_scene_id never moved past the last real combat -
+        # the exact stale state that used to make a second click dangerous.
+        assert session.current_scene_id == "hideout_combat"
+
+        # The real regression check: a second continue_campaign must not
+        # re-walk the chain, re-offer hideout_aftermath's party_choice, or
+        # spend a second generation call.
+        ws.send_json({"type": "continue_campaign"})
+
+    assert len(generation_calls) == 1
+    assert session.pending_party_choice is None
 
 
 async def test_advance_campaign_after_victory_continues_to_the_next_encounter(

@@ -57,6 +57,7 @@ from src.graph.nodes.party_choice import (
     synthesize_party_choice_narration,
 )
 from src.graph.state_schema import GraphState
+from src.llm.campaign_generator import generate_continuation
 
 router = APIRouter()
 
@@ -162,6 +163,31 @@ class Session:
     waiting on party_choice_response messages instead of rest/
     continue_campaign. Cleared by _resolve_party_choice once every living
     human party member has answered."""
+    campaign_complete: bool = False
+    """Set once the campaign's scene chain has genuinely run out - either
+    ran off the end with nothing left, or hit config.MAX_ADAPTIVE_
+    GENERATIONS with no combat scene left to fight through (see
+    _advance_chain_from/_resolve_party_choice). Found live: session.
+    current_scene_id only ever advances when a NEW combat scene is built,
+    so a story that concludes on a pure narrative generation (no further
+    combat) leaves current_scene_id pointing at the last combat that
+    actually happened - without this flag, _advance_campaign_after_victory
+    had no way to tell "already fully resolved" apart from "victory, ready
+    for another continue_campaign," and a stray second click would silently
+    re-walk the whole chain from the same stale point, generating (and
+    broadcasting) an entirely new, likely-incoherent continuation on top of
+    the one already told. Included in every _state_update_message so a
+    late-joining/reconnecting client learns it too, not just whoever was
+    connected the instant it happened."""
+    adaptive_generations_used: int = 0
+    """Story-adaptive-encounters Phase 3: counts how many times this
+    session has generated a live story continuation off an "open"
+    party_choice (next_scene_id left unset - see generate_continuation and
+    _resolve_party_choice). Capped at config.MAX_ADAPTIVE_GENERATIONS - a
+    narrative pacing bound, not a resource-safety one, so the party can't
+    keep steering into more open choices forever; the generation that hits
+    the cap is told to actually end the story (force_ending) rather than
+    the session just silently refusing to continue."""
 
 
 _sessions: dict[str, Session] = {}
@@ -454,6 +480,7 @@ def _state_update_message(session: Session) -> dict[str, object]:
         "type": "state_update",
         "game_state": session.game_state.model_dump(mode="json"),
         "combat_summaries": _combat_summaries(session),
+        "campaign_complete": session.campaign_complete,
     }
 
 
@@ -557,6 +584,17 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             consecutive_invalid = 0
 
 
+async def _mark_campaign_complete(session: Session) -> None:
+    """Flags the campaign as genuinely finished and broadcasts a fresh
+    state_update so every connection (and any later reconnect/late join,
+    which always gets a state_update of its own on connect) learns it -
+    see Session.campaign_complete's own docstring for why this needed its
+    own explicit signal rather than being inferred from status=="victory"
+    alone."""
+    session.campaign_complete = True
+    await _broadcast(session, _state_update_message(session))
+
+
 async def _advance_chain_from(session: Session, start_scene: Scene) -> None:
     """Walks the campaign scene chain from start_scene (inclusive) via
     campaign_runner.advance_to_next_encounter, narrating/resolving skill_
@@ -587,6 +625,7 @@ async def _advance_chain_from(session: Session, start_scene: Scene) -> None:
         await _broadcast(session, {"type": "scene_narration", "text": line})
 
     if stop_scene is None:
+        await _mark_campaign_complete(session)
         return  # ran off the end of the chain - campaign complete
 
     if stop_scene.type == "party_choice":
@@ -612,7 +651,8 @@ async def _advance_chain_from(session: Session, start_scene: Scene) -> None:
         next_scene = session.campaign.next_scene(stop_scene)
         if next_scene is not None:
             await _advance_chain_from(session, next_scene)
-        # else: campaign complete - a real stop, nothing further to chain to.
+        else:
+            await _mark_campaign_complete(session)
 
 
 async def _start_party_choice(session: Session, scene: Scene) -> None:
@@ -677,10 +717,21 @@ async def _resolve_party_choice(session: Session) -> None:
     beat of the DM's own scene-setting text, not a mechanical action's
     outcome - the same distinction scene_narration's own frontend styling
     already established), and resumes the chain from wherever this scene's
-    next_scene_id points. Not a branch: the scene chain itself stays fixed
-    either way (real model-led branching is Phase 3's job) - this phase's
-    whole scope is giving the party a real voice in how the story is TOLD,
-    not yet in where it GOES."""
+    next_scene_id points.
+
+    Story-adaptive-encounters Phase 3: when there's nowhere authored to
+    resume to (next_scene_id was left unset - a campaign author's or
+    generator's deliberate "let the model decide" marker, same spirit as
+    skill_challenge's own "no branching in MVP" scenes elsewhere in this
+    chain, just inverted), this is exactly where the model takes over: it
+    generates 1-3 new scenes live from the situation and what the party
+    actually chose (generate_continuation), spliced onto the live
+    Campaign's own scene list, and the chain walk continues from the first
+    one - genuinely reflecting the party's choice, not the fixed-chain
+    "narration differs, mechanics don't" scope Phase 2 shipped. Capped by
+    config.MAX_ADAPTIVE_GENERATIONS so a party that keeps steering into
+    more open choices can't keep this looping forever; the generation that
+    hits the cap is told to actually end the story."""
     pending = session.pending_party_choice
     assert pending is not None
     assert session.campaign is not None
@@ -695,7 +746,24 @@ async def _resolve_party_choice(session: Session) -> None:
     scene = session.campaign.scene_by_id(pending.scene_id)
     next_scene = session.campaign.next_scene(scene)
     if next_scene is None:
-        return  # campaign complete - no further scenes authored
+        if session.adaptive_generations_used >= config.MAX_ADAPTIVE_GENERATIONS:
+            # campaign complete - already used up this session's generation budget
+            await _mark_campaign_complete(session)
+            return
+        session.adaptive_generations_used += 1
+        force_ending = session.adaptive_generations_used >= config.MAX_ADAPTIVE_GENERATIONS
+        new_scenes = generate_continuation(
+            situation=pending.situation,
+            responses=pending.responses,
+            party=session.party,
+            campaign_id=session.campaign.id,
+            generation_index=session.adaptive_generations_used,
+            force_ending=force_ending,
+            srd=session.srd,
+            rng=session.action_rng,
+        )
+        session.campaign.scenes.extend(new_scenes)
+        next_scene = new_scenes[0]
     await _advance_chain_from(session, next_scene)
 
 
@@ -727,7 +795,20 @@ async def _advance_campaign_after_victory(session: Session) -> None:
     otherwise re-run this whole walk from session.current_scene_id, which
     is still the just-finished combat scene - re-triggering the SAME rest/
     party_choice scenes again and silently overwriting whatever responses
-    were already collected in session.pending_party_choice."""
+    were already collected in session.pending_party_choice.
+
+    Story-adaptive-encounters Phase 3: also no-ops once campaign_complete
+    is set. Found live: session.current_scene_id only ever advances when a
+    NEW combat scene is built (see _advance_chain_from) - a story that
+    concludes via a pure narrative generation (no further combat) leaves
+    current_scene_id frozen at the last combat that actually happened, with
+    "Continue" still showing client-side (status is still "victory").
+    Without this check, clicking it again would silently re-walk the whole
+    chain from that same stale point - re-resolving the SAME already-
+    authored next_scene_id (hideout_aftermath in kobold_warren_full's own
+    case) and generating an entirely fresh, likely-incoherent continuation
+    on top of the story already told, spending real LLM calls for nothing
+    good."""
     if (
         session.campaign is None
         or session.party is None
@@ -735,13 +816,15 @@ async def _advance_campaign_after_victory(session: Session) -> None:
         or session.current_scene_id is None
         or session.game_state.status != "victory"
         or session.pending_party_choice is not None
+        or session.campaign_complete
     ):
         return
 
     current_scene = session.campaign.scene_by_id(session.current_scene_id)
     next_scene = session.campaign.next_scene(current_scene)
     if next_scene is None:
-        return  # campaign complete - no further scenes authored
+        await _mark_campaign_complete(session)
+        return
     await _advance_chain_from(session, next_scene)
 
 

@@ -178,6 +178,15 @@ type ServerMessage =
       type: 'state_update'
       game_state: LiveGameState
       combat_summaries: Record<string, CombatSummary>
+      // Story-adaptive-encounters Phase 3: set once the campaign's scene
+      // chain has genuinely run out (including via a pure narrative
+      // generation that never rebuilt game_state - see Session.campaign_
+      // complete's own docstring) - included on every state_update
+      // (unconditionally sent to a fresh connect too, not just whoever was
+      // connected the instant it happened) so "Continue" stops being
+      // offered for a story that's already over, instead of silently
+      // re-walking the same already-resolved chain.
+      campaign_complete: boolean
     }
   | { type: 'narration'; text: string }
   | { type: 'scene_narration'; text: string }
@@ -236,6 +245,11 @@ export interface NarrationEntry {
    * always arrives in the same state_update message, so it's held back and
    * applied at the same moment. */
   combatSummariesSnapshot?: Record<string, CombatSummary>
+  /** Same lockstep-with-the-paced-log reasoning again - a story that just
+   * concluded shouldn't hide the Continue button (or show a "the adventure
+   * has concluded" line) before the paced log has actually shown the
+   * ending narration that explains why. */
+  campaignCompleteSnapshot?: boolean
 }
 
 // How long a revealed narration entry stays "the last thing shown" before
@@ -255,6 +269,7 @@ export function useSessionSocket(sessionId: string) {
   const [awaitingActor, setAwaitingActor] = useState<string | null>(null)
   const [bardicOffer, setBardicOffer] = useState<BardicInspirationOffer | null>(null)
   const [partyChoice, setPartyChoice] = useState<PartyChoiceOffer | null>(null)
+  const [campaignComplete, setCampaignComplete] = useState(false)
   // Issue #46: character ids whose player is currently disconnected - reset
   // on every fresh connect (a stale "so-and-so disconnected" banner
   // shouldn't survive this client's own reconnect, which starts blind to
@@ -328,6 +343,9 @@ export function useSessionSocket(sessionId: string) {
           // keeps the sidebar/HP/banner in lockstep with the paced log.
           if (entry.gameStateSnapshot) setGameState(entry.gameStateSnapshot)
           if (entry.combatSummariesSnapshot) setCombatSummaries(entry.combatSummariesSnapshot)
+          if (entry.campaignCompleteSnapshot !== undefined) {
+            setCampaignComplete(entry.campaignCompleteSnapshot)
+          }
           lastRevealTimeRef.current = performance.now()
         }
         scheduleDrain() // schedules the next one, or marks caught up if none left
@@ -399,12 +417,14 @@ export function useSessionSocket(sessionId: string) {
               events: newEvents,
               gameStateSnapshot: message.game_state,
               combatSummariesSnapshot: message.combat_summaries,
+              campaignCompleteSnapshot: message.campaign_complete,
             })
           } else {
             // Nothing of its own to pace, and nothing already queued for it
             // to jump ahead of - safe to apply right away.
             setGameState(message.game_state)
             setCombatSummaries(message.combat_summaries)
+            setCampaignComplete(message.campaign_complete)
           }
           break
         }
@@ -530,6 +550,7 @@ export function useSessionSocket(sessionId: string) {
     disconnectedActors,
     bardicOffer,
     partyChoice,
+    campaignComplete,
     error,
     connected,
     sendPlayerAction,

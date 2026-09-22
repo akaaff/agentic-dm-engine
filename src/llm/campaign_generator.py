@@ -41,6 +41,7 @@ from src.engine.campaign import (
 )
 from src.engine.encounter import DEFAULT_ENCOUNTERS_DIR, Encounter, MonsterSpawn
 from src.engine.srd_loader import SrdIndex, load_srd
+from src.engine.state import Character
 from src.llm.providers import chat_structured, contains_cjk, load_prompt
 
 # Curated, not "every CR<=0.5 SRD monster" (110 of those, including deer and
@@ -76,6 +77,13 @@ _MAX_ATTEMPTS = 3
 
 _MONSTER_COUNT_RANGE = (2, 4)
 _DC_RANGE = (10, 15)
+
+# Story-adaptive-encounters Phase 3: a live continuation is deliberately
+# short - it's answering "what happens next, given this one choice," not
+# authoring a whole act. Nothing like _SIZE_RULES' combat-count requirement
+# applies here; a continuation may have zero combat scenes at all.
+_CONTINUATION_MIN_SCENES = 1
+_CONTINUATION_MAX_SCENES = 3
 
 
 class GenerationError(ValueError):
@@ -219,6 +227,266 @@ def _build_encounter(
         monsters=monsters,
         party_spawn_points=PARTY_SPAWN_NAMES,
     )
+
+
+def _build_continuation_schema(
+    monster_choices: tuple[str, ...], skill_choices: tuple[str, ...]
+) -> type[BaseModel]:
+    """Same GeneratedCombatBeat/GeneratedSkillBeat shape as _build_schema's
+    own nested classes (rebuilt fresh here too, for the same reason - the
+    monster/skill Literal enums are dynamic per call) - the one real
+    difference is GeneratedScene's own type enum gains "party_choice", the
+    mechanism that lets a continuation itself end in another open choice
+    (see generate_continuation's own next_scene_id wiring) rather than only
+    ever the four types a whole-campaign generation produces."""
+    monster_index_type = Literal[tuple(monster_choices)]  # type: ignore[valid-type]
+    skill_type = Literal[tuple(skill_choices)]  # type: ignore[valid-type]
+
+    class GeneratedCombatBeat(BaseModel):
+        monster_index: monster_index_type  # type: ignore[valid-type]
+        monster_count: int
+        layout: Literal["open_room", "narrow_corridor", "two_rooms", "cluttered"] = "open_room"
+        size: Literal["small", "medium", "large"] = "medium"
+        difficult_terrain: Literal["none", "light", "heavy"] = "none"
+        hazard: Literal["none", "light", "heavy"] = "none"
+
+    class GeneratedSkillBeat(BaseModel):
+        skill: skill_type  # type: ignore[valid-type]
+        dc: int
+        success_text: str
+        failure_text: str
+
+    class GeneratedContinuationScene(BaseModel):
+        type: Literal["narrative_beat", "combat", "skill_challenge", "party_choice"]
+        narrative_intro: str
+        combat: GeneratedCombatBeat | None = None
+        skill_challenge: GeneratedSkillBeat | None = None
+
+    class GeneratedContinuation(BaseModel):
+        scenes: list[GeneratedContinuationScene]
+
+    return GeneratedContinuation
+
+
+def _validate_continuation(generated: BaseModel, force_ending: bool) -> list[str]:
+    """Same shape as _validate_generated - the cross-field rules a JSON
+    schema enum can't express - plus two continuation-specific rules: a
+    party_choice can only end the batch (there's no way to collect two
+    simultaneous rounds of party input, and next_scene_id chaining assumes
+    a single linear sequence) and there's at most one, and - when
+    force_ending is set - there's none at all. force_ending's own prompt
+    wording already asks the model not to end on a party_choice, but this
+    project's own established stance is to make a hard constraint
+    structurally enforced rather than trust a prompt alone (same reasoning
+    as monster_index/skill being closed enums, not free text asked nicely
+    to stay in bounds) - a session's generation cap (config.MAX_ADAPTIVE_
+    GENERATIONS) has to actually hold, not just usually hold.
+
+    Confirmed live: force_ending also needs its own, tighter scene-count
+    rule (exactly 1, not the usual 1-3) - "bring the story to a genuine,
+    satisfying conclusion" reliably reads as license to spend MORE scenes
+    wrapping things up, not fewer, even with the same 1-3 limit restated
+    right next to it (3 straight validation failures on the first live
+    test of this path, all for exceeding the max). A single wrap-up scene
+    is also simply the right shape for an ending - it's what a hand-
+    authored campaign's own final scene already looks like."""
+    problems: list[str] = []
+    scenes = generated.scenes  # type: ignore[attr-defined]
+
+    if force_ending:
+        if len(scenes) != 1:
+            problems.append(f"a final continuation must be exactly 1 scene, got {len(scenes)}")
+    elif not (_CONTINUATION_MIN_SCENES <= len(scenes) <= _CONTINUATION_MAX_SCENES):
+        problems.append(
+            f"expected {_CONTINUATION_MIN_SCENES}-{_CONTINUATION_MAX_SCENES} scenes, "
+            f"got {len(scenes)}"
+        )
+
+    for i, scene in enumerate(scenes):
+        if scene.type == "combat" and scene.combat is None:
+            problems.append(f"scene {i} is type=combat but is missing its combat payload")
+        if scene.type == "skill_challenge" and scene.skill_challenge is None:
+            problems.append(
+                f"scene {i} is type=skill_challenge but is missing its skill_challenge payload"
+            )
+        if contains_cjk(scene.narrative_intro):
+            problems.append(f"scene {i}'s narrative_intro contains non-English text")
+        if scene.skill_challenge is not None and (
+            contains_cjk(scene.skill_challenge.success_text)
+            or contains_cjk(scene.skill_challenge.failure_text)
+        ):
+            problems.append(f"scene {i}'s skill_challenge text contains non-English text")
+
+    party_choice_indices = [i for i, s in enumerate(scenes) if s.type == "party_choice"]
+    if force_ending and party_choice_indices:
+        problems.append("this continuation must end the story - no party_choice scene is allowed")
+    elif len(party_choice_indices) > 1:
+        problems.append("at most one party_choice scene is allowed per continuation")
+    elif party_choice_indices and party_choice_indices[0] != len(scenes) - 1:
+        problems.append("a party_choice scene must be the last scene in the continuation")
+
+    return problems
+
+
+def generate_continuation(
+    situation: str,
+    responses: dict[str, str],
+    party: list[Character],
+    campaign_id: str,
+    generation_index: int,
+    force_ending: bool,
+    srd: SrdIndex | None = None,
+    encounters_dir: Path = DEFAULT_ENCOUNTERS_DIR,
+    rng: random.Random | None = None,
+) -> list[Scene]:
+    """Story-adaptive-encounters Phase 3: generates 1-3 new scenes live,
+    continuing the story from a party_choice's own resolved situation and
+    what the party actually said/chose to do - reuses generate_campaign's
+    whole schema/validate-retry/encounter-building machinery (see
+    _build_continuation_schema/_validate_continuation/_build_encounter),
+    just seeded from a live moment's context instead of a whole-campaign
+    premise, and without the size-based scene/combat-count rules that don't
+    apply to answering one choice.
+
+    Returns fresh Scene objects, chained to each other via next_scene_id in
+    the order generated - does not mutate anything; the caller (api/ws/
+    session.py's _resolve_party_choice) splices them into the live
+    Campaign's own scene list and continues the chain walk from the first
+    one. A generated combat scene's Encounter is written to disk under
+    encounters_dir exactly like generate_campaign's own combat scenes are,
+    since encounter.load_encounter only ever reads from disk - there's no
+    in-memory-only encounter path to use instead.
+
+    force_ending=True (the caller's own per-session generation cap, see
+    config.MAX_ADAPTIVE_GENERATIONS) tells the model this must be the LAST
+    continuation - no party_choice scene allowed, so the story reaches a
+    real conclusion instead of a session being able to keep this looping
+    indefinitely. The last scene's own next_scene_id is left unset either
+    way: if it's type=party_choice, that's the same "open" marker this
+    whole mechanism triggers off of, so the next time IT resolves, another
+    continuation generates automatically - self-similar by construction, no
+    special-casing needed here or in _resolve_party_choice."""
+    srd = srd or load_srd()
+    rng = rng or random.Random()
+    monster_choices = tuple(m for m in _ALLOWED_MONSTERS if m in srd.monsters)
+    skill_choices = tuple(sorted(srd.skills))
+    schema = _build_continuation_schema(monster_choices, skill_choices)
+
+    monster_list = "\n".join(
+        f"- {idx}: {srd.monsters[idx]['name']} (CR {srd.monsters[idx]['challenge_rating']}, "
+        f"{srd.monsters[idx]['hit_points']} HP)"
+        for idx in monster_choices
+    )
+    names = {c.id: c.name for c in party}
+    responses_summary = "\n".join(
+        f"- {names.get(character_id, character_id)}: {text}"
+        for character_id, text in responses.items()
+    )
+    # Confirmed live: asking for "a genuine, satisfying conclusion" within
+    # the usual 1-3 scenes reliably reads as license to spend MORE scenes
+    # wrapping things up, not fewer - 3 straight validation failures for
+    # exceeding the max, even with the same numeric limit restated right
+    # next to the ending instruction. Asking for exactly ONE scene removes
+    # the ambiguity entirely - a single wrap-up beat is also simply the
+    # right shape for an ending (a hand-authored campaign's own final scene
+    # already looks like this), not a compromise.
+    scene_count_text = (
+        "exactly 1 scene: a short epilogue that brings the story to a close"
+        if force_ending
+        else f"{_CONTINUATION_MIN_SCENES}-{_CONTINUATION_MAX_SCENES} scenes continuing the story"
+    )
+    ending_guidance = (
+        "This must be the FINAL continuation of the story - do not end with a "
+        "party_choice scene. Resolve everything in this one scene; do not leave anything "
+        "hanging for a scene that will never come."
+        if force_ending
+        else (
+            "If the story reaches a natural resolution, end with a narrative_beat and no "
+            "further party_choice scene. Otherwise, you may end your final scene with "
+            'type="party_choice" to let the party decide what happens next.'
+        )
+    )
+    base_prompt = load_prompt("party_choice_continuation").format(
+        situation=situation,
+        responses_summary=responses_summary,
+        scene_count_text=scene_count_text,
+        ending_guidance=ending_guidance,
+        monster_list=monster_list,
+        skill_list=", ".join(skill_choices),
+    )
+
+    problems: list[str] = []
+    generated: BaseModel | None = None
+    for _attempt in range(_MAX_ATTEMPTS):
+        message = base_prompt
+        if problems:
+            message += (
+                "\n\nYour previous attempt was rejected for: "
+                + "; ".join(problems)
+                + ". Fix this and try again."
+            )
+        generated = chat_structured(
+            messages=[{"role": "user", "content": message}], schema=schema, temperature=0.8
+        )
+        problems = _validate_continuation(generated, force_ending)
+        if not problems:
+            break
+    else:
+        raise GenerationError(
+            f"Story continuation generation failed validation after {_MAX_ATTEMPTS} "
+            f"attempts: {'; '.join(problems)}"
+        )
+
+    assert generated is not None
+    gen_scenes = generated.scenes  # type: ignore[attr-defined]
+
+    scenes: list[Scene] = []
+    for i, gen_scene in enumerate(gen_scenes):
+        scene_id = f"{campaign_id}__adaptive{generation_index}_{i + 1}"
+        next_scene_id = (
+            f"{campaign_id}__adaptive{generation_index}_{i + 2}"
+            if i + 1 < len(gen_scenes)
+            else None
+        )
+
+        encounter_ref: str | None = None
+        skill_challenge_def: SkillChallengeDef | None = None
+        if gen_scene.type == "combat":
+            # Unlike generate_campaign's own scene_id ("scene_N", needing
+            # campaign_id prefixed on for a globally-unique ref), scene_id
+            # here already has campaign_id baked in (see above, for cross-
+            # generation uniqueness within one campaign's scene list) - so
+            # it's already a fine encounter_ref on its own; prefixing again
+            # would just double it up (caught live: a real generated
+            # encounter file landed as
+            # "live_verify__live_verify__adaptive1_2.yaml").
+            encounter_ref = scene_id
+            encounter = _build_encounter(encounter_ref, gen_scene.combat, srd, rng)
+            encounters_dir.mkdir(parents=True, exist_ok=True)
+            (encounters_dir / f"{encounter_ref}.yaml").write_text(
+                yaml.safe_dump(encounter.model_dump(mode="json"), sort_keys=False), encoding="utf-8"
+            )
+        elif gen_scene.type == "skill_challenge":
+            dc = max(_DC_RANGE[0], min(_DC_RANGE[1], gen_scene.skill_challenge.dc))
+            skill_challenge_def = SkillChallengeDef(
+                skill=gen_scene.skill_challenge.skill,
+                dc=dc,
+                success_text=gen_scene.skill_challenge.success_text,
+                failure_text=gen_scene.skill_challenge.failure_text,
+            )
+
+        scenes.append(
+            Scene(
+                id=scene_id,
+                type=gen_scene.type,
+                narrative_intro=gen_scene.narrative_intro,
+                encounter_ref=encounter_ref,
+                skill_challenge_def=skill_challenge_def,
+                next_scene_id=next_scene_id,
+            )
+        )
+
+    return scenes
 
 
 def generate_campaign(

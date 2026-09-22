@@ -16,9 +16,11 @@ import yaml
 from pydantic import BaseModel
 
 from src.engine.campaign import Campaign
+from src.engine.character_creation import create_character
 from src.engine.encounter import Encounter
+from src.engine.state import Character
 from src.llm import campaign_generator as campaign_generator_module
-from src.llm.campaign_generator import GenerationError, generate_campaign
+from src.llm.campaign_generator import GenerationError, generate_campaign, generate_continuation
 
 _ONE_SHOT_SCENES: list[dict[str, Any]] = [
     {"type": "narrative_beat", "narrative_intro": "The party arrives at a quiet crossroads."},
@@ -302,3 +304,239 @@ def test_generate_campaign_battle_map_defaults_when_the_model_omits_the_new_fiel
     battle_map = encounter.battle_map
     assert (battle_map.width, battle_map.height) == (8, 5)
     assert all(cell != "wall" for row in battle_map.terrain for cell in row)
+
+
+def _fake_chat_structured_continuation(scenes: list[dict[str, Any]]) -> Any:
+    """Same shape as _fake_chat_structured above, but for generate_
+    continuation's own schema (no title/description - just scenes)."""
+
+    def _fake(
+        messages: list[dict[str, str]], schema: type[BaseModel], temperature: float = 0.2
+    ) -> BaseModel:
+        return schema.model_validate({"scenes": scenes})
+
+    return _fake
+
+
+def _continuation_party() -> list[Character]:
+    thorin = create_character(
+        character_id="thorin",
+        name="Thorin",
+        race_index="human",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+        chosen_equipment=["longsword"],
+    )
+    return [thorin]
+
+
+def test_generate_continuation_chains_the_generated_scenes_in_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scenes: list[dict[str, Any]] = [
+        {"type": "narrative_beat", "narrative_intro": "The party presses on."},
+        {
+            "type": "combat",
+            "narrative_intro": "Reinforcements arrive!",
+            "combat": {"monster_index": "goblin", "monster_count": 2},
+        },
+    ]
+    monkeypatch.setattr(
+        campaign_generator_module, "chat_structured", _fake_chat_structured_continuation(scenes)
+    )
+
+    generated = generate_continuation(
+        situation="The party finds a hidden ledger.",
+        responses={"thorin": "I say we press on and hunt them down."},
+        party=_continuation_party(),
+        campaign_id="test_campaign",
+        generation_index=1,
+        force_ending=False,
+        encounters_dir=tmp_path / "encounters",
+        rng=random.Random(1),
+    )
+
+    assert [s.id for s in generated] == [
+        "test_campaign__adaptive1_1",
+        "test_campaign__adaptive1_2",
+    ]
+    assert generated[0].next_scene_id == "test_campaign__adaptive1_2"
+    # The last generated scene isn't a party_choice - the chain genuinely
+    # ends here, same as an authored campaign's own final scene.
+    assert generated[1].next_scene_id is None
+    assert generated[1].type == "combat"
+    assert generated[1].encounter_ref is not None
+
+    encounter = Encounter.model_validate(
+        yaml.safe_load(
+            (tmp_path / "encounters" / f"{generated[1].encounter_ref}.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+    assert len(encounter.monsters) == 2
+    assert all(m.monster_index == "goblin" for m in encounter.monsters)
+
+
+def test_generate_continuation_ending_in_party_choice_leaves_next_scene_id_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The self-similar recursion marker: a generated party_choice scene's
+    # own next_scene_id is unset the exact same way a hand-authored "open"
+    # one is - the next time THIS one resolves, generation fires again
+    # automatically, no special-casing needed in _resolve_party_choice.
+    scenes: list[dict[str, Any]] = [
+        {"type": "narrative_beat", "narrative_intro": "The trail leads to a fork in the road."},
+        {"type": "party_choice", "narrative_intro": "Which way does the party go?"},
+    ]
+    monkeypatch.setattr(
+        campaign_generator_module, "chat_structured", _fake_chat_structured_continuation(scenes)
+    )
+
+    generated = generate_continuation(
+        situation="The party finds a hidden ledger.",
+        responses={"thorin": "Let's follow the trail."},
+        party=_continuation_party(),
+        campaign_id="test_campaign",
+        generation_index=1,
+        force_ending=False,
+        encounters_dir=tmp_path / "encounters",
+        rng=random.Random(1),
+    )
+
+    assert generated[-1].type == "party_choice"
+    assert generated[-1].next_scene_id is None
+
+
+def test_generate_continuation_retries_when_party_choice_is_not_the_last_scene(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[int] = []
+    bad_scenes = [
+        {"type": "party_choice", "narrative_intro": "A choice, oddly placed first."},
+        {"type": "narrative_beat", "narrative_intro": "The story continues anyway."},
+    ]
+    good_scenes = [{"type": "narrative_beat", "narrative_intro": "A clean ending."}]
+
+    def _fake(
+        messages: list[dict[str, str]], schema: type[BaseModel], temperature: float = 0.2
+    ) -> BaseModel:
+        calls.append(1)
+        scenes = bad_scenes if len(calls) == 1 else good_scenes
+        return schema.model_validate({"scenes": scenes})
+
+    monkeypatch.setattr(campaign_generator_module, "chat_structured", _fake)
+
+    generated = generate_continuation(
+        situation="Situation.",
+        responses={"thorin": "Response."},
+        party=_continuation_party(),
+        campaign_id="test_campaign",
+        generation_index=1,
+        force_ending=False,
+        encounters_dir=tmp_path / "encounters",
+        rng=random.Random(1),
+    )
+
+    assert len(calls) == 2
+    assert len(generated) == 1
+
+
+def test_generate_continuation_force_ending_rejects_any_party_choice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # config.MAX_ADAPTIVE_GENERATIONS's own hard-stop: the prompt already
+    # asks the model not to end on a party_choice when force_ending is set,
+    # but this project's own stance is to enforce a hard constraint
+    # structurally, not just prompt for it - a party_choice as the LAST
+    # scene would otherwise be perfectly valid (see the test above), so
+    # only force_ending's own validation rule catches this.
+    calls: list[int] = []
+    still_open = [{"type": "party_choice", "narrative_intro": "One more choice, despite the cap."}]
+    real_ending = [{"type": "narrative_beat", "narrative_intro": "The story concludes."}]
+
+    def _fake(
+        messages: list[dict[str, str]], schema: type[BaseModel], temperature: float = 0.2
+    ) -> BaseModel:
+        calls.append(1)
+        scenes = still_open if len(calls) == 1 else real_ending
+        return schema.model_validate({"scenes": scenes})
+
+    monkeypatch.setattr(campaign_generator_module, "chat_structured", _fake)
+
+    generated = generate_continuation(
+        situation="Situation.",
+        responses={"thorin": "Response."},
+        party=_continuation_party(),
+        campaign_id="test_campaign",
+        generation_index=3,
+        force_ending=True,
+        encounters_dir=tmp_path / "encounters",
+        rng=random.Random(1),
+    )
+
+    assert len(calls) == 2
+    assert generated[-1].type == "narrative_beat"
+    assert generated[-1].next_scene_id is None
+
+
+def test_generate_continuation_raises_after_exhausting_retries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    too_many_scenes = [
+        {"type": "narrative_beat", "narrative_intro": "One."},
+        {"type": "narrative_beat", "narrative_intro": "Two."},
+        {"type": "narrative_beat", "narrative_intro": "Three."},
+        {"type": "narrative_beat", "narrative_intro": "Four."},
+    ]
+    monkeypatch.setattr(
+        campaign_generator_module,
+        "chat_structured",
+        _fake_chat_structured_continuation(too_many_scenes),
+    )
+
+    with pytest.raises(GenerationError, match="continuation"):
+        generate_continuation(
+            situation="Situation.",
+            responses={"thorin": "Response."},
+            party=_continuation_party(),
+            campaign_id="test_campaign",
+            generation_index=1,
+            force_ending=False,
+            encounters_dir=tmp_path / "encounters",
+            rng=random.Random(1),
+        )
+
+
+def test_generate_continuation_prompt_includes_the_situation_and_party_responses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured_messages: list[dict[str, str]] = []
+
+    def _fake(
+        messages: list[dict[str, str]], schema: type[BaseModel], temperature: float = 0.2
+    ) -> BaseModel:
+        captured_messages.extend(messages)
+        return schema.model_validate(
+            {"scenes": [{"type": "narrative_beat", "narrative_intro": "An ending."}]}
+        )
+
+    monkeypatch.setattr(campaign_generator_module, "chat_structured", _fake)
+
+    generate_continuation(
+        situation="A ledger names a shadowy backer.",
+        responses={"thorin": "I want to track down whoever is really behind this."},
+        party=_continuation_party(),
+        campaign_id="test_campaign",
+        generation_index=1,
+        force_ending=False,
+        encounters_dir=tmp_path / "encounters",
+        rng=random.Random(1),
+    )
+
+    prompt_text = captured_messages[0]["content"]
+    assert "A ledger names a shadowy backer." in prompt_text
+    assert "Thorin" in prompt_text
+    assert "I want to track down whoever is really behind this." in prompt_text

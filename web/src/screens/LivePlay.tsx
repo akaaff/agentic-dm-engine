@@ -25,6 +25,7 @@ export default function LivePlay({
     disconnectedActors,
     bardicOffer,
     partyChoice,
+    campaignComplete,
     error,
     connected,
     sendPlayerAction,
@@ -169,10 +170,22 @@ export default function LivePlay({
             <button type="button" onClick={() => sendRest('long')}>
               Long Rest
             </button>
-            <button type="button" onClick={sendContinueCampaign}>
-              Continue
-            </button>
+            {!campaignComplete && (
+              <button type="button" onClick={sendContinueCampaign}>
+                Continue
+              </button>
+            )}
           </div>
+        )}
+        {campaignComplete && logCaughtUp && (
+          // Story-adaptive-encounters Phase 3: the chain has genuinely run
+          // out (including via a model-generated ending, not just an
+          // authored one) - Continue is hidden above rather than offering a
+          // click that would silently re-walk an already-finished story
+          // (see Session.campaign_complete's own docstring). Rest still
+          // works - there's nothing wrong with a final rest after the story
+          // wraps up.
+          <p className="status-banner">The adventure has concluded.</p>
         )}
         <div className="scene-row">
           {showCombatGrid && gameState?.battle_map ? (

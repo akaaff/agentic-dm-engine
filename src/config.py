@@ -83,3 +83,14 @@ INTENT_PARSER_OLLAMA_MODEL = os.environ.get("INTENT_PARSER_OLLAMA_MODEL", "dm-in
 # (e.g. to run the "finetuned" intent-parser student alongside the Ollama
 # teacher on a 10GB card, Day 27), or just for faster iteration.
 SCENE_IMAGES_ENABLED = os.environ.get("SCENE_IMAGES_ENABLED", "1") != "0"
+
+# Story-adaptive-encounters Phase 3: caps how many times one live session
+# can chain a model-generated story continuation onto an "open" party_choice
+# scene (next_scene_id left unset - see campaign_generator.generate_
+# continuation and api/ws/session.py's _resolve_party_choice). A narrative
+# pacing bound, not a safety one like MAX_CONCURRENT_SESSIONS above - without
+# it, a party that keeps steering into more open choices could keep the
+# model improvising indefinitely; the generation reached at the cap is told
+# to actually end the story (see force_ending) rather than the session just
+# silently refusing to continue once it's hit.
+MAX_ADAPTIVE_GENERATIONS = int(os.environ.get("MAX_ADAPTIVE_GENERATIONS", "3"))

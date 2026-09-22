@@ -81,13 +81,18 @@ scenes:
       The bandits who orchestrated the raids make their stand at the
       mouth of their hideout, blades drawn and nothing left to lose.
     encounter_ref: bandit_hideout
-    next_scene_id: resolution
+    next_scene_id: hideout_aftermath
 
-  - id: resolution
-    type: narrative_beat
+  # Deliberately open-ended (no next_scene_id) - the story-adaptive-
+  # encounters initiative's Phase 3: how the campaign actually ends
+  # depends on what the party decides to do with what they find here, not
+  # a single authored epilogue. See api/ws/session.py's _resolve_party_
+  # choice/generate_continuation.
+  - id: hideout_aftermath
+    type: party_choice
     narrative_intro: >
-      With the bandits scattered and their kobold hirelings routed, the
-      trade road falls quiet again. Hollowford's caravans roll on
-      schedule for the first time in a month, and the party's names are
-      spoken warmly in every tavern along the route.
-    next_scene_id: null
+      The bandits lie defeated, their hideout ransacked and quiet. Among
+      their gear the party finds a ledger of names, coin, and half-
+      finished plans - whoever they answered to isn't accounted for here.
+      The trade road is safe again, for now, but what the party does with
+      what they've found is entirely up to them.
