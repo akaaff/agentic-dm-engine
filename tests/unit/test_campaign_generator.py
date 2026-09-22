@@ -7,6 +7,7 @@ belongs in tests/llm/, not here."""
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Any
 
@@ -221,3 +222,83 @@ def test_generate_campaign_builds_a_skill_challenge_scene(
         )
     )
     assert len(encounter.monsters) == 2
+
+
+def test_generate_campaign_builds_a_battle_map_from_the_generated_layout_choice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scenes: list[dict[str, Any]] = [
+        {"type": "narrative_beat", "narrative_intro": "Intro."},
+        {
+            "type": "combat",
+            "narrative_intro": "The party is ambushed in a narrow mountain pass!",
+            "combat": {
+                "monster_index": "goblin",
+                "monster_count": 3,
+                "layout": "narrow_corridor",
+                "size": "small",
+                "difficult_terrain": "heavy",
+                "hazard": "light",
+            },
+        },
+        {"type": "narrative_beat", "narrative_intro": "Outro."},
+    ]
+    monkeypatch.setattr(campaign_generator_module, "chat_structured", _fake_chat_structured(scenes))
+
+    campaign = generate_campaign(
+        campaign_id="test_gen_layout",
+        size="one_shot",
+        campaigns_dir=tmp_path / "campaigns",
+        encounters_dir=tmp_path / "campaigns" / "encounters",
+        rng=random.Random(1),
+    )
+
+    combat_scene = campaign.scenes[1]
+    encounter = Encounter.model_validate(
+        yaml.safe_load(
+            (
+                tmp_path / "campaigns" / "encounters" / f"{combat_scene.encounter_ref}.yaml"
+            ).read_text(encoding="utf-8")
+        )
+    )
+    battle_map = encounter.battle_map
+    # "small" -> 6x4, per battle_map_templates._SIZE_DIMENSIONS.
+    assert (battle_map.width, battle_map.height) == (6, 4)
+    # "narrow_corridor" -> walls confined to the top/bottom rows only.
+    assert all(cell == "wall" for cell in battle_map.terrain[0])
+    assert all(cell == "wall" for cell in battle_map.terrain[-1])
+    assert any(cell == "difficult" for row in battle_map.terrain[1:-1] for cell in row), (
+        "heavy difficult_terrain should have scattered at least one cell"
+    )
+
+
+def test_generate_campaign_battle_map_defaults_when_the_model_omits_the_new_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # _ONE_SHOT_SCENES' own combat dict predates layout/size/difficult_
+    # terrain/hazard - the new fields must default rather than reject.
+    monkeypatch.setattr(
+        campaign_generator_module, "chat_structured", _fake_chat_structured(_ONE_SHOT_SCENES)
+    )
+
+    campaign = generate_campaign(
+        campaign_id="test_gen_default_layout",
+        size="one_shot",
+        campaigns_dir=tmp_path / "campaigns",
+        encounters_dir=tmp_path / "campaigns" / "encounters",
+        rng=random.Random(1),
+    )
+
+    combat_scene = campaign.scenes[1]
+    encounter = Encounter.model_validate(
+        yaml.safe_load(
+            (
+                tmp_path / "campaigns" / "encounters" / f"{combat_scene.encounter_ref}.yaml"
+            ).read_text(encoding="utf-8")
+        )
+    )
+    # Defaults reproduce the old fixed template's own shape: open_room (no
+    # walls) at medium size (8x5).
+    battle_map = encounter.battle_map
+    assert (battle_map.width, battle_map.height) == (8, 5)
+    assert all(cell != "wall" for row in battle_map.terrain for cell in row)

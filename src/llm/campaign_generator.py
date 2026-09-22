@@ -20,12 +20,18 @@ need a real validate-and-retry loop.
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Literal
 
 import yaml
 from pydantic import BaseModel
 
+from src.engine.battle_map_templates import (
+    MONSTER_SPAWN_NAMES,
+    PARTY_SPAWN_NAMES,
+    build_battle_map,
+)
 from src.engine.campaign import (
     DEFAULT_CAMPAIGNS_DIR,
     Campaign,
@@ -34,7 +40,6 @@ from src.engine.campaign import (
     SkillChallengeDef,
 )
 from src.engine.encounter import DEFAULT_ENCOUNTERS_DIR, Encounter, MonsterSpawn
-from src.engine.position import BattleMap, Position, TerrainType
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.llm.providers import chat_structured, contains_cjk, load_prompt
 
@@ -72,11 +77,6 @@ _MAX_ATTEMPTS = 3
 _MONSTER_COUNT_RANGE = (2, 4)
 _DC_RANGE = (10, 15)
 
-_BATTLE_MAP_WIDTH = 8
-_BATTLE_MAP_HEIGHT = 5
-_PARTY_SPAWN_NAMES = ["party_1", "party_2", "party_3", "party_4"]
-_MONSTER_SPAWN_NAMES = ["monster_1", "monster_2", "monster_3", "monster_4"]
-
 
 class GenerationError(ValueError):
     pass
@@ -91,6 +91,16 @@ def _build_schema(
     class GeneratedCombatBeat(BaseModel):
         monster_index: monster_index_type  # type: ignore[valid-type]
         monster_count: int
+        # Battle-map shape (issue-tracked as the "story-adaptive encounters"
+        # initiative's first piece) - a closed set of layout/size/terrain-
+        # amount choices, matched to this scene's own narrative_intro.
+        # Defaults reproduce the old fixed template's own shape, so an
+        # older/degenerate response that omits these still resolves to a
+        # sane encounter rather than failing validation.
+        layout: Literal["open_room", "narrow_corridor", "two_rooms", "cluttered"] = "open_room"
+        size: Literal["small", "medium", "large"] = "medium"
+        difficult_terrain: Literal["none", "light", "heavy"] = "none"
+        hazard: Literal["none", "light", "heavy"] = "none"
 
     class GeneratedSkillBeat(BaseModel):
         skill: skill_type  # type: ignore[valid-type]
@@ -169,61 +179,45 @@ def _validate_generated(generated: BaseModel, size: CampaignSize) -> list[str]:
     return problems
 
 
-def _generated_battle_map() -> BattleMap:
-    """A fixed template (not derived from monster_count) - same shape as
-    every hand-authored encounter in this project: mostly open floor with a
-    couple of difficult-terrain squares for texture, no walls (minimizes the
-    risk of a procedurally-placed spawn point ending up unreachable, a risk
-    a hand-authored map's human author would just notice and avoid)."""
-    open_row: list[TerrainType] = ["floor"] * _BATTLE_MAP_WIDTH
-    textured_row: list[TerrainType] = [
-        "floor",
-        "floor",
-        "floor",
-        "difficult",
-        "difficult",
-        "floor",
-        "floor",
-        "floor",
-    ]
-    terrain = [open_row, textured_row, list(open_row), textured_row, list(open_row)]
-    spawn_points = {
-        "party_1": Position(x=0, y=1),
-        "party_2": Position(x=0, y=2),
-        "party_3": Position(x=0, y=3),
-        "party_4": Position(x=1, y=2),
-        "monster_1": Position(x=7, y=1),
-        "monster_2": Position(x=7, y=2),
-        "monster_3": Position(x=7, y=3),
-        "monster_4": Position(x=6, y=2),
-    }
-    return BattleMap(
-        width=_BATTLE_MAP_WIDTH,
-        height=_BATTLE_MAP_HEIGHT,
-        terrain=terrain,
-        spawn_points=spawn_points,
-    )
-
-
 def _build_encounter(
-    encounter_id: str, monster_index: str, monster_count: int, srd: SrdIndex
+    encounter_id: str,
+    gen_combat: BaseModel,
+    srd: SrdIndex,
+    rng: random.Random,
 ) -> Encounter:
-    monster_count = max(_MONSTER_COUNT_RANGE[0], min(_MONSTER_COUNT_RANGE[1], monster_count))
+    """`gen_combat` is a `GeneratedCombatBeat` instance (the dynamically-
+    built nested class from `_build_schema` - not imported/typed directly
+    since it's rebuilt fresh per call with that call's own monster_index
+    enum). Battle-map shape comes from `battle_map_templates.build_battle_
+    map`, driven entirely by `gen_combat`'s own closed-set layout/size/
+    terrain fields - never a raw grid the model produced itself."""
+    monster_index: str = gen_combat.monster_index  # type: ignore[attr-defined]
+    monster_count = max(
+        _MONSTER_COUNT_RANGE[0],
+        min(_MONSTER_COUNT_RANGE[1], gen_combat.monster_count),  # type: ignore[attr-defined]
+    )
     monsters = [
         MonsterSpawn(
             monster_index=monster_index,
             character_id=f"{monster_index}_{i + 1}",
-            spawn_point=_MONSTER_SPAWN_NAMES[i],
+            spawn_point=MONSTER_SPAWN_NAMES[i],
         )
         for i in range(monster_count)
     ]
     monster_name = srd.monsters[monster_index]["name"]
+    battle_map = build_battle_map(
+        layout=gen_combat.layout,  # type: ignore[attr-defined]
+        size=gen_combat.size,  # type: ignore[attr-defined]
+        difficult_terrain=gen_combat.difficult_terrain,  # type: ignore[attr-defined]
+        hazard=gen_combat.hazard,  # type: ignore[attr-defined]
+        rng=rng,
+    )
     return Encounter(
         id=encounter_id,
         name=f"{monster_name} Encounter",
-        battle_map=_generated_battle_map(),
+        battle_map=battle_map,
         monsters=monsters,
-        party_spawn_points=_PARTY_SPAWN_NAMES,
+        party_spawn_points=PARTY_SPAWN_NAMES,
     )
 
 
@@ -233,12 +227,17 @@ def generate_campaign(
     srd: SrdIndex | None = None,
     campaigns_dir: Path = DEFAULT_CAMPAIGNS_DIR,
     encounters_dir: Path = DEFAULT_ENCOUNTERS_DIR,
+    rng: random.Random | None = None,
 ) -> Campaign:
     """Generates, validates, and saves a new campaign (plus one Encounter
     YAML per combat scene) under `campaigns_dir`/`encounters_dir` - same
     file layout and same pydantic models a hand-authored campaign uses, so
-    `load_campaign(campaign_id)` afterward can't tell the difference."""
+    `load_campaign(campaign_id)` afterward can't tell the difference.
+    `rng` (this project's usual injected-randomness convention, so a test
+    can pass a seeded one) only ever decides battle_map_templates' own
+    texture scatter - never anything the LLM itself produces."""
     srd = srd or load_srd()
+    rng = rng or random.Random()
     monster_choices = tuple(m for m in _ALLOWED_MONSTERS if m in srd.monsters)
     skill_choices = tuple(sorted(srd.skills))
     schema = _build_schema(monster_choices, skill_choices)
@@ -289,9 +288,7 @@ def generate_campaign(
         skill_challenge_def: SkillChallengeDef | None = None
         if gen_scene.type == "combat":
             encounter_ref = f"{campaign_id}__{scene_id}"
-            encounter = _build_encounter(
-                encounter_ref, gen_scene.combat.monster_index, gen_scene.combat.monster_count, srd
-            )
+            encounter = _build_encounter(encounter_ref, gen_scene.combat, srd, rng)
             encounters_dir.mkdir(parents=True, exist_ok=True)
             (encounters_dir / f"{encounter_ref}.yaml").write_text(
                 yaml.safe_dump(encounter.model_dump(mode="json"), sort_keys=False), encoding="utf-8"

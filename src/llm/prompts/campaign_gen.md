@@ -14,6 +14,17 @@ engine's job).
 - `type: "combat"` scenes must also set `combat`: pick exactly one
   `monster_index` from the list below (do not invent a monster not on this
   list) and a `monster_count` (2-4) that makes sense for the narrative_intro.
+  Also pick a battle-map shape that matches the narrative_intro you just
+  wrote: `layout` (`open_room` for an ordinary open space; `narrow_corridor`
+  for a tunnel, hallway, or mountain pass; `two_rooms` for two connected
+  chambers or a doorway/chokepoint; `cluttered` for wreckage, dense
+  undergrowth, or a room full of obstacles), `size` (`small`/`medium`/
+  `large` - a `large` room for a bigger fight or `monster_count` of 4, a
+  `small` one for a cramped or intimate space), and how much `difficult_
+  terrain` and `hazard` the ground itself has (`none`/`light`/`heavy` -
+  e.g. rubble, mud, or brambles for difficult terrain; broken glass, hot
+  coals, or caltrops-like debris for a hazard). Pick `none`/`open_room`/
+  `medium` for an unremarkable space - don't force texture onto every fight.
 - `type: "skill_challenge"` scenes must also set `skill_challenge`: pick one
   `skill` from the list below, a `dc` (10-15), and two short flavor lines -
   `success_text` and `failure_text` - each 1-2 sentences describing what
