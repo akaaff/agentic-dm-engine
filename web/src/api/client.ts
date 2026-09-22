@@ -91,6 +91,14 @@ export interface ClassDetail extends ClassSummary {
   // at spells_known.
   spells_known: number
   known_spells_pool: SpellSummary[]
+  // Issue #30's follow-up phase: set only for a Prepared caster (Cleric/
+  // Druid/Wizard/Paladin) - the wizard's picker offers the same
+  // known_spells_pool, but the required count depends on the player's own
+  // ability scores (spellcasting-ability modifier + level), so it's
+  // computed client-side (see preparedSpellCount in CharacterCreator.tsx)
+  // once ability scores are assigned, rather than a fixed number like
+  // spells_known.
+  spellcasting_ability: string | null
 }
 
 export interface SkillSummary {
@@ -137,6 +145,7 @@ export interface CreateCharacterRequest {
   fighting_style?: string
   chosen_racial_skills?: string[]
   chosen_spells?: string[]
+  chosen_prepared_spells?: string[]
 }
 
 export interface Character {
@@ -156,6 +165,7 @@ export interface Character {
   skill_proficiencies: string[]
   saving_throw_proficiencies: string[]
   known_spells: string[]
+  prepared_spells: string[]
   is_companion: boolean
   persona: string | null
   monster_index: string | null

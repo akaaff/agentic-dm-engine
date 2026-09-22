@@ -117,7 +117,19 @@ class Character(BaseModel):
     (Bard, Sorcerer) - see character_creation.SPELLS_KNOWN_BY_LEVEL and
     turn_engine._resolve_cast_spell's restriction. Empty (and meaningless)
     for every other class, including "Prepared" casters (Cleric/Druid/
-    Wizard/Paladin), a deliberately deferred second phase."""
+    Wizard/Paladin) - see prepared_spells below, the analogous field for
+    that mechanic."""
+    prepared_spells: list[str] = []
+    """Issue #30's follow-up phase: normalized SRD spell indices a
+    "Prepared" caster (Cleric, Druid, Wizard, Paladin) currently has
+    prepared and can cast (level 1+ only, same cantrip carve-out as
+    known_spells). Unlike known_spells' fixed per-level table, the required
+    count depends on the spellcasting ability's modifier - see
+    character_creation.prepared_spell_count and turn_engine._resolve_cast_
+    spell's restriction. Empty (and meaningless) for every other class,
+    including "Spells Known" casters (Bard/Sorcerer), which use
+    known_spells instead - the two mechanics are mutually exclusive per
+    class, never both populated for the same character."""
     saving_throw_proficiencies: list[AbilityScore] = []
     """Populated by character_creation.py from the SRD class's `saving_throws`
     (e.g. Fighter: STR, CON) - see rules.saving_throw_bonus. Empty for

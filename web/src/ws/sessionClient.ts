@@ -42,6 +42,10 @@ export interface LiveCharacter {
   // meaningful only for a "Spells Known" caster (Bard/Sorcerer); empty for
   // everyone else, including cantrips (which stay unrestricted/untracked).
   known_spells: string[]
+  // Issue #30's follow-up phase: the analogous field for a Prepared caster
+  // (Cleric/Druid/Wizard/Paladin) - mutually exclusive with known_spells,
+  // never both populated for the same character.
+  prepared_spells: string[]
   exhaustion_level: number
   is_dodging: boolean
   has_help_advantage: boolean

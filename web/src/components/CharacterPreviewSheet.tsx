@@ -43,6 +43,7 @@ export default function CharacterPreviewSheet({
   chosenEquipment,
   equipment,
   chosenSpells,
+  chosenPreparedSpells,
 }: {
   name: string
   race: RaceSummary | undefined
@@ -59,6 +60,7 @@ export default function CharacterPreviewSheet({
   chosenEquipment: string[]
   equipment: EquipmentSummary[]
   chosenSpells: string[]
+  chosenPreparedSpells: string[]
 }) {
   const portrait = portraitUrl({
     race_index: race?.index ?? null,
@@ -161,6 +163,31 @@ export default function CharacterPreviewSheet({
           {chosenSpells.length > 0 ? (
             <ul className="detail-action-list">
               {chosenSpells
+                .map((idx) => classDetail.known_spells_pool.find((s) => s.index === idx))
+                .filter((s): s is (typeof classDetail.known_spells_pool)[number] => s !== undefined)
+                .map((s) => (
+                  <li key={s.index}>
+                    {nameWithSpellDetail(s)}
+                    <InfoTip text={s.desc.trim()} />
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <p className="companion-meta">none chosen yet</p>
+          )}
+        </div>
+      )}
+
+      {classDetail && classDetail.spellcasting_ability && (
+        // Issue #30's follow-up phase: only meaningful for a Prepared
+        // caster (Cleric/Druid/Wizard/Paladin) - same "pool + this
+        // character's own picks" pattern as "Spells known" above, just
+        // against chosenPreparedSpells instead of chosenSpells.
+        <div>
+          <strong>Spells prepared:</strong>
+          {chosenPreparedSpells.length > 0 ? (
+            <ul className="detail-action-list">
+              {chosenPreparedSpells
                 .map((idx) => classDetail.known_spells_pool.find((s) => s.index === idx))
                 .filter((s): s is (typeof classDetail.known_spells_pool)[number] => s !== undefined)
                 .map((s) => (

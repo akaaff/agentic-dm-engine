@@ -52,6 +52,7 @@ def _two_person_party() -> list[Character]:
         background_index="acolyte",
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
+        chosen_prepared_spells=["magic-missile", "mage-armor", "sleep"],
         chosen_equipment=["dagger"],
     )
     return [thorin, elrond]
@@ -78,6 +79,11 @@ def _end_turn(state, actor_id: str) -> None:  # type: ignore[no-untyped-def]
 def test_scorching_ray_now_resolves_as_a_real_attack_roll_spell() -> None:
     state = _build_demo_state(_INITIATIVE)
     state.characters["elrond"].spell_slots[2] = 1  # Scorching Ray is 2nd level
+    # Same reasoning as spell_slots above - creation only ever offers a
+    # level-1 prepared pool, so a 2nd-level spell is poked in directly too
+    # (issue #30's follow-up phase, same pattern test_turn_engine_spells.py
+    # already uses for Hold Person).
+    state.characters["elrond"].prepared_spells.append("scorching-ray")
     _end_turn(state, "thorin")
     action = ParsedAction(
         actor="elrond",
@@ -98,6 +104,11 @@ def test_scorching_ray_now_resolves_as_a_real_attack_roll_spell() -> None:
 def test_call_lightning_now_resolves_as_a_real_save_spell() -> None:
     state = _build_demo_state(_INITIATIVE)
     state.characters["elrond"].spell_slots[3] = 1  # Call Lightning is 3rd level
+    # Call Lightning is Druid-only in real SRD, not Wizard - poked directly
+    # onto Elrond's prepared_spells for this pure-mechanics test rather than
+    # standing up a whole separate Druid fixture (same precedent as the
+    # level-gap poke above).
+    state.characters["elrond"].prepared_spells.append("call-lightning")
     _end_turn(state, "thorin")
     goblin = state.characters["goblin_1"]
     hp_before = goblin.hp
@@ -247,6 +258,7 @@ def test_ordinary_zero_hp_unconscious_is_not_woken_by_further_damage() -> None:
 def test_invisibility_applies_the_invisible_condition_to_a_willing_ally() -> None:
     state = _build_demo_state(_INITIATIVE)
     state.characters["elrond"].spell_slots[2] = 1  # Invisibility is 2nd level
+    state.characters["elrond"].prepared_spells.append("invisibility")  # same level-gap poke
     _end_turn(state, "thorin")
     action = ParsedAction(
         actor="elrond",
@@ -303,6 +315,10 @@ def test_shield_of_faith_adds_a_flat_plus_2_ac() -> None:
     state = _build_demo_state(_INITIATIVE)
     thorin = state.characters["thorin"]
     ac_before = thorin.ac
+    # Shield of Faith is Cleric/Paladin in real SRD, not Wizard - poked
+    # directly onto Elrond's prepared_spells for this pure-mechanics test,
+    # same precedent as Call Lightning above.
+    state.characters["elrond"].prepared_spells.append("shield-of-faith")
     _end_turn(state, "thorin")
     action = ParsedAction(
         actor="elrond",

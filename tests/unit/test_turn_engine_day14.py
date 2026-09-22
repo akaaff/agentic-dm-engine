@@ -40,6 +40,9 @@ def _two_person_party() -> list[Character]:
         background_index="acolyte",
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
+        # INT15 -> mod2; issue #30's follow-up phase requires exactly
+        # prepared_spell_count("wizard", 1, 2) == 3 real level-1 spells.
+        chosen_prepared_spells=["magic-missile", "burning-hands", "mage-armor"],
         chosen_equipment=["dagger"],
     )
     return [thorin, elrond]
@@ -124,6 +127,7 @@ def test_cast_leveled_spell_consumes_a_slot_and_can_kill() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-medicine", "skill-religion"],
+        chosen_prepared_spells=["guiding-bolt", "cure-wounds", "bless", "healing-word"],
     )
     encounter = build_demo_encounter()
     state = build_encounter_state(encounter, [mira], _FixedRandom([20, 5, 5]))  # type: ignore[arg-type]
@@ -152,6 +156,7 @@ def test_cast_spell_with_no_slots_remaining_errors_clearly() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-medicine", "skill-religion"],
+        chosen_prepared_spells=["guiding-bolt", "cure-wounds", "bless", "healing-word"],
     )
     encounter = build_demo_encounter()
     state = build_encounter_state(encounter, [mira], _FixedRandom([20, 5, 5]))  # type: ignore[arg-type]
@@ -186,6 +191,10 @@ def test_cast_spell_rejects_still_unsupported_no_roll_spells() -> None:
     # allowlist deliberately avoids.
     state = _build_demo_state(_INITIATIVE)
     _end_turn(state, "thorin")
+    # Flaming Sphere is 2nd level; creation only ever offers a level-1
+    # prepared pool, so it's poked in directly (issue #30's follow-up
+    # phase, same "poke state" pattern used elsewhere for a level-gap).
+    state.characters["elrond"].prepared_spells.append("flaming-sphere")
     action = ParsedAction(
         actor="elrond",
         verb="cast_spell",

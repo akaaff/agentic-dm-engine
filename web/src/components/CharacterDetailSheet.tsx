@@ -188,6 +188,13 @@ export default function CharacterDetailSheet({
   const knownSpells = character.known_spells
     .map((idx) => knownSpellsByIndex.get(idx))
     .filter((s): s is SpellSummary => s !== undefined)
+  // Issue #30's follow-up phase - the analogous derivation for a Prepared
+  // caster (Cleric/Druid/Wizard/Paladin), reading character.prepared_spells
+  // against the same knownSpellsPool (widened server-side to cover both
+  // mechanics) rather than character.known_spells.
+  const preparedSpells = character.prepared_spells
+    .map((idx) => knownSpellsByIndex.get(idx))
+    .filter((s): s is SpellSummary => s !== undefined)
 
   return (
     <div className="character-detail-sheet sheet">
@@ -328,6 +335,22 @@ export default function CharacterDetailSheet({
           <strong>Known spells:</strong>
           <ul className="detail-action-list">
             {knownSpells.map((s) => (
+              <li key={s.index}>
+                {nameWithSpellDetail(s)}
+                <InfoTip text={s.desc.trim()} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {preparedSpells.length > 0 && (
+        // Issue #30's follow-up phase - a Prepared caster (Cleric/Druid/
+        // Wizard/Paladin) uses this section instead of "Known spells".
+        <div>
+          <strong>Prepared spells:</strong>
+          <ul className="detail-action-list">
+            {preparedSpells.map((s) => (
               <li key={s.index}>
                 {nameWithSpellDetail(s)}
                 <InfoTip text={s.desc.trim()} />

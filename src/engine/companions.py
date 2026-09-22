@@ -41,6 +41,11 @@ class CompanionSpec(BaseModel):
     """Only meaningful (and required by create_character) for a "Spells
     Known" caster companion - Bard or Sorcerer (issue #30). Pip Larkspur
     (bard) is currently the only companion that needs this authored."""
+    chosen_prepared_spells: list[str] | None = None
+    """Only meaningful (and required by create_character) for a Prepared
+    caster companion - Cleric, Druid, Wizard, or Paladin (issue #30's
+    follow-up phase). Sister Mira (cleric) is currently the only companion
+    that needs this authored."""
 
 
 def load_companion_spec(
@@ -95,4 +100,5 @@ def build_companion(spec: CompanionSpec, srd: SrdIndex | None = None) -> Charact
         gender=spec.gender,
         chosen_racial_skills=spec.chosen_racial_skills,
         chosen_spells=spec.chosen_spells,
+        chosen_prepared_spells=spec.chosen_prepared_spells,
     )

@@ -138,6 +138,7 @@ def test_create_elf_wizard_end_to_end() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
+        chosen_prepared_spells=["magic-missile", "burning-hands", "mage-armor"],
     )
 
     assert character.stats == {"STR": 8, "DEX": 16, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10}
@@ -192,6 +193,10 @@ def test_wizard_cannot_choose_gear_they_have_no_proficiency_with() -> None:
             background_index="acolyte",
             base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
             chosen_skills=["skill-arcana", "skill-history"],
+            # Human (not Elf, unlike Elrond elsewhere) -> +1 to every
+            # ability -> INT16 -> mod3; prepared_spell_count("wizard", 1, 3)
+            # == 4 here, not 3.
+            chosen_prepared_spells=["magic-missile", "burning-hands", "mage-armor", "shield"],
             chosen_equipment=["longsword"],
         )
 
@@ -208,6 +213,9 @@ def test_wizard_can_choose_their_specific_proficient_weapons() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
+        # Human (not Elf) -> +1 to every ability -> INT16 -> mod3;
+        # prepared_spell_count("wizard", 1, 3) == 4 here, not 3.
+        chosen_prepared_spells=["magic-missile", "burning-hands", "mage-armor", "shield"],
         chosen_equipment=["dagger", "crossbow-light"],
     )
     assert "dagger" in character.inventory
@@ -380,6 +388,7 @@ def test_wizard_gets_one_arcane_recovery_use_at_creation() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
+        chosen_prepared_spells=["magic-missile", "burning-hands", "mage-armor"],
     )
     assert elrond.class_resources == {"arcane_recovery": 1}
 

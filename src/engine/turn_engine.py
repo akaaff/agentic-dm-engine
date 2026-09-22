@@ -124,7 +124,11 @@ import re
 from dataclasses import dataclass, field, replace
 
 from src.engine.actions import ParsedAction
-from src.engine.character_creation import SPELLS_KNOWN_BY_LEVEL, is_eligible_for_extra_attack
+from src.engine.character_creation import (
+    PREPARED_CASTER_CLASSES,
+    SPELLS_KNOWN_BY_LEVEL,
+    is_eligible_for_extra_attack,
+)
 from src.engine.conditions import apply_condition, has_condition, remove_condition, tick_conditions
 from src.engine.dice import RollResult, roll
 from src.engine.encounter import monster_to_character
@@ -3181,6 +3185,18 @@ def _resolve_cast_spell(
         and normalized not in actor.known_spells
     ):
         raise TurnEngineError(f"{actor.id} doesn't know {spell['name']}")
+
+    # "Prepared" restriction (issue #30's follow-up phase) - Cleric/Druid/
+    # Wizard/Paladin may only cast a level-1+ spell currently in their
+    # prepared_spells, even though their *access* spans the whole class
+    # list (class_spell_indices, used to build the picker/validate a
+    # choice) - the two are deliberately different sets, matching real SRD.
+    if (
+        spell.get("level", 0) > 0
+        and actor.class_index in PREPARED_CASTER_CLASSES
+        and normalized not in actor.prepared_spells
+    ):
+        raise TurnEngineError(f"{actor.id} hasn't prepared {spell['name']}")
 
     is_bonus_action = _is_bonus_action_spell(spell)
     if is_bonus_action and actor.bonus_action_used:

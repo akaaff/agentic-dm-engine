@@ -97,6 +97,9 @@ class CharacterRecord(Base):
     *reloaded* character" reasoning as class_resources/equipped_weapons
     above - added with its server_default from the start this time, not
     found live after the fact."""
+    prepared_spells: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    """Issue #30's follow-up phase - the analogous column for a Prepared
+    caster (Cleric/Druid/Wizard/Paladin), same reasoning as known_spells."""
     fighting_style: Mapped[str | None] = mapped_column(default=None)
     class_resources: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
     used_relentless_endurance_this_rest: Mapped[bool] = mapped_column(default=False)

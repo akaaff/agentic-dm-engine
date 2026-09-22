@@ -55,6 +55,7 @@ def _two_person_party() -> list[Character]:
         background_index="acolyte",
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
+        chosen_prepared_spells=["magic-missile", "mage-armor", "sleep"],
         chosen_equipment=["dagger"],
     )
     return [thorin, elrond]

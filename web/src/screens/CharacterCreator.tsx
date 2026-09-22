@@ -88,6 +88,24 @@ const CLASS_ABILITY_PRIORITY: Record<string, AbilityScore[]> = {
 }
 const DEFAULT_ABILITY_PRIORITY: AbilityScore[] = ['STR', 'DEX', 'CON', 'WIS', 'CHA', 'INT']
 
+function abilityModifier(score: number): number {
+  return Math.floor((score - 10) / 2)
+}
+
+// Mirrors character_creation.prepared_spell_count exactly (issue #30's
+// follow-up phase) - the required count for a Prepared caster (Cleric/
+// Druid/Wizard/Paladin) depends on the spellcasting ability's modifier,
+// unlike a "Spells Known" caster's fixed classDetail.spells_known. Always
+// called with level=1 here, since this wizard only ever creates level-1
+// characters.
+function preparedSpellCount(classIndex: string, level: number, abilityMod: number): number {
+  if (classIndex === 'paladin') {
+    const casterLevel = Math.floor(level / 2)
+    return casterLevel >= 1 ? Math.max(1, abilityMod + casterLevel) : 0
+  }
+  return Math.max(1, abilityMod + level)
+}
+
 function slugify(name: string): string {
   return (
     name
@@ -132,6 +150,10 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
   // Sorcerer only, gated by classDetail.spells_known the same way
   // chosenSkills is gated by skill_choose.
   const [chosenSpells, setChosenSpells] = useState<string[]>([])
+  // Prepared caster's level-1 spell choice (issue #30's follow-up phase) -
+  // Cleric/Druid/Wizard/Paladin, gated by preparedSpellCount(classIndex, 1,
+  // abilityMod) instead of a fixed table count - see that function below.
+  const [chosenPreparedSpells, setChosenPreparedSpells] = useState<string[]>([])
   const [assignments, setAssignments] = useState<Record<AbilityScore, number | ''>>({
     STR: '',
     DEX: '',
@@ -175,6 +197,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     setChosenEquipment([])
     setFightingStyle('')
     setChosenSpells([])
+    setChosenPreparedSpells([])
     api
       .getClass(classIndex)
       .then(setClassDetail)
@@ -239,6 +262,14 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     })
   }
 
+  function togglePreparedSpell(spell: string) {
+    setChosenPreparedSpells((prev) => {
+      if (prev.includes(spell)) return prev.filter((s) => s !== spell)
+      if (prev.length >= requiredPreparedCount) return prev
+      return [...prev, spell]
+    })
+  }
+
   function toggleRacialSkill(skill: string) {
     setChosenRacialSkills((prev) => {
       if (prev.includes(skill)) return prev.filter((s) => s !== skill)
@@ -262,7 +293,23 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     classDetail !== null &&
     chosenSkills.length === classDetail.skill_choose &&
     (classDetail.spells_known === 0 || chosenSpells.length === classDetail.spells_known)
-  const canProceedFromAbilities = allAbilitiesAssigned
+  // Prepared caster's required count (issue #30's follow-up phase) depends
+  // on the spellcasting ability's modifier - unlike classDetail.spells_known,
+  // it can't be known until ability scores are assigned, which is why this
+  // picker lives in the Ability Scores step rather than Class & Skills.
+  const requiredPreparedCount =
+    classDetail?.spellcasting_ability && allAbilitiesAssigned
+      ? preparedSpellCount(
+          classIndex,
+          1,
+          abilityModifier(
+            finalScore(classDetail.spellcasting_ability.toUpperCase() as AbilityScore) ?? 0,
+          ),
+        )
+      : 0
+  const canProceedFromAbilities =
+    allAbilitiesAssigned &&
+    (requiredPreparedCount === 0 || chosenPreparedSpells.length === requiredPreparedCount)
   const canSubmit = backgroundIndex !== ''
 
   async function handleSubmit() {
@@ -286,6 +333,9 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         fighting_style: fightingStyle || undefined,
         chosen_racial_skills: raceIndex === 'half-elf' ? chosenRacialSkills : undefined,
         chosen_spells: classDetail?.spells_known ? chosenSpells : undefined,
+        chosen_prepared_spells: classDetail?.spellcasting_ability
+          ? chosenPreparedSpells
+          : undefined,
       })
       setCreated(character)
       setStep(4)
@@ -606,6 +656,32 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 )}
               </label>
             ))}
+            {classDetail && requiredPreparedCount > 0 && (
+              // Prepared caster's spell choice (issue #30's follow-up phase)
+              // - Cleric/Druid/Wizard/Paladin. Lives here rather than the
+              // Class & Skills step (unlike the "Spells Known" fieldset)
+              // because the required count depends on ability scores, which
+              // aren't assigned yet at that earlier step. Mirrors the
+              // "Spells Known" fieldset's shape exactly otherwise.
+              <fieldset>
+                <legend>
+                  Choose {requiredPreparedCount} spell
+                  {requiredPreparedCount === 1 ? '' : 's'} to prepare (
+                  {chosenPreparedSpells.length}/{requiredPreparedCount} selected)
+                </legend>
+                {classDetail.known_spells_pool.map((spell) => (
+                  <label key={spell.index} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={chosenPreparedSpells.includes(spell.index)}
+                      onChange={() => togglePreparedSpell(spell.index)}
+                    />
+                    {nameWithSpellDetail(spell)}
+                    <InfoTip text={spell.desc} />
+                  </label>
+                ))}
+              </fieldset>
+            )}
             <div className="wizard-nav">
               <button type="button" onClick={() => setStep(1)}>
                 Back
@@ -700,6 +776,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
         chosenEquipment={chosenEquipment}
         equipment={equipment}
         chosenSpells={chosenSpells}
+        chosenPreparedSpells={chosenPreparedSpells}
       />
     </div>
   )

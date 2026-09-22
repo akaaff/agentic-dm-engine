@@ -90,6 +90,10 @@ def build_demo_party() -> list[Character]:
         background_index="acolyte",
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
+        # INT15 -> mod2 (Elf's own racial bonus is DEX, not INT); issue #30's
+        # follow-up phase requires exactly prepared_spell_count("wizard", 1,
+        # 2) == 3 real level-1 Wizard spells.
+        chosen_prepared_spells=["magic-missile", "burning-hands", "mage-armor"],
         chosen_equipment=["dagger"],
     )
     return [thorin, elrond]

@@ -41,6 +41,10 @@ def _druid(position: Position | None = None) -> Character:
         background_index="acolyte",
         base_ability_scores={"STR": 10, "DEX": 14, "CON": 13, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-nature", "skill-survival"],
+        # WIS15 -> mod3 after Human's +1; issue #30's follow-up phase
+        # requires exactly prepared_spell_count("druid", 1, 3) == 4 real
+        # level-1 Druid spells.
+        chosen_prepared_spells=["goodberry", "entangle", "faerie-fire", "cure-wounds"],
         position=position or Position(x=0, y=0),
     )
     druid.level = 2  # Wild Shape doesn't exist below level 2

@@ -217,8 +217,8 @@ SPELLS_KNOWN_BY_LEVEL: dict[str, dict[int, int]] = {
     "sorcerer": {1: 2, 2: 3, 3: 4, 4: 5, 5: 6},
 }
 """Issue #30: the two SRD 5.1 "Spells Known" casters (as opposed to Cleric/
-Druid/Wizard/Paladin, who *prepare* from their whole class list instead - a
-separate, deferred phase, see this file's module docstring). Not in the
+Druid/Wizard/Paladin, who *prepare* from their whole class list instead -
+see PREPARED_CASTER_CLASSES/prepared_spell_count below). Not in the
 vendored SRD JSON any more than LEVEL_1_SPELL_SLOTS/SPELL_SLOTS_BY_LEVEL are
 (level tables live behind a separate API endpoint) - hardcoded SRD 5.1
 facts, same precedent, same levels-1-5 scope. Counts cantrips-known
@@ -226,6 +226,29 @@ separately in the real SRD table; this project's cantrips have never been
 restricted by a "known" count (ClassDetail.cantrips already lists every
 cantrip a class can access, unconditionally) and stay that way here -
 deliberately out of this issue's scope, only level-1+ spells are gated."""
+
+PREPARED_CASTER_CLASSES = {"cleric", "druid", "wizard", "paladin"}
+"""Issue #30's follow-up phase: unlike a "Spells Known" caster's fixed
+per-level table (SPELLS_KNOWN_BY_LEVEL above), a Prepared caster has
+standing access to their *entire* class spell list and instead chooses a
+working subset - see prepared_spell_count. Paladin is a half-caster
+(issue #21) with no spellcasting at all until character level 2
+(SPELL_SLOTS_BY_LEVEL["paladin"][1] == {}) - included here for
+completeness (level_up needs it once a Paladin reaches level 2), but
+prepared_spell_count correctly returns 0 for a level-1 Paladin, so
+create_character's validation below naturally requires nothing from one."""
+
+
+def prepared_spell_count(class_index: str, level: int, ability_mod: int) -> int:
+    """Real SRD 5.1 Prepared-caster formula: spellcasting-ability modifier +
+    caster level, minimum 1. Paladin's caster level is character level // 2
+    (half-caster) and the whole formula is 0 - not floored at 1 - below
+    character level 2, matching the class's real "no spellcasting yet"
+    rule rather than pretending a level-1 Paladin has one spell to prepare."""
+    if class_index == "paladin":
+        caster_level = level // 2
+        return max(1, ability_mod + caster_level) if caster_level >= 1 else 0
+    return max(1, ability_mod + level)
 
 
 VALID_FIGHTING_STYLES = {"archery", "defense", "dueling"}
@@ -285,6 +308,7 @@ def create_character(
     gender: str | None = None,
     chosen_racial_skills: list[str] | None = None,
     chosen_spells: list[str] | None = None,
+    chosen_prepared_spells: list[str] | None = None,
 ) -> Character:
     srd = srd or load_srd()
     chosen_equipment = chosen_equipment or []
@@ -359,6 +383,33 @@ def create_character(
     for bonus in race.get("ability_bonuses", []):
         ability: AbilityScore = bonus["ability_score"]["index"].upper()
         final_scores[ability] = final_scores.get(ability, 0) + bonus["bonus"]
+
+    # Prepared casters (Cleric/Druid/Wizard/Paladin) choose their working
+    # spell list at creation too - mirrors the "Spells Known" block above,
+    # but the required count depends on the spellcasting ability's modifier
+    # (prepared_spell_count), so this has to wait until final_scores
+    # (including racial bonuses) is known, unlike the fixed-table check above.
+    if class_index in PREPARED_CASTER_CLASSES:
+        spellcasting = cls.get("spellcasting")
+        ability_mod = (
+            ability_modifier(final_scores[spellcasting["spellcasting_ability"]["index"].upper()])
+            if spellcasting
+            else 0
+        )
+        required_prepared_count = prepared_spell_count(class_index, 1, ability_mod)
+        if required_prepared_count > 0:
+            if chosen_prepared_spells is None:
+                raise CharacterCreationError(
+                    f"{class_index} requires chosen_prepared_spells "
+                    f"(exactly {required_prepared_count} level-1 spells)"
+                )
+            _validate_prepared_spell_choices(
+                class_index, required_prepared_count, chosen_prepared_spells, srd
+            )
+        elif chosen_prepared_spells:
+            raise CharacterCreationError(f"{class_index} has no spells to prepare yet at level 1")
+    elif chosen_prepared_spells is not None:
+        raise CharacterCreationError(f"{class_index} doesn't prepare spells")
 
     _validate_skill_choices(cls, chosen_skills)
 
@@ -547,6 +598,7 @@ def create_character(
         fighting_style=fighting_style,
         gender=gender,
         known_spells=list(chosen_spells) if chosen_spells is not None else [],
+        prepared_spells=list(chosen_prepared_spells) if chosen_prepared_spells is not None else [],
     )
 
 
@@ -612,6 +664,26 @@ def _validate_spell_choices(class_index: str, chosen_spells: list[str], srd: Srd
             raise CharacterCreationError(f"{spell} is not a valid level-1 spell for {class_index}")
 
 
+def _validate_prepared_spell_choices(
+    class_index: str, required_count: int, chosen: list[str], srd: SrdIndex
+) -> None:
+    """Mirrors _validate_spell_choices' exact shape for a Prepared caster
+    (Cleric/Druid/Wizard/Paladin) - `required_count` is derived from the
+    spellcasting ability's modifier (prepared_spell_count), already computed
+    by the caller, rather than a fixed per-class table like a "Spells Known"
+    caster's own count."""
+    if len(chosen) != required_count:
+        raise CharacterCreationError(
+            f"{class_index} requires exactly {required_count} prepared spell(s), got {len(chosen)}"
+        )
+    if len(set(chosen)) != len(chosen):
+        raise CharacterCreationError(f"Duplicate spell choice in {chosen}")
+    allowed = class_spell_indices(class_index, srd, level=1)
+    for spell in chosen:
+        if spell not in allowed:
+            raise CharacterCreationError(f"{spell} is not a valid level-1 spell for {class_index}")
+
+
 def is_eligible_for_extra_attack(character: Character) -> bool:
     return character.level >= EXTRA_ATTACK_LEVEL and character.class_index in EXTRA_ATTACK_CLASSES
 
@@ -637,6 +709,7 @@ def level_up(
     srd: SrdIndex,
     ability_score_increase: dict[AbilityScore, int] | None = None,
     spells_learned: list[str] | None = None,
+    prepared_spells: list[str] | None = None,
 ) -> Character:
     """Advances `character` by exactly one level, recomputing everything the
     same way create_character derives it at level 1 (see the module
@@ -656,7 +729,12 @@ def level_up(
     Bard/Sorcerer) follows the exact same shape: applied only at a level
     where SPELLS_KNOWN_BY_LEVEL's count actually increases *and* the caller
     supplied the new spell(s) - a level-up with no spells_learned just
-    doesn't grow known_spells, same division of responsibility.
+    doesn't grow known_spells, same division of responsibility. `prepared_
+    spells` (Cleric/Druid/Wizard/Paladin) is gated the same "caller's
+    choice, not invented here" way, but unlike spells_learned's additive
+    growth, a supplied list *replaces* character.prepared_spells wholesale -
+    the real SRD rule is "re-choose your whole working list," not "learn a
+    fixed few new ones."
 
     Calling this repeatedly takes a level-1 character to level 5 one call at
     a time - each call only ever advances by one level."""
@@ -762,5 +840,36 @@ def level_up(
                 if spell in character.known_spells:
                     raise CharacterCreationError(f"{character.id} already knows {spell}")
             character.known_spells = [*character.known_spells, *spells_learned]
+
+    # Prepared-spell re-selection (Cleric/Druid/Wizard/Paladin): computed
+    # after the ASI block above for the same reason bardic_inspiration is -
+    # the spellcasting ability's modifier could itself be what an ASI just
+    # raised. Unlike known_spells' additive growth, a supplied list
+    # *replaces* character.prepared_spells wholesale, matching the real SRD
+    # rule (a Prepared caster doesn't "learn" new prepared spells - they
+    # already have standing access to the whole class list, they just get
+    # to prepare more of it as their count grows with level).
+    if character.class_index in PREPARED_CASTER_CLASSES and prepared_spells is not None:
+        spellcasting = cls.get("spellcasting")
+        ability_mod = (
+            ability_modifier(character.stats[spellcasting["spellcasting_ability"]["index"].upper()])
+            if spellcasting
+            else 0
+        )
+        required_count = prepared_spell_count(character.class_index, character.level, ability_mod)
+        if len(prepared_spells) != required_count:
+            raise CharacterCreationError(
+                f"{character.class_index} prepares exactly {required_count} spell(s) at "
+                f"level {character.level}, got {len(prepared_spells)}"
+            )
+        if len(set(prepared_spells)) != len(prepared_spells):
+            raise CharacterCreationError(f"Duplicate spell choice in {prepared_spells}")
+        allowed = class_spell_indices(character.class_index, srd)
+        for spell in prepared_spells:
+            if spell not in allowed:
+                raise CharacterCreationError(
+                    f"{spell} is not a valid spell for {character.class_index}"
+                )
+        character.prepared_spells = list(prepared_spells)
 
     return character

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from src.api.db.models import CharacterRecord
 from src.api.db.session import get_db
 from src.engine.character_creation import (
+    PREPARED_CASTER_CLASSES,
     SPELLS_KNOWN_BY_LEVEL,
     CharacterCreationError,
     class_skill_choice_pool,
@@ -106,14 +107,26 @@ class ClassDetail(ClassSummary):
     spells_known: int = 0
     """Issue #30: this class's level-1 SPELLS_KNOWN_BY_LEVEL count - >0 only
     for a "Spells Known" caster (Bard/Sorcerer). 0 for every other class,
-    including "Prepared" casters (Cleric/Druid/Wizard/Paladin) - a
-    deliberately deferred second phase, not the same mechanic."""
+    including "Prepared" casters (Cleric/Druid/Wizard/Paladin) - those use
+    spellcasting_ability + known_spells_pool instead, see below."""
     known_spells_pool: list[SpellSummary] = []
-    """This class's real level-1 SRD spells (empty unless spells_known > 0) -
-    the wizard's spell-picker offers exactly these, and character_detail
-    lookups resolve a character's own known_spells indices against this same
-    pool for display. Level-1 only, since this wizard only ever creates
-    level-1 characters."""
+    """This class's real level-1 SRD spells - populated whenever the class
+    has *some* level-1+ spell-choice mechanic, whether "Known" (spells_known
+    > 0) or "Prepared" (spellcasting_ability is set): the wizard's
+    spell-picker offers exactly these either way, and character_detail
+    lookups resolve a character's own known_spells/prepared_spells indices
+    against this same pool for display. Level-1 only, since this wizard
+    only ever creates level-1 characters."""
+    spellcasting_ability: str | None = None
+    """Issue #30's follow-up phase: this class's real SRD spellcasting
+    ability ("wis"/"int"/"cha"...), set only for a Prepared caster
+    (Cleric/Druid/Wizard/Paladin) - the wizard needs it to compute the
+    required prepared-spell count client-side once ability scores are
+    assigned (character_creation.prepared_spell_count = ability modifier +
+    level, so it can't be precomputed server-side before the player has
+    picked their scores). None for a "Spells Known" caster (spells_known's
+    fixed table already gives the count with no ability-score dependency)
+    and for any non-caster."""
 
 
 class SkillSummary(BaseModel):
@@ -182,6 +195,14 @@ class CreateCharacterRequest(BaseModel):
     """Only meaningful (and required) for a "Spells Known" caster - Bard or
     Sorcerer (issue #30), ClassDetail.spells_known level-1 spells of the
     player's choice. create_character itself rejects it for any other class."""
+    chosen_prepared_spells: list[str] | None = None
+    """Only meaningful (and required) for a Prepared caster - Cleric,
+    Druid, Wizard, or Paladin (issue #30's follow-up phase), chosen from
+    ClassDetail.known_spells_pool the same way chosen_spells is - the
+    required count (ClassDetail.spells_known doesn't apply here, see
+    ClassDetail.spellcasting_ability) depends on the player's own ability
+    scores, so the frontend computes it client-side once those are
+    assigned. create_character itself rejects it for any other class."""
 
 
 def _race_ability_bonuses(race: dict[str, Any]) -> dict[str, int]:
@@ -299,9 +320,16 @@ def get_class(class_index: str) -> ClassDetail:
     cantrips = [_spell_summary(srd.spells[idx]) for idx in class_spell_indices(class_index, srd, 0)]
 
     spells_known = SPELLS_KNOWN_BY_LEVEL.get(class_index, {}).get(1, 0)
+    is_prepared_caster = class_index in PREPARED_CASTER_CLASSES
+    spellcasting = cls.get("spellcasting")
+    spellcasting_ability = (
+        spellcasting["spellcasting_ability"]["index"]
+        if is_prepared_caster and spellcasting
+        else None
+    )
     known_spells_pool = (
         [_spell_summary(srd.spells[idx]) for idx in class_spell_indices(class_index, srd, 1)]
-        if spells_known > 0
+        if spells_known > 0 or is_prepared_caster
         else []
     )
 
@@ -316,6 +344,7 @@ def get_class(class_index: str) -> ClassDetail:
         starting_equipment=_starting_equipment_items(cls.get("starting_equipment", [])),
         spells_known=spells_known,
         known_spells_pool=sorted(known_spells_pool, key=lambda s: s.name),
+        spellcasting_ability=spellcasting_ability,
     )
 
 
@@ -402,6 +431,7 @@ def create_character_endpoint(body: CreateCharacterRequest, db: DbSession) -> Ch
             fighting_style=body.fighting_style,
             chosen_racial_skills=body.chosen_racial_skills,
             chosen_spells=body.chosen_spells,
+            chosen_prepared_spells=body.chosen_prepared_spells,
         )
     except CharacterCreationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -450,6 +480,7 @@ def _character_to_record(character: Character) -> CharacterRecord:
         hit_dice_remaining=character.hit_dice_remaining,
         saving_throw_proficiencies=list(character.saving_throw_proficiencies),
         known_spells=list(character.known_spells),
+        prepared_spells=list(character.prepared_spells),
         fighting_style=character.fighting_style,
         class_resources=dict(character.class_resources),
         used_relentless_endurance_this_rest=character.used_relentless_endurance_this_rest,
@@ -495,6 +526,7 @@ def _record_to_character(record: CharacterRecord) -> Character:
         hit_dice_remaining=record.hit_dice_remaining,
         saving_throw_proficiencies=record.saving_throw_proficiencies,  # type: ignore[arg-type]
         known_spells=record.known_spells,
+        prepared_spells=record.prepared_spells,
         fighting_style=record.fighting_style,
         class_resources=record.class_resources,
         used_relentless_endurance_this_rest=record.used_relentless_endurance_this_rest,

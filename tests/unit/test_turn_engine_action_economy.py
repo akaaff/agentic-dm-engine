@@ -40,6 +40,10 @@ def _cleric() -> Character:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-medicine", "skill-religion"],
+        # WIS15 -> mod3 after Human's +1; issue #30's follow-up phase
+        # requires exactly prepared_spell_count("cleric", 1, 3) == 4 real
+        # level-1 Cleric spells.
+        chosen_prepared_spells=["cure-wounds", "healing-word", "bless", "shield-of-faith"],
     )
 
 
@@ -271,6 +275,7 @@ def test_reaction_used_this_round_caps_a_reactor_at_one_opportunity_attack() -> 
         background_index="acolyte",
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
+        chosen_prepared_spells=["magic-missile", "burning-hands", "mage-armor"],
         position=Position(x=1, y=1),
     )
     srd = load_srd()

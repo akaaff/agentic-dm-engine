@@ -45,6 +45,7 @@ def _two_person_party() -> list[Character]:
         background_index="acolyte",
         base_ability_scores={"STR": 8, "DEX": 14, "CON": 12, "INT": 15, "WIS": 13, "CHA": 10},
         chosen_skills=["skill-arcana", "skill-history"],
+        chosen_prepared_spells=["magic-missile", "burning-hands", "mage-armor"],
         chosen_equipment=["dagger"],
     )
     return [thorin, elrond]
@@ -130,6 +131,7 @@ def test_heal_spell_restores_the_expected_hp() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-medicine", "skill-religion"],
+        chosen_prepared_spells=["cure-wounds", "bless", "healing-word", "shield-of-faith"],
     )
     encounter = build_demo_encounter()
     state = build_encounter_state(encounter, [mira], _FixedRandom([20, 5, 5]))  # type: ignore[arg-type]
@@ -164,6 +166,7 @@ def test_heal_spell_is_capped_at_max_hp() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-medicine", "skill-religion"],
+        chosen_prepared_spells=["cure-wounds", "bless", "healing-word", "shield-of-faith"],
     )
     encounter = build_demo_encounter()
     state = build_encounter_state(encounter, [mira], _FixedRandom([20, 5, 5]))  # type: ignore[arg-type]
@@ -287,6 +290,11 @@ def test_casting_a_new_concentration_spell_clears_the_prior_one() -> None:
     # than build a whole new fixture" pattern this project already uses
     # elsewhere (e.g. test_cast_spell_with_no_slots_remaining_errors_clearly).
     state.characters["elrond"].spell_slots[2] = 1
+    # Same reasoning for the Prepared restriction (issue #30's follow-up
+    # phase): Elrond's real chosen_prepared_spells is level-1-only (creation
+    # only ever offers a level-1 pool), so a 2nd-level spell has nowhere
+    # legitimate to be added at creation time either - poked in directly too.
+    state.characters["elrond"].prepared_spells.append("hold-person")
 
     action = ParsedAction(
         actor="elrond",
