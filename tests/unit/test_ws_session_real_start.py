@@ -293,7 +293,9 @@ def test_rest_rejected_while_an_encounter_is_still_in_progress(client: TestClien
     assert thorin.hp == 1
 
 
-def test_continue_campaign_chains_to_the_next_encounter(client: TestClient) -> None:
+def test_continue_campaign_chains_to_the_next_encounter(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # The explicit counterpart to _advance_campaign_after_victory's own
     # direct-call test below, driven through a real WS round trip instead -
     # confirms the message wiring itself, not just the underlying function.
@@ -301,6 +303,21 @@ def test_continue_campaign_chains_to_the_next_encounter(client: TestClient) -> N
     # has real scenes after its first combat, same campaign the direct-call
     # test below uses, so "continuing" past a forced victory has somewhere
     # real to chain to instead of hanging with nothing left to broadcast.
+    # Story-adaptive-encounters Phase 2: this chain now passes through
+    # rising_action, a party_choice scene (see CLAUDE.md) - stubbed and
+    # answered the same way test_party_choice_pauses_for_input_then_resumes_
+    # the_chain does, or this would deadlock waiting on a response nobody
+    # sends (caught live running the full file: exactly that hang).
+    monkeypatch.setattr(
+        ws_session_module,
+        "generate_companion_party_choice_response",
+        lambda character, situation: f"[{character.name} stub reaction]",
+    )
+    monkeypatch.setattr(
+        ws_session_module,
+        "synthesize_party_choice_narration",
+        lambda situation, responses, party: "[stub synthesis narration]",
+    )
     create_response = client.post("/characters", json=_VALID_FIGHTER_BODY)
     assert create_response.status_code == 201
     session_response = client.post(
@@ -325,16 +342,186 @@ def test_continue_campaign_chains_to_the_next_encounter(client: TestClient) -> N
 
         ws.send_json({"type": "continue_campaign"})
         messages = [ws.receive_json()]
+        while messages[-1]["type"] != "party_choice_offer":
+            messages.append(ws.receive_json())
+
+        ws.send_json({"type": "party_choice_response", "text": "Let's press on."})
         while messages[-1]["type"] != "awaiting_input":
             messages.append(ws.receive_json())
 
     state_updates = [m for m in messages if m["type"] == "state_update"]
     assert state_updates[-1]["game_state"]["encounter_id"] == "bandit_hideout"
     scene_narrations = [m["text"] for m in messages if m["type"] == "scene_narration"]
-    assert scene_narrations  # rising_action + scout_the_hideout's own intro/outcome
+    assert scene_narrations  # rising_action + the synthesis + scout_the_hideout's own intro/outcome
 
 
-async def test_advance_campaign_after_victory_continues_to_the_next_encounter() -> None:
+def test_party_choice_pauses_for_input_then_resumes_the_chain(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Story-adaptive-encounters Phase 2. kobold_warren_full's own
+    # "rising_action" scene is now type=party_choice (see CLAUDE.md), sitting
+    # between warren_rest and scout_the_hideout - reaching it via a forced
+    # victory + continue_campaign (same pattern as
+    # test_continue_campaign_chains_to_the_next_encounter) should pause
+    # instead of walking straight through to hideout_combat.
+    monkeypatch.setattr(
+        ws_session_module,
+        "generate_companion_party_choice_response",
+        lambda character, situation: f"[{character.name} stub reaction]",
+    )
+    monkeypatch.setattr(
+        ws_session_module,
+        "synthesize_party_choice_narration",
+        lambda situation, responses, party: "[stub synthesis narration]",
+    )
+
+    create_response = client.post("/characters", json=_VALID_FIGHTER_BODY)
+    assert create_response.status_code == 201
+    session_response = client.post(
+        "/sessions",
+        json={
+            "campaign_id": "kobold_warren_full",
+            "character_id": "thorin",
+            "companion_ids": ["companion_grom"],
+        },
+    )
+    assert session_response.status_code == 201
+    session_id: str = session_response.json()["session_id"]
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        msg = ws.receive_json()
+        while msg["type"] != "awaiting_input":
+            msg = ws.receive_json()
+
+        session = ws_session_module._sessions[session_id]
+        assert session.game_state.encounter_id == "kobold_ambush"
+        session.game_state.status = "victory"
+
+        ws.send_json({"type": "continue_campaign"})
+        messages = [ws.receive_json()]
+        while messages[-1]["type"] != "party_choice_offer":
+            messages.append(ws.receive_json())
+
+        offer = messages[-1]
+        assert "companion_grom" in offer["companion_responses"]
+        assert offer["companion_responses"]["companion_grom"] == "[Grom Ironfist stub reaction]"
+        assert offer["awaiting"] == ["thorin"]
+        # Nothing built a new combat encounter yet - still the finished fight.
+        assert session.pending_party_choice is not None
+        assert session.game_state.encounter_id == "kobold_ambush"
+
+        ws.send_json({"type": "party_choice_response", "text": "Let's press on to the hideout."})
+        messages = [ws.receive_json()]
+        while messages[-1]["type"] != "awaiting_input":
+            messages.append(ws.receive_json())
+
+    responded = next(m for m in messages if m["type"] == "party_choice_responded")
+    assert responded == {
+        "type": "party_choice_responded",
+        "actor": "thorin",
+        "text": "Let's press on to the hideout.",
+    }
+    scene_narrations = [m["text"] for m in messages if m["type"] == "scene_narration"]
+    assert "[stub synthesis narration]" in scene_narrations
+    state_updates = [m for m in messages if m["type"] == "state_update"]
+    assert state_updates[-1]["game_state"]["encounter_id"] == "bandit_hideout"
+    assert session.pending_party_choice is None
+
+
+def test_continue_campaign_and_rest_no_op_while_a_party_choice_is_pending(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Live-found while verifying the pause itself: game_state.status stays
+    # "victory" for a party_choice's whole duration (it never touches
+    # game_state), so nothing had stopped a second continue_campaign (a
+    # stray click, or a desynced client re-sending) from re-running the
+    # whole chain walk from session.current_scene_id - silently overwriting
+    # session.pending_party_choice's already-collected responses with a
+    # fresh offer - or a rest request from going through narratively
+    # mid-conversation. Confirmed live in a real browser before this guard
+    # existed: the rest-controls buttons stayed visible and clickable
+    # alongside the new party-choice panel.
+    monkeypatch.setattr(
+        ws_session_module,
+        "generate_companion_party_choice_response",
+        lambda character, situation: f"[{character.name} stub reaction]",
+    )
+    monkeypatch.setattr(
+        ws_session_module,
+        "synthesize_party_choice_narration",
+        lambda situation, responses, party: "[stub synthesis narration]",
+    )
+
+    create_response = client.post("/characters", json=_VALID_FIGHTER_BODY)
+    assert create_response.status_code == 201
+    session_response = client.post(
+        "/sessions",
+        json={
+            "campaign_id": "kobold_warren_full",
+            "character_id": "thorin",
+            "companion_ids": ["companion_grom"],
+        },
+    )
+    assert session_response.status_code == 201
+    session_id: str = session_response.json()["session_id"]
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        msg = ws.receive_json()
+        while msg["type"] != "awaiting_input":
+            msg = ws.receive_json()
+
+        session = ws_session_module._sessions[session_id]
+        session.game_state.status = "victory"
+
+        ws.send_json({"type": "continue_campaign"})
+        messages = [ws.receive_json()]
+        while messages[-1]["type"] != "party_choice_offer":
+            messages.append(ws.receive_json())
+        pending_before = session.pending_party_choice
+        assert pending_before is not None
+
+        # A rest request while the choice is still pending is rejected,
+        # same as one mid-combat already is.
+        ws.send_json({"type": "rest", "rest_type": "long"})
+        error_msg = ws.receive_json()
+        assert error_msg["type"] == "error"
+        assert "between encounters" in error_msg["detail"]
+
+        # A second continue_campaign is a no-op, not a re-walk - the exact
+        # same pending choice object survives untouched.
+        ws.send_json({"type": "continue_campaign"})
+        # No message is expected from this - confirmed below by checking
+        # the pending choice object identity/content is still exactly what
+        # it was, not a freshly-built one with a new (stub) offer.
+        assert session.pending_party_choice is pending_before
+        assert session.pending_party_choice.responses == pending_before.responses
+
+
+def test_party_choice_response_rejects_an_already_answered_or_unknown_sender(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        ws_session_module,
+        "generate_companion_party_choice_response",
+        lambda character, situation: "[stub]",
+    )
+    session_id = _start_real_session(client)
+
+    with client.websocket_connect(f"/ws/session/{session_id}") as ws:
+        msg = ws.receive_json()
+        while msg["type"] != "awaiting_input":
+            msg = ws.receive_json()
+
+        # Nothing pending yet - a stray response is a clear error, not a hang.
+        ws.send_json({"type": "party_choice_response", "text": "..."})
+        error_msg = ws.receive_json()
+        assert error_msg["type"] == "error"
+        assert "pending" in error_msg["detail"].lower()
+
+
+async def test_advance_campaign_after_victory_continues_to_the_next_encounter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Regression guard for the other half of the same gap as the
     # scene_narration test above: a live session never advanced past one
     # encounter's victory into the rest of the scene chain at all (see
@@ -345,6 +532,23 @@ async def test_advance_campaign_after_victory_continues_to_the_next_encounter() 
     # picks up rising_action + scout_the_hideout's narration and lands in
     # hideout_combat's own encounter - real content, not a synthetic
     # fixture, since this is the exact campaign caught live.
+    #
+    # This party is all-companion (no human_character_ids at all) - rising_
+    # action is now a party_choice scene (story-adaptive-encounters Phase 2,
+    # see CLAUDE.md), which _start_party_choice auto-resolves immediately
+    # when there's no living human seat to actually wait on, so the chain
+    # still reaches hideout_combat in one call, same as before that scene
+    # existed. Stubbed to avoid a real LLM call in this offline test.
+    monkeypatch.setattr(
+        ws_session_module,
+        "generate_companion_party_choice_response",
+        lambda character, situation: f"[{character.name} stub reaction]",
+    )
+    monkeypatch.setattr(
+        ws_session_module,
+        "synthesize_party_choice_narration",
+        lambda situation, responses, party: "[stub synthesis narration]",
+    )
     srd = load_srd()
     campaign = load_campaign("kobold_warren_full")
     party = [

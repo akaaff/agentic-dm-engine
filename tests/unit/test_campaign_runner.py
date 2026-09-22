@@ -219,6 +219,55 @@ def test_advance_to_next_encounter_applies_short_rest_when_walking_through_scene
     assert thorin.hit_dice_remaining == 0
 
 
+def test_advance_to_next_encounter_stops_at_a_party_choice_scene() -> None:
+    # Story-adaptive-encounters Phase 2: a party_choice scene stops the walk
+    # the same way combat does - campaign_runner itself has no way to
+    # resolve one (no deterministic mechanic, needs a live session + LLM),
+    # so it just hands the scene back with its own narrative_intro already
+    # in the narration log, same contract as a combat stop.
+    campaign = Campaign(
+        id="party_choice_test",
+        title="Party Choice Test",
+        size="one_shot",
+        description="",
+        scenes=[
+            Scene(
+                id="s1",
+                type="narrative_beat",
+                narrative_intro="The road forks ahead.",
+                next_scene_id="s2",
+            ),
+            Scene(
+                id="s2",
+                type="party_choice",
+                narrative_intro="Which way does the party go?",
+                next_scene_id="s3",
+            ),
+            Scene(
+                id="s3",
+                type="narrative_beat",
+                narrative_intro="Never reached.",
+                next_scene_id=None,
+            ),
+        ],
+    )
+    srd = load_srd()
+    party = _two_person_party()
+
+    stop_scene, narration = advance_to_next_encounter(
+        campaign,
+        campaign.first_scene(),
+        party,
+        srd,
+        _FixedRandom([]),  # type: ignore[arg-type]
+    )
+
+    assert stop_scene is not None
+    assert stop_scene.id == "s2"
+    assert stop_scene.type == "party_choice"
+    assert narration == ["The road forks ahead.", "Which way does the party go?"]
+
+
 def test_advance_to_next_encounter_applies_long_rest_when_walking_through_scene() -> None:
     campaign = Campaign(
         id="rest_test_long",

@@ -50,7 +50,7 @@ scenes:
     next_scene_id: rising_action
 
   - id: rising_action
-    type: narrative_beat
+    type: party_choice
     narrative_intro: >
       Among the kobolds' hoarded scraps, the party finds something that
       doesn't belong - a bandit's signet ring, and a crude map marking a

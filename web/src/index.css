@@ -512,6 +512,25 @@ button.secondary {
   background: rgba(124, 77, 255, 0.32);
 }
 
+/* Story-adaptive-encounters Phase 2: same "the session is paused, this
+   needs attention" treatment as .bardic-inspiration-offer above. */
+.party-choice-panel {
+  border: 1px solid #7c4dff;
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  background: rgba(124, 77, 255, 0.12);
+}
+
+.party-choice-panel > p:first-child {
+  margin-top: 0;
+  font-weight: bold;
+}
+
+.party-choice-panel p {
+  margin: 0 0 0.5rem;
+}
+
 .scene-row {
   display: flex;
   flex-wrap: wrap;

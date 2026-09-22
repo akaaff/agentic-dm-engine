@@ -24,6 +24,7 @@ export default function LivePlay({
     awaitingActor,
     disconnectedActors,
     bardicOffer,
+    partyChoice,
     error,
     connected,
     sendPlayerAction,
@@ -31,8 +32,10 @@ export default function LivePlay({
     sendRest,
     sendContinueCampaign,
     sendBardicInspirationResponse,
+    sendPartyChoiceResponse,
   } = useSessionSocket(sessionId)
   const [draft, setDraft] = useState('')
+  const [choiceDraft, setChoiceDraft] = useState('')
   // Issue #38: a per-viewer convenience toggle (localStorage, not shared
   // session state) - shows each attack/skill-check/saving-throw's full
   // modifier breakdown in the combat log, to catch a mechanic gap (a
@@ -94,6 +97,13 @@ export default function LivePlay({
     setDraft('')
   }
 
+  function handlePartyChoiceSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!choiceDraft.trim()) return
+    sendPartyChoiceResponse(choiceDraft.trim())
+    setChoiceDraft('')
+  }
+
   if (!connected && !gameState) {
     // A session-setup failure (issue #29) sends an `error` message and
     // closes the socket before any state_update ever arrives - without this
@@ -137,12 +147,21 @@ export default function LivePlay({
             {disconnectedActors.length === 1 ? ' is' : 's are'} reconnecting...
           </p>
         )}
-        {gameState?.status === 'victory' && logCaughtUp && (
+        {gameState?.status === 'victory' && logCaughtUp && !partyChoice && (
           // Issue #28: "victory" is a real stop the party chooses to leave -
           // rest here to recover HP/spell slots/class resources before the
           // campaign's next encounter, or just continue on. Gated on
           // logCaughtUp for the same reason isMyTurn is - don't offer a
           // choice about a state the paced log hasn't actually shown yet.
+          // Story-adaptive-encounters Phase 2: also hidden while a
+          // party_choice is pending - gameState.status stays "victory" for
+          // that pause's whole duration (party_choice never touches it), so
+          // without this check these buttons would sit alongside the
+          // party-choice panel below, confusingly offering to re-continue a
+          // campaign that's already mid-conversation (the server now
+          // rejects it too, see _advance_campaign_after_victory/
+          // _handle_rest_request's own pending_party_choice guards, but the
+          // UI shouldn't offer a dead end in the first place).
           <div className="rest-controls">
             <button type="button" onClick={() => sendRest('short')}>
               Short Rest
@@ -219,19 +238,57 @@ export default function LivePlay({
             ))}
           </div>
         )}
-        <form className="action-form" onSubmit={handleSubmit}>
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={
-              isMyTurn ? 'What do you do?' : catchingUp ? 'Catching up...' : 'Waiting for other turns...'
-            }
-            disabled={!isMyTurn}
-          />
-          <button type="submit" disabled={!isMyTurn || !draft.trim()}>
-            Act
-          </button>
-        </form>
+        {partyChoice && (
+          // Story-adaptive-encounters Phase 2: a narrative decision point,
+          // not a turn - hides the ordinary combat action form entirely
+          // while this is up, since there's no "turn" happening (the
+          // server never sends awaiting_input during a party_choice pause).
+          <div className="party-choice-panel">
+            <p>The party must decide what to do next.</p>
+            {Object.entries(partyChoice.companionResponses).map(([id, text]) => (
+              <p key={id} className="companion-meta">
+                <strong>{characters?.[id]?.name ?? id}:</strong> {text}
+              </p>
+            ))}
+            {partyChoice.awaiting.includes(myCharacterId) ? (
+              <form className="action-form" onSubmit={handlePartyChoiceSubmit}>
+                <input
+                  value={choiceDraft}
+                  onChange={(e) => setChoiceDraft(e.target.value)}
+                  placeholder="What do you say or do?"
+                />
+                <button type="submit" disabled={!choiceDraft.trim()}>
+                  Respond
+                </button>
+              </form>
+            ) : (
+              <p className="companion-meta">
+                Waiting on{' '}
+                {partyChoice.awaiting.map((id) => characters?.[id]?.name ?? id).join(', ')} to
+                respond...
+              </p>
+            )}
+          </div>
+        )}
+        {!partyChoice && (
+          <form className="action-form" onSubmit={handleSubmit}>
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={
+                isMyTurn
+                  ? 'What do you do?'
+                  : catchingUp
+                    ? 'Catching up...'
+                    : 'Waiting for other turns...'
+              }
+              disabled={!isMyTurn}
+            />
+            <button type="submit" disabled={!isMyTurn || !draft.trim()}>
+              Act
+            </button>
+          </form>
+        )}
         {error && <p className="wizard-error">{error}</p>}
       </div>
       <div className="live-play-sidebar">

@@ -19,13 +19,29 @@ DEFAULT_CAMPAIGNS_DIR = Path(__file__).resolve().parent.parent.parent / "data" /
 
 CampaignSize = Literal["one_shot", "short_arc", "full"]
 SceneType = Literal[
-    "narrative_beat", "combat", "skill_challenge", "roleplay", "short_rest", "long_rest"
+    "narrative_beat",
+    "combat",
+    "skill_challenge",
+    "roleplay",
+    "short_rest",
+    "long_rest",
+    "party_choice",
 ]
 """short_rest/long_rest (Phase 9G) are two distinct scene types rather than
 one "rest" type with a sub-field, matching how narrative_beat/skill_challenge
 are already distinguished by type rather than a shared "beat" type plus a
 flag - the campaign author's intent (which kind of rest) is baked into the
-scene chain itself, same as everywhere else in this schema."""
+scene chain itself, same as everywhere else in this schema.
+
+party_choice (story-adaptive-encounters Phase 2) is the one scene type
+campaign_runner.advance_to_next_encounter stops the chain-walk at, the same
+way it already stops at combat - unlike every other type here, it has no
+deterministic resolution of its own: its narrative_intro poses a situation,
+and what happens next depends on live input from the whole party, collected
+and synthesized by api/ws/session.py (see _start_party_choice/_resolve_
+party_choice there). The chain itself still doesn't branch on that input -
+next_scene_id is fixed either way, same "no branching" stance skill_
+challenge's own docstring already takes - only the narration differs."""
 
 
 class SkillChallengeDef(BaseModel):

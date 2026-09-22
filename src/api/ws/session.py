@@ -33,7 +33,7 @@ from src.api.routes.characters import _record_to_character
 from src.api.ws.rate_limit import TokenBucket
 from src.cli.play import build_demo_encounter, build_demo_party
 from src.engine.actions import ParsedAction
-from src.engine.campaign import Campaign, load_campaign
+from src.engine.campaign import Campaign, Scene, load_campaign
 from src.engine.campaign_runner import advance_to_next_encounter
 from src.engine.companions import build_companion, load_companion_spec_by_character_id
 from src.engine.encounter import GameStateBuildError, build_encounter_state, load_encounter
@@ -52,6 +52,10 @@ from src.engine.turn_engine import (
 from src.graph.graph_builder import build_graph
 from src.graph.nodes.intent_parser import parse_intent_sequence
 from src.graph.nodes.narrator import narrator_node
+from src.graph.nodes.party_choice import (
+    generate_companion_party_choice_response,
+    synthesize_party_choice_narration,
+)
 from src.graph.state_schema import GraphState
 
 router = APIRouter()
@@ -61,6 +65,23 @@ router = APIRouter()
 class SessionConnection:
     websocket: WebSocket
     controlled_character_ids: set[str]
+
+
+@dataclass
+class PendingPartyChoice:
+    """Story-adaptive-encounters Phase 2: everything needed to resolve a
+    party_choice scene once every living human party member has responded -
+    set the instant campaign_runner's chain-walk stops at one (see
+    _start_party_choice), cleared the moment _resolve_party_choice fires.
+    `responses` starts pre-populated with every companion's own generated
+    reaction (synchronous, at pause time - see _start_party_choice) and
+    fills in with human responses one at a time as party_choice_response
+    messages arrive; nothing else in this session resolves until every
+    living human id in Session.human_character_ids is a key here."""
+
+    scene_id: str
+    situation: str
+    responses: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -133,6 +154,14 @@ class Session:
     a bardic_inspiration_response message resumes it. While set, the turn
     loop stays paused (no autoplay, no awaiting_input) - the only thing this
     session should be receiving next is that response."""
+    pending_party_choice: PendingPartyChoice | None = None
+    """Story-adaptive-encounters Phase 2: set the instant the campaign's
+    chain-walk stops at a party_choice scene (see _start_party_choice) -
+    while set, the session is paused between encounters exactly like a
+    "victory" stop already is (no combat turn loop is running either way),
+    waiting on party_choice_response messages instead of rest/
+    continue_campaign. Cleared by _resolve_party_choice once every living
+    human party member has answered."""
 
 
 _sessions: dict[str, Session] = {}
@@ -241,7 +270,15 @@ def _build_real_session_setup(progress: CampaignProgress) -> _RealSessionSetup |
     combat_scene, narration = advance_to_next_encounter(
         campaign, campaign.first_scene(), party, srd, rng
     )
-    if combat_scene is None:
+    if combat_scene is None or combat_scene.type != "combat":
+        # Story-adaptive-encounters Phase 2 scope cut: a party_choice scene
+        # reached before the session's very first combat isn't supported -
+        # this function builds a combat GameState synchronously, before any
+        # WebSocket connection (and so no way to broadcast an offer or
+        # collect live responses) exists. No authored campaign places one
+        # this early; if one ever does, this falls back to the demo
+        # encounter the same way "no combat scene at all" already does,
+        # rather than silently mishandling it.
         return None
 
     assert combat_scene.encounter_ref is not None  # guaranteed by Scene.type == "combat"
@@ -520,15 +557,159 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             consecutive_invalid = 0
 
 
+async def _advance_chain_from(session: Session, start_scene: Scene) -> None:
+    """Walks the campaign scene chain from start_scene (inclusive) via
+    campaign_runner.advance_to_next_encounter, narrating/resolving skill_
+    challenge and rest scenes along the way, until it reaches something that
+    needs a live pause - a combat scene (builds a fresh GameState and
+    resumes the turn loop) or a party_choice scene (see _start_party_choice)
+    - or runs off the end of the chain (campaign complete, nothing further
+    to do). Shared by _advance_campaign_after_victory (the player's own
+    explicit "continue" after a victory) and _resolve_party_choice (once a
+    party_choice's synthesis narration is broadcast) - both need the
+    identical "keep walking the data until something needs a live session"
+    loop, now that there are two different kinds of thing to pause for
+    instead of just combat.
+
+    Recurses rather than loops when a freshly-built encounter resolves in
+    victory on its own (companions alone can sometimes finish a trivial
+    fight before any human turn comes up) - reproduces this project's
+    pre-Phase-2 while-loop behavior exactly, just restructured so hitting a
+    party_choice mid-chain doesn't need a second copy of the walk."""
+    assert session.campaign is not None
+    assert session.party is not None
+    assert session.srd is not None
+
+    stop_scene, narration = advance_to_next_encounter(
+        session.campaign, start_scene, session.party, session.srd, session.action_rng
+    )
+    for line in narration:
+        await _broadcast(session, {"type": "scene_narration", "text": line})
+
+    if stop_scene is None:
+        return  # ran off the end of the chain - campaign complete
+
+    if stop_scene.type == "party_choice":
+        await _start_party_choice(session, stop_scene)
+        return
+
+    assert stop_scene.encounter_ref is not None  # guaranteed by Scene.type == "combat"
+    encounter = load_encounter(stop_scene.encounter_ref)
+    # Reuses the same party objects, not fresh copies - HP/conditions/
+    # inventory genuinely carry over between fights, matching run_autoplay;
+    # build_encounter_state only overwrites position and re-rolls initiative.
+    session.game_state = build_encounter_state(
+        encounter, session.party, session.action_rng, srd=session.srd
+    )
+    session.current_scene_id = stop_scene.id
+    await _broadcast(session, _state_update_message(session))
+    # A new encounter can itself open on a non-human turn (e.g. a monster
+    # winning initiative) - resolve those before anyone's told it's their
+    # turn, same reasoning as the very first connect.
+    await _autoplay_non_human_turns(session)
+
+    if session.game_state.status == "victory":
+        next_scene = session.campaign.next_scene(stop_scene)
+        if next_scene is not None:
+            await _advance_chain_from(session, next_scene)
+        # else: campaign complete - a real stop, nothing further to chain to.
+
+
+async def _start_party_choice(session: Session, scene: Scene) -> None:
+    """Story-adaptive-encounters Phase 2: reached when campaign_runner's
+    chain-walk stops at a party_choice scene instead of the usual combat/
+    end-of-chain. Unlike every other scene type this module's chain-walk
+    resolves, a party_choice scene has no deterministic resolution of its
+    own - its whole point is asking the table what THEY do about the
+    situation its narrative_intro (already broadcast, by the caller's own
+    narration loop) just posed.
+
+    Every companion contributes its own in-character response immediately,
+    synchronously (a plain free-text LLM call, not a real ParsedAction - a
+    narrative choice isn't a mechanical turn, so player_agent_node's own
+    combat-shaped prompt is the wrong tool here; see generate_companion_
+    party_choice_response's own narrower prompt) - only the human seats are
+    genuinely left pending. session.game_state is left completely untouched
+    (still whatever it already was - the last-resolved encounter): a
+    party_choice pause needs no GameState of its own, only the roster
+    already on session.party and pending_party_choice for what's being
+    collected."""
+    assert session.party is not None
+
+    responses: dict[str, str] = {}
+    for character in session.party:
+        if character.is_companion and not character.is_dead:
+            responses[character.id] = generate_companion_party_choice_response(
+                character, scene.narrative_intro
+            )
+
+    living_human_ids = {
+        cid
+        for cid in session.human_character_ids.values()
+        if not any(c.id == cid and c.is_dead for c in session.party)
+    }
+    session.pending_party_choice = PendingPartyChoice(
+        scene_id=scene.id, situation=scene.narrative_intro, responses=responses
+    )
+    await _broadcast(
+        session,
+        {
+            "type": "party_choice_offer",
+            "situation": scene.narrative_intro,
+            "companion_responses": responses,
+            "awaiting": sorted(living_human_ids),
+        },
+    )
+    if not living_human_ids:
+        # No human seat to actually ask - shouldn't happen in a real lobby/
+        # single-shot session (which always has at least one), but a
+        # defensive fallback so a theoretical all-companion party doesn't
+        # hang forever waiting on a response nobody can ever send.
+        await _resolve_party_choice(session)
+
+
+async def _resolve_party_choice(session: Session) -> None:
+    """Fires once every living human party member has submitted their
+    party_choice_response (see _handle_client_message) - synthesizes one
+    continuation narration considering every party member's stated input
+    (companions' already-generated responses plus the humans' just-
+    submitted ones), broadcasts it as scene_narration (reads like the next
+    beat of the DM's own scene-setting text, not a mechanical action's
+    outcome - the same distinction scene_narration's own frontend styling
+    already established), and resumes the chain from wherever this scene's
+    next_scene_id points. Not a branch: the scene chain itself stays fixed
+    either way (real model-led branching is Phase 3's job) - this phase's
+    whole scope is giving the party a real voice in how the story is TOLD,
+    not yet in where it GOES."""
+    pending = session.pending_party_choice
+    assert pending is not None
+    assert session.campaign is not None
+    assert session.party is not None
+    session.pending_party_choice = None
+
+    narration = synthesize_party_choice_narration(
+        pending.situation, pending.responses, session.party
+    )
+    await _broadcast(session, {"type": "scene_narration", "text": narration})
+
+    scene = session.campaign.scene_by_id(pending.scene_id)
+    next_scene = session.campaign.next_scene(scene)
+    if next_scene is None:
+        return  # campaign complete - no further scenes authored
+    await _advance_chain_from(session, next_scene)
+
+
 async def _advance_campaign_after_victory(session: Session) -> None:
     """After a combat scene resolves in victory (not defeat), continues the
     campaign's scene chain live: narrates any narrative_beat/skill_challenge
-    scenes between the finished encounter and the next combat to every
-    connection, then drops the session into a fresh GameState for the next
-    encounter - the same chaining cli.play.run_autoplay already does for
-    autoplay, now live. No-ops immediately for a session with no campaign
-    set (the demo-encounter fallback and every offline test that calls
-    create_session() directly).
+    scenes between the finished encounter and whatever comes next to every
+    connection, then either drops the session into a fresh GameState for
+    the next encounter or pauses for party input (see _advance_chain_from)
+    - the same chaining cli.play.run_autoplay already does for autoplay
+    (minus party_choice, which only exists in a live session), now live.
+    No-ops immediately for a session with no campaign set (the demo-
+    encounter fallback and every offline test that calls create_session()
+    directly), or for one not actually at a "victory" stop.
 
     Issue #28: no longer called automatically the instant status becomes
     "victory" - a party that wants to rest between encounters needs a real,
@@ -539,48 +720,29 @@ async def _advance_campaign_after_victory(session: Session) -> None:
     _handle_client_message), so "victory" is a real stop the player chooses
     to leave, with _handle_rest_request available to them first.
 
-    A loop, not a single step: companions alone can sometimes finish a
-    trivial encounter before the human's own turn ever comes up (
-    _autoplay_non_human_turns stops there), which could chain straight into
-    another encounter without the human acting in between."""
+    Story-adaptive-encounters Phase 2: also no-ops while a party_choice is
+    already pending - game_state.status stays "victory" for that pause's
+    whole duration (party_choice never touches it), so a second
+    continue_campaign click (or a stale one from a desynced client) would
+    otherwise re-run this whole walk from session.current_scene_id, which
+    is still the just-finished combat scene - re-triggering the SAME rest/
+    party_choice scenes again and silently overwriting whatever responses
+    were already collected in session.pending_party_choice."""
     if (
         session.campaign is None
         or session.party is None
         or session.srd is None
         or session.current_scene_id is None
+        or session.game_state.status != "victory"
+        or session.pending_party_choice is not None
     ):
         return
 
-    while session.game_state.status == "victory":
-        current_scene = session.campaign.scene_by_id(session.current_scene_id)
-        next_scene = session.campaign.next_scene(current_scene)
-        if next_scene is None:
-            return  # campaign complete - no further scenes authored
-
-        combat_scene, narration = advance_to_next_encounter(
-            session.campaign, next_scene, session.party, session.srd, session.action_rng
-        )
-        for line in narration:
-            await _broadcast(session, {"type": "scene_narration", "text": line})
-
-        if combat_scene is None:
-            return  # ran off the end of the chain - campaign complete
-
-        assert combat_scene.encounter_ref is not None  # guaranteed by Scene.type == "combat"
-        encounter = load_encounter(combat_scene.encounter_ref)
-        # Reuses the same party objects, not fresh copies - HP/conditions/
-        # inventory genuinely carry over between fights, matching
-        # run_autoplay; build_encounter_state only overwrites position and
-        # re-rolls initiative.
-        session.game_state = build_encounter_state(
-            encounter, session.party, session.action_rng, srd=session.srd
-        )
-        session.current_scene_id = combat_scene.id
-        await _broadcast(session, _state_update_message(session))
-        # A new encounter can itself open on a non-human turn (e.g. a
-        # monster winning initiative) - resolve those before anyone's told
-        # it's their turn, same reasoning as the very first connect.
-        await _autoplay_non_human_turns(session)
+    current_scene = session.campaign.scene_by_id(session.current_scene_id)
+    next_scene = session.campaign.next_scene(current_scene)
+    if next_scene is None:
+        return  # campaign complete - no further scenes authored
+    await _advance_chain_from(session, next_scene)
 
 
 async def _handle_rest_request(session: Session, rest_type: str) -> None:
@@ -598,8 +760,19 @@ async def _handle_rest_request(session: Session, rest_type: str) -> None:
     referenced by session.game_state.characters (build_encounter_state
     reuses party objects, never copies them), so the very next
     state_update already reflects the recovered HP/slots/class_resources
-    with no extra wiring needed."""
-    if session.party is None or session.game_state.status != "victory":
+    with no extra wiring needed.
+
+    Story-adaptive-encounters Phase 2: also rejected while a party_choice is
+    pending - session.game_state.status stays "victory" for the whole
+    duration of that pause (party_choice never touches it, by design), so
+    without this check a rest request would have gone through mid-
+    conversation, narratively out of place, alongside whatever the party is
+    still deciding."""
+    if (
+        session.party is None
+        or session.game_state.status != "victory"
+        or session.pending_party_choice is not None
+    ):
         await _broadcast(
             session,
             {"type": "error", "detail": "The party can only rest between encounters."},
@@ -636,6 +809,49 @@ async def _handle_client_message(
         await _advance_campaign_after_victory(session)
         await _autoplay_non_human_turns(session)
         await _send_awaiting_input(session)
+        return
+
+    if msg_type == "party_choice_response":
+        # Story-adaptive-encounters Phase 2: a real party member's own
+        # free-text input toward a live party_choice pause (see
+        # _start_party_choice/_resolve_party_choice). No character_id in
+        # the payload - derived from whichever human seat this connection
+        # controls that hasn't already responded, the same "derive the
+        # actor from server state, never from what the client claims"
+        # discipline bardic_inspiration_response already applies just below
+        # (and a real session's connection only ever controls a single
+        # human seat anyway - see session_websocket's own token handling).
+        pending_choice = session.pending_party_choice
+        if pending_choice is None:
+            await websocket.send_json(
+                {"type": "error", "detail": "No party choice is currently pending."}
+            )
+            return
+        human_ids = set(session.human_character_ids.values())
+        answerable = (
+            connection.controlled_character_ids & human_ids - pending_choice.responses.keys()
+        )
+        if not answerable:
+            await websocket.send_json(
+                {"type": "error", "detail": "You have no pending party choice to answer."}
+            )
+            return
+        character_id = next(iter(answerable))
+        text = str(raw.get("text", "")).strip() or "(says nothing)"
+        pending_choice.responses[character_id] = text
+        await _broadcast(
+            session, {"type": "party_choice_responded", "actor": character_id, "text": text}
+        )
+
+        living_human_ids = {
+            cid
+            for cid in human_ids
+            if not any(c.id == cid and c.is_dead for c in (session.party or []))
+        }
+        if living_human_ids <= pending_choice.responses.keys():
+            await _resolve_party_choice(session)
+            await _autoplay_non_human_turns(session)
+            await _send_awaiting_input(session)
         return
 
     if msg_type == "bardic_inspiration_response":

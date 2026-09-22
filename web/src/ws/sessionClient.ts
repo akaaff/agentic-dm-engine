@@ -124,6 +124,18 @@ export interface BardicInspirationOffer {
   die_sides: number
 }
 
+// Story-adaptive-encounters Phase 2: a party_choice scene's live pause -
+// every companion's own reaction is generated up front (server-side, see
+// api/ws/session.py's _start_party_choice), only the human seats listed in
+// `awaiting` are genuinely pending. `awaiting` shrinks as party_choice_
+// responded messages arrive (see useSessionSocket below); once it's empty
+// the server resolves the choice on its own and the panel clears itself.
+export interface PartyChoiceOffer {
+  situation: string
+  companionResponses: Record<string, string>
+  awaiting: string[]
+}
+
 export type TerrainType = 'floor' | 'wall' | 'difficult' | 'hazard'
 
 export interface LiveBattleMap {
@@ -184,6 +196,17 @@ type ServerMessage =
   // sendBardicInspirationResponse and the server's own authorization
   // check).
   | ({ type: 'bardic_inspiration_offer' } & BardicInspirationOffer)
+  // Story-adaptive-encounters Phase 2: a party_choice scene's live pause -
+  // broadcast to everyone so the whole party sees the situation and each
+  // other's companions' reactions, but only a connection controlling one
+  // of `awaiting`'s ids can actually answer (see sendPartyChoiceResponse).
+  | {
+      type: 'party_choice_offer'
+      situation: string
+      companion_responses: Record<string, string>
+      awaiting: string[]
+    }
+  | { type: 'party_choice_responded'; actor: string; text: string }
 
 export interface NarrationEntry {
   text: string
@@ -231,6 +254,7 @@ export function useSessionSocket(sessionId: string) {
   const [sceneImageUrl, setSceneImageUrl] = useState<string | null>(null)
   const [awaitingActor, setAwaitingActor] = useState<string | null>(null)
   const [bardicOffer, setBardicOffer] = useState<BardicInspirationOffer | null>(null)
+  const [partyChoice, setPartyChoice] = useState<PartyChoiceOffer | null>(null)
   // Issue #46: character ids whose player is currently disconnected - reset
   // on every fresh connect (a stale "so-and-so disconnected" banner
   // shouldn't survive this client's own reconnect, which starts blind to
@@ -274,6 +298,7 @@ export function useSessionSocket(sessionId: string) {
     setLogCaughtUp(true)
     setDisconnectedActors([])
     setBardicOffer(null)
+    setPartyChoice(null)
 
     // Paces the queue by real elapsed time since the last reveal, not by
     // whether the queue happened to look empty at the instant a new entry
@@ -415,6 +440,24 @@ export function useSessionSocket(sessionId: string) {
         case 'bardic_inspiration_offer':
           setBardicOffer(message)
           break
+        case 'party_choice_offer':
+          setPartyChoice({
+            situation: message.situation,
+            companionResponses: message.companion_responses,
+            awaiting: message.awaiting,
+          })
+          break
+        case 'party_choice_responded':
+          // Shrinks `awaiting` as each human answers; once nobody's left,
+          // the server resolves the choice and moves the chain on - clear
+          // the panel rather than leave it sitting empty until the next
+          // scene_narration supersedes it.
+          setPartyChoice((prev) => {
+            if (!prev) return prev
+            const awaiting = prev.awaiting.filter((id) => id !== message.actor)
+            return awaiting.length > 0 ? { ...prev, awaiting } : null
+          })
+          break
       }
     }
 
@@ -463,6 +506,20 @@ export function useSessionSocket(sessionId: string) {
     setError(null)
   }
 
+  // Story-adaptive-encounters Phase 2. No character_id in the payload - the
+  // server derives it from whichever human seat this connection controls
+  // (see _handle_client_message's own "party_choice_response" handling),
+  // same as sendBardicInspirationResponse never names the holder either.
+  // No optimistic local clear: unlike bardicOffer (one holder, one
+  // decision), a party_choice can have 2+ humans still pending after this
+  // one answers, so the panel's own awaiting list has to reflect what the
+  // server actually knows - it updates on the party_choice_responded
+  // broadcast that comes back, not before.
+  function sendPartyChoiceResponse(text: string) {
+    wsRef.current?.send(JSON.stringify({ type: 'party_choice_response', text }))
+    setError(null)
+  }
+
   return {
     gameState,
     combatSummaries,
@@ -472,6 +529,7 @@ export function useSessionSocket(sessionId: string) {
     awaitingActor,
     disconnectedActors,
     bardicOffer,
+    partyChoice,
     error,
     connected,
     sendPlayerAction,
@@ -479,5 +537,6 @@ export function useSessionSocket(sessionId: string) {
     sendRest,
     sendContinueCampaign,
     sendBardicInspirationResponse,
+    sendPartyChoiceResponse,
   }
 }

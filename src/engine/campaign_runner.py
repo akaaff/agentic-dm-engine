@@ -21,6 +21,15 @@ Phase 9G adds short_rest/long_rest scenes to the same walk, same shape as
 skill_challenge: authored narrative_intro plus a deterministic mechanical
 resolution (src/engine/resting.py) and a short supplementary narration line -
 no LLM call, matching everything else in this module.
+
+Story-adaptive-encounters Phase 2 adds a second stopping point alongside
+combat: a party_choice scene. Unlike everything else here, this module has
+no way to resolve one itself - there's no deterministic mechanic, and
+collecting live party input plus synthesizing a continuation needs a real
+WebSocket session and an LLM call, neither of which this module touches (see
+its own module-level "no LLM call" stance above, still true for everything
+else in this file). It just stops the walk and hands the scene back, exactly
+like it already does for combat - api/ws/session.py owns what happens next.
 """
 
 from __future__ import annotations
@@ -89,17 +98,18 @@ def advance_to_next_encounter(
     scene it passes through and resolving any skill_challenge along the way,
     until it reaches a `combat` scene or runs off the end of the chain.
 
-    Returns `(combat_scene, narration_log)` when a combat scene is found -
-    the combat scene's own narrative_intro is included in the log, so the
-    caller only needs to build/play its encounter, not narrate its intro
+    Returns `(stop_scene, narration_log)` when a combat or party_choice
+    scene is found - that scene's own narrative_intro is included in the
+    log, so the caller only needs to build/play its encounter (combat) or
+    start collecting party input (party_choice), not narrate its intro
     separately. Returns `(None, narration_log)` when the chain ends without
-    another combat scene - the campaign is complete.
+    reaching either - the campaign is complete.
     """
     narration: list[str] = []
     current: Scene | None = scene
     while current is not None:
         narration.append(current.narrative_intro)
-        if current.type == "combat":
+        if current.type in ("combat", "party_choice"):
             return current, narration
         if current.type == "skill_challenge":
             if current.skill_challenge_def is None:
