@@ -13,7 +13,7 @@ import {
 } from '../api/client'
 import CharacterPreviewSheet from '../components/CharacterPreviewSheet'
 import InfoTip from '../components/InfoTip'
-import { equipmentDetail } from '../utils/equipmentDetail'
+import { equipmentDetail, equipmentHint } from '../utils/equipmentDetail'
 import { nameWithSpellDetail } from '../utils/spellDetail'
 
 // Mirrors character_creation.VALID_GENDERS - portrait-selection only, no
@@ -633,6 +633,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 .filter((e) => e.category === 'weapon')
                 .map((item) => {
                   const detail = equipmentDetail(item)
+                  const hint = equipmentHint(item)
                   return (
                     <label key={item.index} className="checkbox-row">
                       <input
@@ -642,6 +643,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                       />
                       {item.name}
                       {detail && <span className="companion-meta"> ({detail})</span>}
+                      {hint && <InfoTip text={hint} />}
                     </label>
                   )
                 })}
@@ -655,6 +657,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 .filter((e) => e.category === 'armor')
                 .map((item) => {
                   const detail = equipmentDetail(item)
+                  const hint = equipmentHint(item)
                   return (
                     <label key={item.index} className="checkbox-row">
                       <input
@@ -664,6 +667,7 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                       />
                       {item.name}
                       {detail && <span className="companion-meta"> ({detail})</span>}
+                      {hint && <InfoTip text={hint} />}
                     </label>
                   )
                 })}

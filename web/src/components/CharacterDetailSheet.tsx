@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type EquipmentSummary, type SpellSummary } from '../api/client'
 import type { CombatAttackSummary, CombatSummary, LiveCharacter } from '../ws/sessionClient'
 import InfoTip from './InfoTip'
-import { equipmentDetail } from '../utils/equipmentDetail'
+import { equipmentDetail, equipmentHint } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
 import { nameWithSpellDetail } from '../utils/spellDetail'
 
@@ -167,6 +167,10 @@ export default function CharacterDetailSheet({
   const nameWithDetail = (idx: string): string => {
     const detail = itemDetail(idx)
     return detail ? `${itemName(idx)} (${detail})` : itemName(idx)
+  }
+  const itemHint = (idx: string): string => {
+    const item = equipmentByIndex.get(idx)
+    return item ? equipmentHint(item) : ''
   }
 
   // Grouped/counted, not a naive listing - the engine's inventory is a flat
@@ -341,6 +345,7 @@ export default function CharacterDetailSheet({
               <li key={idx}>
                 {nameWithDetail(idx)}
                 {count > 1 && ` x${count}`}
+                {itemHint(idx) && <InfoTip text={itemHint(idx)} />}
               </li>
             ))}
           </ul>
