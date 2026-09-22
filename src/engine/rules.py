@@ -227,6 +227,24 @@ def has_relentless_endurance(character: Character) -> bool:
     return character.race_index == "half-orc"
 
 
+def blessed_bonus(character: Character, rng: random.Random) -> int:
+    """Bless (issue #57): rolls 1d4 and returns it if `character` currently
+    has the "blessed" condition tag (applied via cast_spell's existing
+    "condition" mechanic, same as Invisibility - see rules._CONDITION_SPELLS),
+    else 0 - no RNG consumed at all when not blessed, so an unblessed
+    character's fixed-RNG test sequence is untouched. Real SRD applies this
+    to *every* attack roll and saving throw the target makes while blessed
+    (deliberately including a concentration save - it's a real saving throw
+    - and excluding death saves, which this engine already keeps flat/
+    unmodified by design). Computed once per roll by the caller and folded
+    into both the bonus total and its debug-mode breakdown so the two can
+    never disagree - mirrors how AttackParams.attack_bonus_breakdown is
+    built everywhere else."""
+    if not has_condition(character, "blessed"):
+        return 0
+    return roll(1, 4, rng=rng).total
+
+
 def normalize_skill_name(raw: str) -> str:
     """ "Perception", "skill-perception", "Sleight of Hand" -> "perception",
     "sleight-of-hand" (srd.skills' bare-index form)."""
@@ -301,6 +319,7 @@ class ConditionSpellSpec:
 _CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     "invisibility": ConditionSpellSpec(condition="invisible", duration_rounds=10),
     "greater-invisibility": ConditionSpellSpec(condition="invisible", duration_rounds=10),
+    "bless": ConditionSpellSpec(condition="blessed", duration_rounds=10),
 }
 """Issue #55 spell audit (bucket 4's "general condition mechanic" - see
 #54): spells whose entire real effect is "apply this existing ConditionName
@@ -314,7 +333,16 @@ out so more entries are now a cheap, low-risk table addition, not new
 plumbing. No save modeled: every spell here is a beneficial buff cast on a
 willing ally (or the caster), matching real SRD's own "willing creature"
 targeting - there's nothing to resist. Debuffs with a save already have
-their own real mechanic ("save", via `dc`), not this one."""
+their own real mechanic ("save", via `dc`), not this one.
+
+Bless (issue #57) fits the exact same shape - the "condition" mechanic
+already applies independently to every id in action.targets (up to 3 for
+Bless, matching real SRD's own "up to three creatures" cap - not
+separately enforced, since this engine has no per-spell max-targets check
+anywhere else either), so it needed no new dispatch shape, only this
+table entry plus blessed_bonus (the part real Invisibility never needed:
+an ongoing, repeatable dice bonus rather than a passive advantage/
+disadvantage flag)."""
 
 
 def spell_mechanic(spell: SrdEntry) -> str | None:

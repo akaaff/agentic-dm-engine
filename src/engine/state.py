@@ -27,10 +27,16 @@ ConditionName = Literal[
     "restrained",
     "stunned",
     "unconscious",
+    "blessed",
 ]
 """Exhaustion isn't in this list - SRD exhaustion is a leveled (0-6) effect
 with per-level rules, not an on/off tag like these - see
-Character.exhaustion_level and rules.set_exhaustion_level."""
+Character.exhaustion_level and rules.set_exhaustion_level.
+
+"blessed" isn't one of the SRD's 15 real conditions (it's the Bless spell's
+own effect, issue #57) - added here anyway to reuse this exact apply/tick/
+remove-on-expiry machinery rather than building a second, parallel one for
+a single spell. rules.blessed_bonus is the only place that reads it."""
 
 AbilityScore = Literal["STR", "DEX", "CON", "INT", "WIS", "CHA"]
 

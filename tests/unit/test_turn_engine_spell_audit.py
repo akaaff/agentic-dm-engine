@@ -362,3 +362,106 @@ def test_true_strike_grants_advantage_on_the_casters_next_attack_roll() -> None:
     events = [e for e in state.events if e.type == "attack_roll"]
     assert events[-1].payload["natural"] == 18  # the higher of the two advantage rolls
     assert elrond.true_strike_advantage is False  # consumed
+
+
+# --------------------------------------------------------- Bless (issue #57)
+
+
+def test_bless_applies_the_blessed_condition_to_up_to_three_targets() -> None:
+    state = _build_demo_state(_INITIATIVE)
+    thorin = state.characters["thorin"]
+    # Bless isn't a Fighter spell - poked directly onto Thorin (already
+    # first in turn order, no _end_turn needed) purely to exercise the
+    # casting mechanism in isolation, same "poke state" precedent this file
+    # already uses for level-gap pokes (e.g. scorching-ray/call-lightning).
+    thorin.spell_slots[1] = 1
+    action = ParsedAction(
+        actor="thorin",
+        verb="cast_spell",
+        targets=["thorin", "elrond"],
+        item_or_spell="bless",
+        raw_text="I cast bless on myself and Elrond",
+    )
+    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+    assert has_condition(thorin, "blessed")
+    assert has_condition(state.characters["elrond"], "blessed")
+
+
+def test_bless_rejects_an_enemy_target() -> None:
+    # Same friendly-fire-polarity guard the other condition spells share -
+    # see test_invisibility_rejects_an_enemy_target's identical shape.
+    state = _build_demo_state(_INITIATIVE)
+    thorin = state.characters["thorin"]
+    thorin.spell_slots[1] = 1
+    action = ParsedAction(
+        actor="thorin",
+        verb="cast_spell",
+        target="goblin_1",
+        item_or_spell="bless",
+        raw_text="I cast bless on goblin_1",
+    )
+    with pytest.raises(TurnEngineError):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_blessed_bonus_adds_a_d4_to_an_attack_roll() -> None:
+    # Elrond (party_2), not Thorin (party_1) - only Elrond starts adjacent
+    # (5ft) to goblin_1 in this demo encounter's spawn layout (see
+    # test_turn_engine_spells.py's own note on this), so he's the one this
+    # file's other plain-attack tests (e.g. True Strike above) use too.
+    state = _build_demo_state(_INITIATIVE)
+    elrond = state.characters["elrond"]
+    apply_condition(elrond, Condition(name="blessed", duration_rounds=10, source="test"))
+    _end_turn(state, "thorin")
+    action = ParsedAction(
+        actor="elrond", verb="attack", target="goblin_1", raw_text="I attack the goblin"
+    )
+    # RNG order: blessed_bonus's own 1d4 roll first (rules.blessed_bonus is
+    # called before resolve_attack), then the attack's natural d20, then the
+    # damage die. Elrond's dagger (finesse): DEX16 (elf +2) -> mod+3,
+    # proficiency+2 -> base 5; +4 (blessed) = 9; natural 10 -> total 19 >=
+    # goblin AC15 -> hit.
+    resolve_action(state, action, _FixedRandom([4, 10, 5]))  # type: ignore[arg-type]
+    event = next(e for e in state.events if e.type == "attack_roll")
+    assert ("blessed (1d4)", 4) in event.payload["attack_bonus_breakdown"]
+    assert event.payload["roll_total"] == 19
+    assert event.payload["hit"] is True
+
+
+def test_unblessed_attacker_gets_no_bonus_and_consumes_no_extra_rng() -> None:
+    # blessed_bonus must not roll at all when the actor isn't blessed - a
+    # regression guard for every pre-existing (unblessed) attack fixture's
+    # exact RNG sequence across the whole suite.
+    state = _build_demo_state(_INITIATIVE)
+    _end_turn(state, "thorin")
+    action = ParsedAction(
+        actor="elrond", verb="attack", target="goblin_1", raw_text="I attack the goblin"
+    )
+    resolve_action(state, action, _FixedRandom([10, 5]))  # type: ignore[arg-type]
+    event = next(e for e in state.events if e.type == "attack_roll")
+    assert all(label != "blessed (1d4)" for label, _ in event.payload["attack_bonus_breakdown"])
+    assert event.payload["roll_total"] == 15  # no +4 - only natural(10) + base(5)
+
+
+def test_blessed_bonus_adds_a_d4_to_a_concentration_save() -> None:
+    state = _build_demo_state(_INITIATIVE)
+    elrond = state.characters["elrond"]
+    elrond.concentrating_on = "Some Spell"
+    apply_condition(elrond, Condition(name="blessed", duration_rounds=10, source="test"))
+    _end_turn(state, "thorin")
+    state.current_turn = state.turn_order.index("goblin_1")
+    action = ParsedAction(actor="goblin_1", verb="attack", target="elrond", raw_text="attack")
+    # RNG order: goblin's attack natural, damage die, then (on Elrond taking
+    # damage) blessed_bonus's 1d4, then Elrond's own CON save natural.
+    resolve_action(state, action, _FixedRandom([15, 1, 4, 5]))  # type: ignore[arg-type]
+    concentration_event = next(
+        e
+        for e in state.events
+        if e.type == "saving_throw" and e.payload.get("kind") == "concentration"
+    )
+    assert ("blessed (1d4)", 4) in concentration_event.payload["modifier_breakdown"]
+    # DC max(10, 1//2)=10; save_bonus = CON mod+1 (not proficient) + blessed 4
+    # = 5; natural 5 -> total 10 >= DC -> succeeds (ties go to the roller) -
+    # without the blessed bonus this exact roll would have failed instead.
+    assert concentration_event.payload["success"] is True
+    assert elrond.concentrating_on == "Some Spell"

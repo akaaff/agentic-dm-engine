@@ -142,6 +142,7 @@ from src.engine.rules import (
     apply_damage,
     armor_ac,
     bardic_inspiration_die_sides,
+    blessed_bonus,
     condition_attack_advantage,
     condition_attack_disadvantage,
     condition_check_disadvantage,
@@ -785,6 +786,18 @@ def _resolve_single_attack(
     # before the call since resolve_attack itself has no Character to clear
     # it on.
     bardic_die_sides = actor.bardic_inspiration_die
+
+    # Bless (issue #57): rolled once here (not inside resolve_attack), so
+    # the same value backs both the total and the debug-mode breakdown -
+    # see rules.blessed_bonus's own docstring for why this can't be two
+    # separate rolls. 0 (no RNG consumed) when the actor isn't blessed.
+    bless = blessed_bonus(actor, rng)
+    if bless:
+        params = replace(
+            params,
+            attack_bonus=params.attack_bonus + bless,
+            attack_bonus_breakdown=[*params.attack_bonus_breakdown, ("blessed (1d4)", bless)],
+        )
 
     disadvantage = (
         target.is_dodging
@@ -1491,7 +1504,11 @@ def _check_concentration_break(
     if character.concentrating_on is None or damage <= 0:
         return
     dc = max(10, damage // 2)
-    save_bonus = _target_saving_throw_bonus(character, "CON", srd)
+    # Bless (issue #57) applies here too - a concentration save is a real
+    # saving throw, not a special case - see _resolve_single_attack's
+    # identical handling.
+    bless = blessed_bonus(character, rng)
+    save_bonus = _target_saving_throw_bonus(character, "CON", srd) + bless
     result, success = resolve_saving_throw(
         save_bonus=save_bonus, dc=dc, rng=rng, lucky=has_lucky_trait(character)
     )
@@ -1508,7 +1525,10 @@ def _check_concentration_break(
                 "roll_total": result.total,
                 "natural": result.kept[0],
                 "success": success,
-                "modifier_breakdown": _target_saving_throw_breakdown(character, "CON", srd),
+                "modifier_breakdown": [
+                    *_target_saving_throw_breakdown(character, "CON", srd),
+                    *([("blessed (1d4)", bless)] if bless else []),
+                ],
             },
         )
     )
@@ -2453,6 +2473,15 @@ def _cast_attack_spell_at_target(
     # identical handling for why this is captured before the call.
     bardic_die_sides = actor.bardic_inspiration_die
 
+    # Bless (issue #57) - see _resolve_single_attack's identical handling.
+    bless = blessed_bonus(actor, rng)
+    if bless:
+        params = replace(
+            params,
+            attack_bonus=params.attack_bonus + bless,
+            attack_bonus_breakdown=[*params.attack_bonus_breakdown, ("blessed (1d4)", bless)],
+        )
+
     result = resolve_attack(
         defender_ac=target.ac,
         attack_bonus=params.attack_bonus,
@@ -2573,7 +2602,9 @@ def _cast_save_spell_at_target(
 ) -> None:
     """One target's independent saving throw (Phase 9D multi-target - e.g.
     Fireball hitting 3 targets rolls 3 separate saves)."""
-    save_bonus = _target_saving_throw_bonus(target, params.dc_ability, srd)
+    # Bless (issue #57) - see _resolve_single_attack's identical handling.
+    bless = blessed_bonus(target, rng)
+    save_bonus = _target_saving_throw_bonus(target, params.dc_ability, srd) + bless
     result, success = resolve_saving_throw(
         save_bonus=save_bonus,
         dc=params.dc,
@@ -2602,9 +2633,10 @@ def _cast_save_spell_at_target(
                 "roll_total": result.total,
                 "natural": result.kept[0],
                 "success": success,
-                "modifier_breakdown": _target_saving_throw_breakdown(
-                    target, params.dc_ability, srd
-                ),
+                "modifier_breakdown": [
+                    *_target_saving_throw_breakdown(target, params.dc_ability, srd),
+                    *([("blessed (1d4)", bless)] if bless else []),
+                ],
             },
         )
     )
