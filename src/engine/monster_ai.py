@@ -102,7 +102,8 @@ def approach_path(
     speed: int,
     range_feet: int,
     terrain: list[list[TerrainType]],
-    occupied: set[tuple[int, int]],
+    blocked: set[tuple[int, int]],
+    ally_occupied: set[tuple[int, int]] | None = None,
 ) -> list[Position]:
     """Greedy step-by-step path toward `target`, stopping once within
     `range_feet` or the speed budget runs out. May be empty (already in
@@ -110,14 +111,25 @@ def approach_path(
     speed) - the caller attacks anyway either way; turn_engine's own range
     check is the honest final word on whether that lands.
 
-    `occupied` is a snapshot taken once at the start of this monster's turn
-    (every other living character's square) - not updated as this path is
-    built, since a single monster only ever moves once per turn anyway.
-    Caught live: two monsters converging on the same target from different
+    `blocked` (hostile-occupied squares, plus walls via _best_step) is a
+    snapshot taken once at the start of this monster's turn (not updated as
+    this path is built, since a single monster only ever moves once per
+    turn anyway) - genuinely impassable, matching real SRD (no moving
+    through a hostile creature's space without a special ability). Caught
+    live: two monsters converging on the same target from different
     starting squares could independently choose the identical "best"
     intermediate square and end up stacked exactly on top of each other -
     invisible as two tokens on the combat grid, and a real (if minor) break
     of the "no two creatures share a square" rule.
+
+    `ally_occupied` (live-requested, separate from `blocked`): real SRD lets
+    you move *through* an ally's space, just not end your move standing on
+    it - so these squares are passable as intermediate steps (not excluded
+    from _best_step's candidates) but trimmed off the end of the finished
+    path if the greedy walk happened to stop on one, leaving the mover one
+    square short rather than illegally landing on an ally (turn_engine.
+    _resolve_move's own destination-occupancy check is the hard backstop
+    either way).
 
     Public (issue #48) so graph/nodes/intent_parser.py can reuse the exact
     same algorithm for a player's own "move toward X" free text, instead of
@@ -126,11 +138,12 @@ def approach_path(
     affordability check exactly, so a path built against the actor's real
     remaining speed budget is guaranteed to still be affordable when
     _resolve_move re-validates it."""
+    ally_occupied = ally_occupied or set()
     path: list[Position] = []
     current = start
     remaining = speed
     while distance_feet(current, target) > range_feet:
-        step = _best_step(current, target, terrain, occupied)
+        step = _best_step(current, target, terrain, blocked)
         if step is None:
             break
         cost = FEET_PER_SQUARE * (2 if terrain[step.y][step.x] == "difficult" else 1)
@@ -139,7 +152,27 @@ def approach_path(
         path.append(step)
         remaining -= cost
         current = step
+    while path and (path[-1].x, path[-1].y) in ally_occupied:
+        path.pop()
     return path
+
+
+def occupied_squares_by_side(
+    game_state: GameState, actor: Character
+) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+    """Splits every other living character's square into (hostile, ally)
+    relative to `actor`'s own side - shared by choose_monster_action and
+    intent_parser._resolve_move_target so both pass approach_path the same
+    "block hostiles, allow passing through allies" occupancy, rather than
+    each rebuilding the same is_pc comparison independently."""
+    hostile: set[tuple[int, int]] = set()
+    ally: set[tuple[int, int]] = set()
+    for c in game_state.characters.values():
+        if c.is_dead or c.id == actor.id:
+            continue
+        bucket = ally if c.is_pc == actor.is_pc else hostile
+        bucket.add((c.position.x, c.position.y))
+    return hostile, ally
 
 
 def _choose_innate_spell(actor: Character, target: Character, srd: SrdIndex) -> ParsedAction | None:
@@ -212,11 +245,7 @@ def choose_monster_action(game_state: GameState, actor: Character) -> ParsedActi
             raw_text=f"{actor.name} attacks {target.name}.",
         )
 
-    occupied = {
-        (c.position.x, c.position.y)
-        for c in game_state.characters.values()
-        if not c.is_dead and c.id != actor.id
-    }
+    hostile_squares, ally_squares = occupied_squares_by_side(game_state, actor)
     # Move no longer ends the turn (found live), so this can now be called a
     # second time for the same actor within one real turn, after an earlier
     # partial move already spent some of its budget - use what's actually
@@ -229,7 +258,8 @@ def choose_monster_action(game_state: GameState, actor: Character) -> ParsedActi
         remaining_speed,
         range_feet,
         game_state.battle_map.terrain,
-        occupied,
+        hostile_squares,
+        ally_squares,
     )
     if not path:
         # Can't get any closer (blocked, or no speed left) - attack anyway.

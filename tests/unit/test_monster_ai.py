@@ -212,6 +212,31 @@ def test_move_path_avoids_a_square_already_occupied_by_another_character() -> No
     assert all((p["x"], p["y"]) != (5, 0) for p in action.params["path"])
 
 
+def test_move_path_passes_through_an_ally_occupied_square_but_never_ends_there() -> None:
+    # Live-requested: real SRD lets you move THROUGH an ally's space, just
+    # not end your move standing on it - unlike a hostile's square, which
+    # stays genuinely impassable (see the test above). A 1-row corridor
+    # forces the path directly through goblin_2 (an ally - both are
+    # monsters) at (3,0); there's no detour available (no second row to
+    # route around it through), so this also proves the path doesn't just
+    # get stuck/blocked the way a hostile-occupied square correctly does.
+    goblin_1 = _make_character(
+        "goblin_1", is_pc=False, position=Position(x=0, y=0), monster_index="goblin"
+    )
+    goblin_2 = _make_character(
+        "goblin_2", is_pc=False, position=Position(x=3, y=0), monster_index="goblin"
+    )
+    thorin = _make_character("thorin", is_pc=True, position=Position(x=6, y=0))
+    state = _make_state([goblin_1, goblin_2, thorin], battle_map=_open_map(7, 1))
+
+    action = choose_monster_action(state, goblin_1)
+
+    assert action.verb == "move"
+    path = [(p["x"], p["y"]) for p in action.params["path"]]
+    assert (3, 0) in path  # genuinely passed through the ally's square
+    assert path[-1] != (3, 0)  # but didn't end the move standing on it
+
+
 def test_casts_an_available_innate_spell_instead_of_attacking_when_in_range() -> None:
     # Green-hag (CR3, Innate Spellcasting: Vicious Mockery at-will, 60ft
     # range) - issue #22's whole point: a spellcasting monster shouldn't

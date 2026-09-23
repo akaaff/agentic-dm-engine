@@ -30,7 +30,7 @@ from typing import Any
 
 from src import config
 from src.engine.actions import ParsedAction, ParsedActionSequence
-from src.engine.monster_ai import approach_path
+from src.engine.monster_ai import approach_path, occupied_squares_by_side
 from src.engine.position import Position, distance_feet
 from src.engine.rules import effective_speed
 from src.engine.state import Character, GameState
@@ -206,18 +206,15 @@ def _resolve_move_target(action: ParsedAction, game_state: GameState) -> ParsedA
     base_speed = effective_speed(actor)
     total_budget = base_speed * 2 if action.verb == "dash" else base_speed
     remaining_budget = max(0, total_budget - actor.movement_used_feet)
-    occupied = {
-        (c.position.x, c.position.y)
-        for c in game_state.characters.values()
-        if not c.is_dead and c.id != actor.id
-    }
+    hostile_squares, ally_squares = occupied_squares_by_side(game_state, actor)
     path = approach_path(
         actor.position,
         target.position,
         remaining_budget,
         5,
         game_state.battle_map.terrain,
-        occupied,
+        hostile_squares,
+        ally_squares,
     )
     # Explicitly drop any params.path the model also supplied, even on an
     # empty computed path - already-adjacent or genuinely blocked, either
