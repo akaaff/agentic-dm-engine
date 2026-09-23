@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -39,9 +39,10 @@ from src.engine.campaign import Campaign, Scene, load_campaign
 from src.engine.campaign_runner import advance_to_next_encounter
 from src.engine.companions import build_companion, load_companion_spec_by_character_id
 from src.engine.encounter import GameStateBuildError, build_encounter_state, load_encounter
-from src.engine.monster_ai import choose_monster_action
+from src.engine.monster_ai import approach_path, choose_monster_action, occupied_squares_by_side
+from src.engine.position import Position
 from src.engine.resting import apply_long_rest, apply_short_rest
-from src.engine.rules import ability_modifier, armor_ac_breakdown
+from src.engine.rules import ability_modifier, armor_ac_breakdown, effective_speed
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
 from src.engine.turn_engine import (
@@ -1052,12 +1053,45 @@ async def _handle_client_message(
         }
         actions_to_resolve = parse_intent_sequence(parse_state)
     elif msg_type == "player_move":
+        # Live-reported bug fix: this used to send a single-element path
+        # straight to the clicked square (the actor's own current position
+        # plus just the destination) - move_cost_feet requires every
+        # consecutive pair in a path to be adjacent (chebyshev distance 1),
+        # so any click more than one square away always failed with
+        # "cannot afford this move", regardless of anything actually being
+        # in the way. Now computes a real multi-square path via the same
+        # approach_path/occupied_squares_by_side logic free-text "move to X"
+        # already uses (see graph/nodes/intent_parser._resolve_move_target)
+        # - hostile squares block, ally squares are passable but not
+        # landable, range_feet=0 since a bare destination square (not a
+        # named character) means "walk exactly there," not "get within
+        # some range of it." Falls back to the old single-hop path if
+        # pathing itself is impossible from the very first step (no battle
+        # map, or genuinely blocked) so _resolve_move's own error still
+        # reports something meaningful rather than silently doing nothing.
         current_actor = session.game_state.turn_order[session.game_state.current_turn]
+        actor = session.game_state.characters[current_actor]
+        raw_to = cast(dict[str, int], raw["to"])
+        destination = Position(x=raw_to["x"], y=raw_to["y"])
+        computed_path: list[dict[str, int]] = []
+        if session.game_state.battle_map is not None:
+            remaining_budget = max(0, effective_speed(actor) - actor.movement_used_feet)
+            hostile_squares, ally_squares = occupied_squares_by_side(session.game_state, actor)
+            path = approach_path(
+                actor.position,
+                destination,
+                remaining_budget,
+                0,
+                session.game_state.battle_map.terrain,
+                hostile_squares,
+                ally_squares,
+            )
+            computed_path = [{"x": p.x, "y": p.y} for p in path]
         actions_to_resolve = [
             ParsedAction(
                 actor=current_actor,
                 verb="move",
-                params={"path": [raw["to"]]},
+                params={"path": computed_path or [raw_to]},
                 raw_text="click-to-move",
             )
         ]
