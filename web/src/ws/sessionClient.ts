@@ -50,6 +50,11 @@ export interface LiveCharacter {
   is_dodging: boolean
   has_help_advantage: boolean
   bonus_action_used: boolean
+  // New for the action/bonus-action availability UI (live-requested) -
+  // mirrors resolve_action's own ends_turn for every verb except "move"
+  // (movement, not the action). See Character.action_used_this_turn's own
+  // docstring in state.py.
+  action_used_this_turn: boolean
   disengaged_this_turn: boolean
   reaction_used_this_round: boolean
   class_index: string | null

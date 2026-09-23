@@ -35,6 +35,16 @@ export default function CharacterSheet({
       </div>
       <div className="character-sheet-meta">
         {character.race} {character.class_} - AC {character.ac}
+        <span className="action-economy-dots">
+          <span
+            className={`action-dot action-dot-action ${character.action_used_this_turn ? 'used' : ''}`}
+            title={character.action_used_this_turn ? 'Action used this turn' : 'Action available'}
+          />
+          <span
+            className={`action-dot action-dot-bonus ${character.bonus_action_used ? 'used' : ''}`}
+            title={character.bonus_action_used ? 'Bonus action used this turn' : 'Bonus action available'}
+          />
+        </span>
       </div>
       <div className="hp-bar-track">
         <div className="hp-bar-fill" style={{ width: `${hpPct}%` }} />

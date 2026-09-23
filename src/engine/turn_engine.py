@@ -3679,6 +3679,11 @@ def _advance_turn_skipping_dead(state: GameState) -> None:
             # same real turn) must NOT see this reset again, or a second
             # bonus-action cast that same turn would be wrongly allowed.
             next_actor.bonus_action_used = False
+            # UX affordance: action_used_this_turn resets on the identical
+            # schedule, for the identical reason (a bonus-action verb this
+            # same actor used earlier in this real turn must not un-flag
+            # their now-spent main action).
+            next_actor.action_used_this_turn = False
             # Phase C: equip_used_this_turn resets on the same "turn
             # actually advances TO this character" schedule, for the same
             # reason - equip doesn't end the turn either.
@@ -3824,6 +3829,13 @@ def resolve_action(
         pass
     else:
         raise NotImplementedError(f"Verb not yet supported by the turn engine: {action.verb}")
+
+    # UX affordance: ends_turn already IS "did this verb consume the main
+    # action" for every verb except "move" (which spends movement, not the
+    # action, and already leaves ends_turn False for a plain move) - see
+    # Character.action_used_this_turn's own docstring for why this doesn't
+    # need a verb-by-verb special case.
+    actor.action_used_this_turn = ends_turn if action.verb != "move" else False
 
     _check_victory_defeat(state)
 

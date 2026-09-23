@@ -189,6 +189,24 @@ class Character(BaseModel):
     resolve_action call (their main action, still the same real turn) must
     still see this as True, or a second bonus-action cast that turn would
     be wrongly allowed. A second attempt while still True is rejected."""
+    action_used_this_turn: bool = False
+    """UX affordance (live-requested): mirrors resolve_action's own
+    ends_turn flag for every verb except "move" (which spends movement,
+    never the main action, and correctly leaves this False while still
+    setting ends_turn=False) - set unconditionally right after dispatch,
+    since ends_turn already IS "did this verb consume the main action"
+    for every other verb (a bonus-action verb like cast_spell/second_wind/
+    rage/equip/offhand_attack/cunning_action/flurry_of_blows/
+    martial_arts_strike/revert_wild_shape returns ends_turn=False on
+    success, the identical signal this field needs). Reset in
+    turn_engine._advance_turn_skipping_dead on the same "only when the
+    turn actually advances TO this character" schedule as
+    bonus_action_used - not at the top of every resolve_action call, since
+    a bonus-action verb leaves the turn open for this same actor's own
+    follow-up main action, which must still see whether they've already
+    acted. Not persisted to CharacterRecord - combat-turn-scoped, like
+    bonus_action_used/equip_used_this_turn/movement_used_feet, correctly
+    reset to its Pydantic default on a fresh encounter build."""
     movement_used_feet: int = 0
     """Feet of this turn's movement budget already spent - "move" no longer
     ends the turn (a real bug fix, not this project's own simplification:
@@ -263,6 +281,13 @@ class Character(BaseModel):
     VALID_GENDERS. Purely a portrait-selection field: SRD races have no
     gender concept at all (confirmed against the vendored race JSON), so
     this carries no mechanical weight anywhere in the rules engine."""
+    voice: str | None = None
+    """Narration-TTS voice-selection field (see DECISIONS.md #9), same
+    shape/placement as gender - set only for PCs/companions, carries no
+    mechanical weight. A backend-specific voice name/id (e.g. a Kokoro voice
+    like "am_michael" - see src/audiogen/service.py); None falls back to
+    config.NARRATOR_VOICE wherever a companion's own response is voiced
+    (src/api/ws/session.py's _start_party_choice)."""
     hit_die_sides: int = 8
     """The class's hit die size (e.g. 8 for a d8 class) - set at creation
     from the SRD class's `hit_die` (character_creation.create_character).

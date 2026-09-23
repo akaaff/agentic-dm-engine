@@ -700,6 +700,34 @@ button.secondary {
   font-size: 0.75rem;
   color: #9d94ad;
   margin-bottom: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.action-economy-dots {
+  display: inline-flex;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.action-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.action-dot-action {
+  background: #4caf50;
+}
+
+.action-dot-bonus {
+  background: #ffcc66;
+}
+
+.action-dot.used {
+  opacity: 0.25;
 }
 
 .hp-bar-track {

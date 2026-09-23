@@ -318,3 +318,80 @@ def test_reaction_used_this_round_caps_a_reactor_at_one_opportunity_attack() -> 
     # Still only the one attack_roll from Thorin's move - the goblin has no
     # reaction left for Elrond's.
     assert len([e for e in state.events if e.type == "attack_roll"]) == 1
+
+
+# --- action_used_this_turn (UX affordance) ----------------------------------
+
+
+def test_plain_move_leaves_action_used_this_turn_false() -> None:
+    # Movement spends the movement budget, never the main action - mirrors
+    # bonus_action_used's own "move doesn't end the turn" exception, but for
+    # the opposite reason (nothing was spent at all, not a bonus action).
+    state = _bonus_action_state()
+    mira_pos = state.characters["mira"].position
+    move_action = ParsedAction(
+        actor="mira",
+        verb="move",
+        raw_text="I step forward",
+        params={"path": [{"x": mira_pos.x + 1, "y": mira_pos.y}]},
+    )
+    resolve_action(state, move_action, _FixedRandom([]))  # type: ignore[arg-type]
+    assert state.characters["mira"].action_used_this_turn is False
+    assert state.turn_order[state.current_turn] == "mira"  # still her turn
+
+
+def test_bonus_action_spell_leaves_action_used_this_turn_false_until_the_main_action() -> None:
+    state = _bonus_action_state()
+    state.characters["mira"].hp = 1
+    state.characters["goblin_1"].position = state.characters["mira"].position
+    heal_action = ParsedAction(
+        actor="mira",
+        verb="cast_spell",
+        target="mira",
+        item_or_spell="healing word",
+        raw_text="I speak a word of healing over myself",
+    )
+    resolve_action(state, heal_action, _FixedRandom([3]))  # type: ignore[arg-type]
+    assert state.characters["mira"].action_used_this_turn is False
+
+    attack_action = ParsedAction(
+        actor="mira", verb="attack", target="goblin_1", raw_text="I punch the goblin"
+    )
+    resolve_action(state, attack_action, _FixedRandom([15]))  # type: ignore[arg-type]
+    assert state.characters["mira"].action_used_this_turn is True
+
+
+def test_ordinary_action_spell_sets_action_used_this_turn_true() -> None:
+    state = _bonus_action_state()
+    state.characters["mira"].hp = 1
+    action = ParsedAction(
+        actor="mira",
+        verb="cast_spell",
+        target="mira",
+        item_or_spell="cure wounds",
+        raw_text="I cast cure wounds on myself",
+    )
+    resolve_action(state, action, _FixedRandom([6]))  # type: ignore[arg-type]
+    assert state.characters["mira"].action_used_this_turn is True
+
+
+def test_action_used_this_turn_resets_on_the_actors_own_next_turn() -> None:
+    # Same "only when the turn actually advances TO this character" schedule
+    # as bonus_action_used - poke it True directly (a real resolve_action
+    # call earlier this test file already proves it gets set correctly) and
+    # confirm a full round-trip through another actor's turn clears it.
+    state = _bonus_action_state()
+    state.characters["mira"].action_used_this_turn = True
+    # The demo encounter's turn order is mira + 2 goblins - end every other
+    # actor's turn in sequence until it's genuinely mira's turn again.
+    while True:
+        resolve_action(
+            state,
+            ParsedAction(
+                actor=state.turn_order[state.current_turn], verb="end_turn", raw_text="..."
+            ),
+            _FixedRandom([]),  # type: ignore[arg-type]
+        )
+        if state.turn_order[state.current_turn] == "mira":
+            break
+    assert state.characters["mira"].action_used_this_turn is False
