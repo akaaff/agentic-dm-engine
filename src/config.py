@@ -84,6 +84,18 @@ INTENT_PARSER_OLLAMA_MODEL = os.environ.get("INTENT_PARSER_OLLAMA_MODEL", "dm-in
 # teacher on a 10GB card, Day 27), or just for faster iteration.
 SCENE_IMAGES_ENABLED = os.environ.get("SCENE_IMAGES_ENABLED", "1") != "0"
 
+# Narration text-to-speech (see DECISIONS.md #9, src/audiogen/service.py).
+# TTS_ENABLED=0 skips audio generation entirely, same escape hatch shape as
+# SCENE_IMAGES_ENABLED. TTS_BACKEND is the swap point audiogen.service
+# dispatches on - "kokoro" is the only backend implemented so far, but
+# nothing outside audiogen/ needs to know that. NARRATOR_VOICE is a
+# backend-specific voice name/id (a Kokoro voice like "am_michael" means
+# nothing to a different engine) - same "backend-specific config" shape as
+# INTENT_PARSER_ADAPTER_DIR/INTENT_PARSER_OLLAMA_MODEL above.
+TTS_ENABLED = os.environ.get("TTS_ENABLED", "1") != "0"
+TTS_BACKEND = os.environ.get("TTS_BACKEND", "kokoro")
+NARRATOR_VOICE = os.environ.get("NARRATOR_VOICE", "am_michael")
+
 # Story-adaptive-encounters Phase 3: caps how many times one live session
 # can chain a model-generated story continuation onto an "open" party_choice
 # scene (next_scene_id left unset - see campaign_generator.generate_

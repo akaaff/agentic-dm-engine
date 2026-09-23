@@ -306,6 +306,7 @@ def create_character(
     srd: SrdIndex | None = None,
     fighting_style: str | None = None,
     gender: str | None = None,
+    voice: str | None = None,
     chosen_racial_skills: list[str] | None = None,
     chosen_spells: list[str] | None = None,
     chosen_prepared_spells: list[str] | None = None,
@@ -597,6 +598,7 @@ def create_character(
         class_resources=class_resources,
         fighting_style=fighting_style,
         gender=gender,
+        voice=voice,
         known_spells=list(chosen_spells) if chosen_spells is not None else [],
         prepared_spells=list(chosen_prepared_spells) if chosen_prepared_spells is not None else [],
     )

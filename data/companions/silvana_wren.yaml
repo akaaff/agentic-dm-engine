@@ -11,3 +11,4 @@ base_ability_scores: { STR: 12, DEX: 15, CON: 13, INT: 10, WIS: 14, CHA: 8 }
 chosen_skills: [skill-perception, skill-stealth, skill-survival]
 chosen_equipment: [leather-armor]
 gender: female
+voice: bf_lily

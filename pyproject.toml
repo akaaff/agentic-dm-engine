@@ -21,6 +21,8 @@ dependencies = [
     "trl>=0.20",
     "wandb>=0.29.0",
     "gguf>=0.19.0",
+    "kokoro>=0.9.4",
+    "soundfile>=0.14.0",
 ]
 
 [dependency-groups]
@@ -60,8 +62,20 @@ warn_unused_ignores = true
 # see statically) - torch/transformers/peft/diffusers already ship their
 # own type info and don't need this. accelerate (generate_portraits.py's
 # init_empty_weights, needed to avoid materializing a full-precision T5
-# before loading real fp8 weights) has the same missing-py.typed gap.
-module = ["datasets", "datasets.*", "trl", "trl.*", "accelerate", "accelerate.*"]
+# before loading real fp8 weights) has the same missing-py.typed gap. kokoro
+# (src/audiogen/service.py) and soundfile (its .wav writer) both ship no
+# py.typed marker either.
+module = [
+    "datasets",
+    "datasets.*",
+    "trl",
+    "trl.*",
+    "accelerate",
+    "accelerate.*",
+    "kokoro",
+    "kokoro.*",
+    "soundfile",
+]
 ignore_missing_imports = true
 follow_imports = "skip"
 

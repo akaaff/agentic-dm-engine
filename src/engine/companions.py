@@ -32,6 +32,14 @@ class CompanionSpec(BaseModel):
     every companion needs a real portrait, so every companion YAML must
     author this (one of character_creation.VALID_GENDERS) explicitly rather
     than leaving it to default to None."""
+    voice: str
+    """Required, same "every companion needs one explicitly authored" stance
+    as gender - narration-TTS voice-selection (see DECISIONS.md #9), a
+    backend-specific voice name/id (e.g. a Kokoro voice like "am_adam").
+    Unlike gender, not validated against a closed set here - character_
+    creation.py stays backend-agnostic on purpose (the TTS backend is a
+    swappable config choice, src/audiogen/service.py's own concern, not
+    something the core engine should know the valid values for)."""
     chosen_racial_skills: list[str] | None = None
     """Only meaningful (and required by create_character) for a Half-Elf
     companion - Skill Versatility (issue #23), 2 skills of the author's
@@ -98,6 +106,7 @@ def build_companion(spec: CompanionSpec, srd: SrdIndex | None = None) -> Charact
         persona=spec.persona,
         srd=srd,
         gender=spec.gender,
+        voice=spec.voice,
         chosen_racial_skills=spec.chosen_racial_skills,
         chosen_spells=spec.chosen_spells,
         chosen_prepared_spells=spec.chosen_prepared_spells,

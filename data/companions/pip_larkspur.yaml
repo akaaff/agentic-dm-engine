@@ -15,6 +15,7 @@ chosen_skills:
   [skill-performance, skill-persuasion, skill-insight, lute, flute, lyre]
 chosen_equipment: []
 gender: female
+voice: af_sky
 # Bard's level-1 "Spells Known" list (issue #30) - 4 real SRD spells fitting
 # her support/utility role: a heal, an AOE damage/save spell, and two
 # control/social options.

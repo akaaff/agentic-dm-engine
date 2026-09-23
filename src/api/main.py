@@ -10,6 +10,8 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.routes import campaigns, characters, companions, sessions
 from src.api.ws import session as ws_session
+from src.audiogen.service import DEFAULT_OUTPUT_DIR as AUDIO_OUTPUT_DIR
+from src.audiogen.service import MEDIA_URL_PREFIX as AUDIO_MEDIA_URL_PREFIX
 from src.config import EXTRA_CORS_ORIGINS, SHARED_ACCESS_PASSPHRASE
 from src.engine.character_creation import PORTRAIT_DIR
 from src.imagegen.service import DEFAULT_OUTPUT_DIR, MEDIA_URL_PREFIX
@@ -72,6 +74,12 @@ app.mount(MEDIA_URL_PREFIX, StaticFiles(directory=DEFAULT_OUTPUT_DIR), name="sce
 (PORTRAIT_DIR / "pc").mkdir(parents=True, exist_ok=True)
 (PORTRAIT_DIR / "monsters").mkdir(parents=True, exist_ok=True)
 app.mount("/media/portraits", StaticFiles(directory=PORTRAIT_DIR), name="portraits")
+
+# Same reasoning as the two mounts above - a fresh checkout that hasn't
+# generated any narration audio yet still needs the mount directory to exist
+# at startup.
+AUDIO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(AUDIO_MEDIA_URL_PREFIX, StaticFiles(directory=AUDIO_OUTPUT_DIR), name="narration-audio")
 
 
 @app.get("/health")

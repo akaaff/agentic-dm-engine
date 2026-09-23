@@ -31,6 +31,8 @@ from src.api.db.models import CampaignProgress, CharacterRecord
 from src.api.db.session import SessionLocal
 from src.api.routes.characters import _record_to_character
 from src.api.ws.rate_limit import TokenBucket
+from src.audiogen.service import MEDIA_URL_PREFIX as AUDIO_MEDIA_URL_PREFIX
+from src.audiogen.service import generate_narration_audio
 from src.cli.play import build_demo_encounter, build_demo_party
 from src.engine.actions import ParsedAction
 from src.engine.campaign import Campaign, Scene, load_campaign
@@ -381,6 +383,33 @@ async def _broadcast(session: Session, message: dict[str, object]) -> None:
         session.connected_human_character_ids -= connection.controlled_character_ids
 
 
+def _narration_message(
+    text: str, msg_type: str = "narration", voice: str = config.NARRATOR_VOICE
+) -> dict[str, object]:
+    """The one choke point that turns narration text into narration audio
+    (src.audiogen.service.generate_narration_audio, itself backend-agnostic -
+    see DECISIONS.md #9) - used by both _broadcast_narration (a session-wide
+    broadcast) and the connect flow's own per-connection pending_scene_
+    narration send below, which needs the identical {type, text, audio_url}
+    shape but can't go through _broadcast (it's addressed to one specific
+    just-connected websocket, not every connection in the session).
+    Generation stays synchronous/blocking inline, matching this file's own
+    existing accepted tradeoff (session.graph.invoke below is already called
+    directly, not wrapped in asyncio.to_thread) - no new pattern introduced
+    here. `audio_url` is None (not omitted) whenever TTS_ENABLED is off, the
+    text is empty, or generation itself was skipped/failed - the frontend
+    simply doesn't play anything for a None."""
+    audio_path = generate_narration_audio(text, voice) if config.TTS_ENABLED else None
+    audio_url = f"{AUDIO_MEDIA_URL_PREFIX}/{audio_path.name}" if audio_path else None
+    return {"type": msg_type, "text": text, "audio_url": audio_url}
+
+
+async def _broadcast_narration(
+    session: Session, text: str, msg_type: str = "narration", voice: str = config.NARRATOR_VOICE
+) -> None:
+    await _broadcast(session, _narration_message(text, msg_type, voice))
+
+
 async def _send_awaiting_input(session: Session) -> None:
     if session.game_state.status != "in_progress":
         return
@@ -562,7 +591,7 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             # unconditionally). Only a real human's own turn (see
             # _handle_client_message) actually pauses to ask.
             narration = _resolve_and_narrate_bardic_choice(session, exc.choice, True)
-            await _broadcast(session, {"type": "narration", "text": narration})
+            await _broadcast_narration(session, narration)
             await _broadcast(session, _state_update_message(session))
             consecutive_invalid = 0
             continue
@@ -572,7 +601,7 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             continue
 
         session.game_state = result["game_state"]
-        await _broadcast(session, {"type": "narration", "text": result["narration"]})
+        await _broadcast_narration(session, result["narration"])
         await _broadcast(session, _state_update_message(session))
         if result["scene_image_url"]:
             await _broadcast(session, {"type": "scene_image", "url": result["scene_image_url"]})
@@ -622,7 +651,7 @@ async def _advance_chain_from(session: Session, start_scene: Scene) -> None:
         session.campaign, start_scene, session.party, session.srd, session.action_rng
     )
     for line in narration:
-        await _broadcast(session, {"type": "scene_narration", "text": line})
+        await _broadcast_narration(session, line, msg_type="scene_narration")
 
     if stop_scene is None:
         await _mark_campaign_complete(session)
@@ -677,10 +706,24 @@ async def _start_party_choice(session: Session, scene: Scene) -> None:
     assert session.party is not None
 
     responses: dict[str, str] = {}
+    response_audio: dict[str, str | None] = {}
     for character in session.party:
         if character.is_companion and not character.is_dead:
-            responses[character.id] = generate_companion_party_choice_response(
-                character, scene.narrative_intro
+            text = generate_companion_party_choice_response(character, scene.narrative_intro)
+            responses[character.id] = text
+            # Phase 2 of the narration-TTS work: each companion's own
+            # reaction is already cleanly attributed to one character id (no
+            # narrator-prose splitting needed, unlike ordinary in-combat
+            # narration - see issue #63) - voiced in their own assigned
+            # Character.voice, falling back to the narrator voice for a
+            # companion authored without one.
+            audio_path = (
+                generate_narration_audio(text, character.voice or config.NARRATOR_VOICE)
+                if config.TTS_ENABLED
+                else None
+            )
+            response_audio[character.id] = (
+                f"{AUDIO_MEDIA_URL_PREFIX}/{audio_path.name}" if audio_path else None
             )
 
     living_human_ids = {
@@ -697,6 +740,7 @@ async def _start_party_choice(session: Session, scene: Scene) -> None:
             "type": "party_choice_offer",
             "situation": scene.narrative_intro,
             "companion_responses": responses,
+            "companion_response_audio": response_audio,
             "awaiting": sorted(living_human_ids),
         },
     )
@@ -741,7 +785,7 @@ async def _resolve_party_choice(session: Session) -> None:
     narration = synthesize_party_choice_narration(
         pending.situation, pending.responses, session.party
     )
-    await _broadcast(session, {"type": "scene_narration", "text": narration})
+    await _broadcast_narration(session, narration, msg_type="scene_narration")
 
     scene = session.campaign.scene_by_id(pending.scene_id)
     next_scene = session.campaign.next_scene(scene)
@@ -872,7 +916,7 @@ async def _handle_rest_request(session: Session, rest_type: str) -> None:
         await _broadcast(session, {"type": "error", "detail": f"Unknown rest type: {rest_type!r}"})
         return
 
-    await _broadcast(session, {"type": "narration", "text": narration})
+    await _broadcast_narration(session, narration)
     await _broadcast(session, _state_update_message(session))
 
 
@@ -964,7 +1008,7 @@ async def _handle_client_message(
         # by the time this broadcasts - no extra turn-advance logic needed
         # here, same as the ordinary action loop below.
         narration = _resolve_and_narrate_bardic_choice(session, pending, bool(raw.get("use")))
-        await _broadcast(session, {"type": "narration", "text": narration})
+        await _broadcast_narration(session, narration)
         await _broadcast(session, _state_update_message(session))
         await _autoplay_non_human_turns(session)
         await _send_awaiting_input(session)
@@ -1115,7 +1159,7 @@ async def _handle_client_message(
 
         session.game_state = result["game_state"]
 
-        await _broadcast(session, {"type": "narration", "text": result["narration"]})
+        await _broadcast_narration(session, result["narration"])
         await _broadcast(session, _state_update_message(session))
         if result["scene_image_url"]:
             await _broadcast(session, {"type": "scene_image", "url": result["scene_image_url"]})
@@ -1243,7 +1287,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
         # whichever connection arrives first. See Session.pending_scene_
         # narration's docstring for why a second connection won't see it.
         for line in session.pending_scene_narration:
-            await websocket.send_json({"type": "scene_narration", "text": line})
+            await websocket.send_json(_narration_message(line, msg_type="scene_narration"))
         session.pending_scene_narration = []
 
         # Resolve any monster/companion turns that come before the human's

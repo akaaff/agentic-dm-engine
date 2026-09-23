@@ -10,3 +10,4 @@ base_ability_scores: { STR: 15, DEX: 13, CON: 14, INT: 8, WIS: 10, CHA: 12 }
 chosen_skills: [skill-athletics, skill-intimidation]
 chosen_equipment: [chain-mail, shield, battleaxe]
 gender: male
+voice: am_fenrir

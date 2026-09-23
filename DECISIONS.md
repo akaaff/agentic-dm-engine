@@ -44,6 +44,18 @@ Scene images are generated with SD-Turbo (SD1.5-distilled, ~2-3GB VRAM, 1-4 step
 
 **Considered and not taken:** SDXL-Turbo for higher image quality - would likely require unload/reload orchestration between LLM and image calls given the 10GB budget, adding real latency and complexity for a quality gain that isn't central to this project's thesis.
 
+## 9. Local narration TTS via Kokoro-82M, not XTTS-v2/cloud APIs
+
+Narration audio is generated with `hexgrad/Kokoro-82M` (pip package `kokoro`), not Coqui XTTS-v2 (originally planned) or a cloud TTS API.
+
+**Why:** XTTS-v2's weights are CPML-licensed (non-commercial only) and have no usable built-in voice library - every distinct voice needs a clean 6-10s reference clip to clone from, an external asset the user would have had to source or record before anything could even be tested. Kokoro-82M is Apache-2.0 licensed and ships **54 built-in named voices** (American/British, male/female) - zero reference-audio sourcing needed, and at 82M parameters it's an order of magnitude smaller than XTTS's checkpoint. A cloud API (ElevenLabs/OpenAI/Azure) was also considered and rejected for the same reason this project already avoids per-call cloud costs for the LLM (Ollama) and images (SD-Turbo/FLUX) - a local model was preferred wherever "good enough" quality is achievable.
+
+**Measured live** (a throwaway spike script, `KPipeline(lang_code='a')` on the RTX 3080 with no other GPU process loaded): pipeline load ~14s (one-time, cached per process like SD-Turbo's own `_load_pipeline`); per-sentence generation ~1.5-1.6s for ~8-9s of resulting audio (roughly 5-6x faster than real-time) after the first warmup call; **VRAM footprint only ~2GB** - a full order of magnitude lighter than XTTS's own 4-6GB estimate, and comfortably lighter than SD-Turbo's own 2-3GB. `espeak-ng` (Kokoro's phonemizer dependency) needed no separate system-level install on this Windows machine - `espeakng-loader` (pulled in automatically as a dependency) bundled what was needed.
+
+**Built swappable, not hardcoded to Kokoro** (explicit user requirement): `src/audiogen/service.py`'s one public function, `generate_narration_audio(text, voice)`, dispatches internally on `config.TTS_BACKEND` (default `"kokoro"`) to a private per-backend function - the same shape `config.INTENT_PARSER_BACKEND` already uses to swap `intent_parser_node`'s underlying model. Nothing outside `src/audiogen/` imports `kokoro` directly, so a future second backend costs one new function and one new dispatch branch, not a rewrite.
+
+**Considered and not taken:** Coqui XTTS-v2 (license + reference-clip sourcing, both real blockers - see above); a cloud TTS API (recurring cost, another external dependency, inconsistent with this project's established local-first stance).
+
 ## 6. Campaigns are linear scene chains; dynamic mid-session adaptation deferred but designed for
 
 `src/engine/campaign.py`'s `Scene.next_scene_id` is a fixed linear chain for the initial build - no branching, no in-session improvisation. The WebSocket session layer (`src/api/ws/session.py`) is nonetheless built from Day 11 as a multi-connection registry (not a single hardcoded client), and the scene chain is kept as an easily-mutable in-memory structure rather than a statically resolved plan.

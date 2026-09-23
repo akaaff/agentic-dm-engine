@@ -138,6 +138,10 @@ export interface BardicInspirationOffer {
 export interface PartyChoiceOffer {
   situation: string
   companionResponses: Record<string, string>
+  /** Story-adaptive-encounters Phase 2 of the narration-TTS work: each
+   * companion's own voiced reaction (see DECISIONS.md #9) - null for a
+   * given id when TTS is disabled or generation was skipped/failed. */
+  companionResponseAudio: Record<string, string | null>
   awaiting: string[]
 }
 
@@ -193,8 +197,8 @@ type ServerMessage =
       // re-walking the same already-resolved chain.
       campaign_complete: boolean
     }
-  | { type: 'narration'; text: string }
-  | { type: 'scene_narration'; text: string }
+  | { type: 'narration'; text: string; audio_url: string | null }
+  | { type: 'scene_narration'; text: string; audio_url: string | null }
   | { type: 'scene_image'; url: string }
   | { type: 'awaiting_input'; actor: string }
   | { type: 'error'; detail: string }
@@ -218,6 +222,11 @@ type ServerMessage =
       type: 'party_choice_offer'
       situation: string
       companion_responses: Record<string, string>
+      // Phase 2 of the narration-TTS work: each companion's own reaction is
+      // already cleanly attributed to one character id, so it gets its own
+      // assigned voice (Character.voice, see DECISIONS.md #9) - null for a
+      // given id when TTS is disabled or generation failed/was skipped.
+      companion_response_audio: Record<string, string | null>
       awaiting: string[]
     }
   | { type: 'party_choice_responded'; actor: string; text: string }
@@ -255,6 +264,30 @@ export interface NarrationEntry {
    * has concluded" line) before the paced log has actually shown the
    * ending narration that explains why. */
   campaignCompleteSnapshot?: boolean
+  /** Narration-TTS audio for this entry's text (see DECISIONS.md #9) -
+   * undefined/null when TTS is disabled or generation was skipped/failed.
+   * Played the moment this entry is actually revealed (same reveal-time
+   * hook as gameStateSnapshot's own lockstep-with-the-paced-log reasoning),
+   * not when the WS message first arrives. */
+  audioUrl?: string | null
+}
+
+/** Plays a list of narration-audio URLs one after another (skipping any
+ * null/empty entries), never overlapping - used for a party_choice offer's
+ * several companion reactions, which all arrive at once rather than paced
+ * one at a time like the ordinary narration queue. Fire-and-forget, same
+ * "audio is a bonus, not a requirement" stance as the reveal-queue's own
+ * playback. */
+function playSequentially(urls: (string | null)[]): void {
+  const queue = urls.filter((url): url is string => Boolean(url))
+  function playNext(): void {
+    const url = queue.shift()
+    if (!url) return
+    const audio = new Audio(url)
+    audio.addEventListener('ended', playNext)
+    audio.play().catch(playNext)
+  }
+  playNext()
 }
 
 // How long a revealed narration entry stays "the last thing shown" before
@@ -288,6 +321,9 @@ export function useSessionSocket(sessionId: string) {
   // the ones the most recently-received narration text is about.
   const lastEventCountRef = useRef(0)
   const pendingNarrationRef = useRef<string | null>(null)
+  // Same stash-until-the-following-state_update shape as pendingNarrationRef
+  // above, just for this narration's audio_url (see DECISIONS.md #9).
+  const pendingNarrationAudioRef = useRef<string | null>(null)
   // Entries received but not yet revealed in narrationLog, the timer pacing
   // their reveal, and when the last one was actually shown - refs, not
   // state, since draining shouldn't itself trigger a render (only the
@@ -309,6 +345,7 @@ export function useSessionSocket(sessionId: string) {
     let cancelled = false
     lastEventCountRef.current = 0
     pendingNarrationRef.current = null
+    pendingNarrationAudioRef.current = null
     entryQueueRef.current = []
     if (drainTimerRef.current !== null) {
       window.clearTimeout(drainTimerRef.current)
@@ -350,6 +387,33 @@ export function useSessionSocket(sessionId: string) {
           if (entry.combatSummariesSnapshot) setCombatSummaries(entry.combatSummariesSnapshot)
           if (entry.campaignCompleteSnapshot !== undefined) {
             setCampaignComplete(entry.campaignCompleteSnapshot)
+          }
+          if (entry.audioUrl) {
+            // Live-found: the fixed ENTRY_REVEAL_DELAY_MS was originally
+            // sized as a "long enough to read the text" guess for when
+            // there's no audio ground truth - once real narration audio
+            // exists, a clip longer than that guess started overlapping
+            // with the next entry's own clip. The next reveal (and its
+            // audio) now waits for THIS entry's audio to actually finish
+            // playing instead of the fixed delay, whichever entry has audio -
+            // `finish` is idempotent (a rejected play() promise and a later
+            // 'error'/'ended' on the same element shouldn't double-schedule).
+            const audio = new Audio(entry.audioUrl)
+            let finished = false
+            const finish = () => {
+              if (finished) return
+              finished = true
+              lastRevealTimeRef.current = performance.now()
+              scheduleDrain()
+            }
+            audio.addEventListener('ended', finish, { once: true })
+            audio.addEventListener('error', finish, { once: true })
+            audio.play().catch(finish)
+            // Safety net, not the normal path: a stuck load (bad URL, a
+            // network hang) should never wedge the whole log forever - far
+            // more generous than any real narration clip should ever take.
+            window.setTimeout(finish, 20000)
+            return // scheduleDrain() runs from finish() once playback ends
           }
           lastRevealTimeRef.current = performance.now()
         }
@@ -399,6 +463,8 @@ export function useSessionSocket(sessionId: string) {
           lastEventCountRef.current = message.game_state.events.length
           const pendingText = pendingNarrationRef.current
           pendingNarrationRef.current = null
+          const pendingAudio = pendingNarrationAudioRef.current
+          pendingNarrationAudioRef.current = null
           if (pendingText || newEvents.length > 0 || entryQueueRef.current.length > 0) {
             // Held back until this entry is actually revealed (drainNext) -
             // see NarrationEntry.gameStateSnapshot's docstring. The queue
@@ -423,6 +489,7 @@ export function useSessionSocket(sessionId: string) {
               gameStateSnapshot: message.game_state,
               combatSummariesSnapshot: message.combat_summaries,
               campaignCompleteSnapshot: message.campaign_complete,
+              audioUrl: pendingAudio,
             })
           } else {
             // Nothing of its own to pace, and nothing already queued for it
@@ -439,10 +506,11 @@ export function useSessionSocket(sessionId: string) {
           // mechanical events this same narration is about, and both land
           // in the log as one combined entry.
           pendingNarrationRef.current = message.text || null
+          pendingNarrationAudioRef.current = message.audio_url
           break
         case 'scene_narration':
           if (message.text) {
-            enqueueEntry({ text: message.text, kind: 'scene' })
+            enqueueEntry({ text: message.text, kind: 'scene', audioUrl: message.audio_url })
           }
           break
         case 'scene_image':
@@ -469,8 +537,14 @@ export function useSessionSocket(sessionId: string) {
           setPartyChoice({
             situation: message.situation,
             companionResponses: message.companion_responses,
+            companionResponseAudio: message.companion_response_audio,
             awaiting: message.awaiting,
           })
+          // Unlike ordinary narration (paced one entry at a time via the
+          // reveal queue above), a party_choice offer's companion reactions
+          // all arrive and render at once - played back one after another
+          // instead, so two companions' voices don't overlap.
+          playSequentially(Object.values(message.companion_response_audio))
           break
         case 'party_choice_responded':
           // Shrinks `awaiting` as each human answers; once nobody's left,
