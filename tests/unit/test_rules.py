@@ -41,6 +41,7 @@ from src.engine.rules import (
     spell_range_feet,
     weapon_combo_is_legal,
     weapon_range_feet,
+    weapon_throw_range_feet,
     wild_shape_beast_is_allowed,
 )
 from src.engine.srd_loader import load_srd
@@ -774,6 +775,23 @@ def test_weapon_range_feet_melee_vs_ranged_vs_reach() -> None:
     # 5ft; the equipment data's own range.normal is 5ft regardless of the
     # "reach" property, so this is the one place that distinction matters.
     assert weapon_range_feet(srd.equipment["glaive"]) == (10, None)
+
+
+def test_weapon_throw_range_feet_for_thrown_melee_weapons() -> None:
+    # Live-reported bug fix: weapon_range_feet alone always reports a flat
+    # 5ft for these (the vendored data's melee range.normal never reflects
+    # throw capability) - weapon_throw_range_feet is the real number a
+    # thrown attack beyond melee reach should use instead.
+    srd = load_srd()
+    assert weapon_throw_range_feet(srd.equipment["javelin"]) == (30, 120)
+    assert weapon_throw_range_feet(srd.equipment["dagger"]) == (20, 60)
+    assert weapon_throw_range_feet(srd.equipment["handaxe"]) == (20, 60)
+    # A plain melee weapon with no "thrown" property has nothing to return.
+    assert weapon_throw_range_feet(srd.equipment["longsword"]) is None
+    # A weapon that's already "Ranged"-category (dart) gets its real range
+    # from weapon_range_feet itself - no separate throw range needed/wrong
+    # to fabricate one here.
+    assert weapon_throw_range_feet(srd.equipment["dart"]) is None
 
 
 def test_monster_action_range_feet_parses_melee_and_ranged() -> None:

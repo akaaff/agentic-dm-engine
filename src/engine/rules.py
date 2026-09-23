@@ -920,6 +920,31 @@ def weapon_range_feet(weapon: SrdEntry) -> tuple[int, int | None]:
     return normal, int(long) if long is not None else None
 
 
+def weapon_throw_range_feet(weapon: SrdEntry) -> tuple[int, int] | None:
+    """(normal, long) throw range in feet for a genuinely melee-classified
+    weapon with the SRD "thrown" property (dagger/handaxe/javelin/light-
+    hammer/spear/trident - the 6 SRD weapons this applies to), or None if
+    the weapon isn't one of those. A "Ranged"-category weapon that also
+    happens to carry "thrown" (dart, net) already gets its real range from
+    weapon_range_feet's own `range` field - this only covers the case that
+    was actually broken: a melee weapon's `range.normal` is always a flat
+    5ft in the vendored data regardless of throw capability, so
+    weapon_range_feet alone under-ranges a genuine throw (live-reported: a
+    javelin couldn't be thrown at all, rejected as "out of range" the
+    instant a target was more than 5ft away). Callers (_resolve_single_
+    attack) decide per-attack, from the target's actual distance, whether
+    to use this or the plain melee range - so swinging the same weapon in
+    melee is completely unaffected, matching real SRD (thrown weapons use
+    identical attack-roll/ability-modifier rules whether swung or thrown,
+    only the usable range differs)."""
+    if weapon.get("weapon_range") != "Melee":
+        return None
+    throw_range = weapon.get("throw_range")
+    if not throw_range:
+        return None
+    return int(throw_range["normal"]), int(throw_range["long"])
+
+
 _SPELL_RANGE_RE = re.compile(r"(\d+)\s*feet", re.IGNORECASE)
 
 _SPELL_RANGE_OVERRIDES_FEET: dict[str, int] = {

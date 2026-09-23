@@ -478,6 +478,58 @@ def test_attack_rejected_beyond_a_ranged_weapons_long_range() -> None:
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 
+def test_thrown_weapon_attack_beyond_melee_range_uses_its_real_throw_range() -> None:
+    # Live-reported bug fix: javelin's SRD range.normal is a flat 5ft
+    # (melee reach) regardless of the "thrown" property - a target 30ft
+    # away used to be rejected as "out of range" with no way to throw it at
+    # all. 30ft is exactly the javelin's throw-range normal (see
+    # weapon_throw_range_feet), so this must succeed, not raise.
+    state = _build_demo_state([18, 10, 8, 3])
+    state.characters["thorin"].inventory.append("javelin")
+    state.characters["thorin"].equipped_weapons = ["javelin"]
+    state.characters["thorin"].position = Position(x=0, y=0)
+    state.characters["goblin_1"].position = Position(x=6, y=0)  # 30ft
+    action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", item_or_spell="javelin", raw_text="throw"
+    )
+    resolve_action(state, action, _FixedRandom([1]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["natural"] == 1
+
+
+def test_thrown_weapon_attack_rejected_beyond_its_throw_range() -> None:
+    # 130ft is beyond even the javelin's 120ft throw long range.
+    state = _build_demo_state([18, 10, 8, 3])
+    state.characters["thorin"].inventory.append("javelin")
+    state.characters["thorin"].equipped_weapons = ["javelin"]
+    state.characters["thorin"].position = Position(x=0, y=0)
+    state.characters["goblin_1"].position = Position(x=26, y=0)  # 130ft
+    action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", item_or_spell="javelin", raw_text="throw"
+    )
+    with pytest.raises(TurnEngineError, match="out of range"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_thrown_weapon_swung_at_an_adjacent_target_stays_plain_melee() -> None:
+    # Within the javelin's own melee reach (5ft) - swung, not thrown, so
+    # this is completely unaffected by the throw-range fix (no long-range
+    # tier at all, same as any other melee weapon).
+    state = _build_demo_state([18, 10, 8, 3])
+    state.characters["thorin"].inventory.append("javelin")
+    state.characters["thorin"].equipped_weapons = ["javelin"]
+    state.characters["thorin"].position = Position(x=0, y=0)
+    state.characters["goblin_1"].position = Position(x=1, y=0)  # 5ft, adjacent
+    action = ParsedAction(
+        actor="thorin", verb="attack", target="goblin_1", item_or_spell="javelin", raw_text="stab"
+    )
+    resolve_action(state, action, _FixedRandom([1]))  # type: ignore[arg-type]
+
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["natural"] == 1
+
+
 def test_move_rejected_onto_a_square_already_occupied_by_another_character() -> None:
     # Caught live right after the range-enforcement fix landed: a
     # companion's free-text-declared move landed exactly on the human

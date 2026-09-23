@@ -178,6 +178,7 @@ from src.engine.rules import (
     spell_range_feet,
     weapon_combo_is_legal,
     weapon_range_feet,
+    weapon_throw_range_feet,
     wild_shape_beast_is_allowed,
 )
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
@@ -307,6 +308,19 @@ class AttackParams:
     range_long_feet: int | None
     """None for melee (no "beyond normal range" concept) - see
     rules.weapon_range_feet/monster_action_range_feet."""
+    thrown_range_normal_feet: int | None = None
+    thrown_range_long_feet: int | None = None
+    """Live-reported bug fix: only ever set from _pc_attack_params, when
+    the equipped weapon has the SRD "thrown" property (dagger/handaxe/
+    javelin/light-hammer/spear/trident) - the real throw range from
+    rules.weapon_throw_range_feet, distinct from range_normal_feet/
+    range_long_feet above (which stay the plain 5ft melee reach for these
+    weapons, matching how they're actually held). _resolve_single_attack
+    picks whichever pair actually applies from the target's real distance:
+    within melee reach, swung as normal (these two fields are ignored
+    entirely); beyond it, thrown (the real ability-modifier/damage math is
+    identical either way - only the usable range and the "ranged attack in
+    close combat" disadvantage check differ, see _resolve_single_attack)."""
     is_finesse_or_ranged: bool = False
     """Phase 9I: only ever True from _pc_attack_params, when the weapon has
     the SRD "finesse" property or is a ranged weapon - Sneak Attack's
@@ -523,6 +537,7 @@ def _pc_attack_params(
     proficient = is_class_proficient_with(actor, weapon["index"], srd)
     prof_bonus = actor.proficiency_bonus if proficient else 0
     range_normal_feet, range_long_feet = weapon_range_feet(weapon)
+    throw_range = weapon_throw_range_feet(weapon)
 
     dice_count, dice_sides, notation_bonus = parse_dice_notation(weapon["damage"]["damage_dice"])
     if is_monk_weapon_for_actor:
@@ -546,6 +561,8 @@ def _pc_attack_params(
         source_name=weapon["name"],
         range_normal_feet=range_normal_feet,
         range_long_feet=range_long_feet,
+        thrown_range_normal_feet=throw_range[0] if throw_range else None,
+        thrown_range_long_feet=throw_range[1] if throw_range else None,
         is_finesse_or_ranged=is_finesse or is_ranged,
         is_melee_str_weapon=is_melee_str_weapon,
         smite_slot_level=smite_slot_level,
@@ -729,20 +746,33 @@ def _resolve_single_attack(
     # beyond normal but within long range (ranged only - melee has no such
     # tier) imposes disadvantage, per SRD.
     distance = distance_feet(actor.position, target.position)
-    max_range = params.range_long_feet or params.range_normal_feet
+    # Live-reported bug fix: a thrown-property weapon (javelin, dagger,
+    # handaxe, spear, trident, light hammer) has its own separate, much
+    # longer throw range - beyond simple melee reach, resolve this specific
+    # attack as a throw instead of rejecting it outright. Swinging the same
+    # weapon at an adjacent target is completely unaffected (still the
+    # plain melee range/is_ranged=False below) - only a target actually
+    # beyond melee reach switches to the throw numbers.
+    range_normal_feet = params.range_normal_feet
+    range_long_feet = params.range_long_feet
+    if params.thrown_range_normal_feet is not None and distance > params.range_normal_feet:
+        range_normal_feet = params.thrown_range_normal_feet
+        range_long_feet = params.thrown_range_long_feet
+    max_range = range_long_feet or range_normal_feet
     if distance > max_range:
         raise TurnEngineError(
             f"{target.id} is {distance}ft away - out of range for {params.source_name} "
             f"(max {max_range}ft)"
         )
-    long_range_disadvantage = (
-        params.range_long_feet is not None and distance > params.range_normal_feet
-    )
+    long_range_disadvantage = range_long_feet is not None and distance > range_normal_feet
     # Phase 9F: a ranged attack (anything with a "long" range tier - melee
     # weapons/actions have none, see weapon_range_feet/monster_action_range_
     # feet) rolls with disadvantage while a hostile creature is within 5ft
-    # of the attacker, per SRD ("Ranged Attacks in Close Combat").
-    is_ranged = params.range_long_feet is not None
+    # of the attacker, per SRD ("Ranged Attacks in Close Combat") - a thrown
+    # weapon attack (just switched to above) counts too, matching real SRD
+    # (the disadvantage is about making a ranged attack at all, not which
+    # weapon category it started from).
+    is_ranged = range_long_feet is not None
     engaged_disadvantage = is_ranged and _has_adjacent_hostile(state, actor)
 
     # Advantage from being helped (Day 13) is consumed by this roll whether
