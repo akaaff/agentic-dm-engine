@@ -377,7 +377,26 @@ export function useSessionSocket(sessionId: string) {
       const elapsed = performance.now() - lastRevealTimeRef.current
       const wait = Math.max(0, ENTRY_REVEAL_DELAY_MS - elapsed)
       drainTimerRef.current = window.setTimeout(() => {
-        drainTimerRef.current = null
+        // Live-found real bug (caught with precise timing proof, not just
+        // reasoning about the code): this used to reset drainTimerRef.current
+        // to null right here, unconditionally, before knowing whether this
+        // entry even has audio to wait for - so scheduleDrain's own re-entry
+        // guard (`if (drainTimerRef.current !== null) return`) only actually
+        // protected the initial setTimeout wait, not the "now waiting for
+        // this entry's audio to finish" phase that follows. A burst of
+        // WebSocket messages arriving close together (confirmed live: a
+        // narration+state_update pair for the human's own action immediately
+        // followed by another for an auto-played companion turn) could
+        // enqueue a second entry whose own enqueueEntry->scheduleDrain call
+        // landed exactly in that gap, saw drainTimerRef.current already
+        // null, and scheduled its own reveal - measured live at two Audio
+        // elements created 31ms apart, both playing their full ~13s
+        // duration simultaneously. Fixed by NOT clearing drainTimerRef.current
+        // here - it now stays non-null (a "busy" sentinel, not used for
+        // anything else once its own setTimeout has already fired) for the
+        // entire reveal-plus-playback cycle, only released at each of the
+        // two points below that are actually ready to hand off to the next
+        // scheduleDrain call.
         const entry = entryQueueRef.current.shift()
         if (entry) {
           setNarrationLog((prev) => [...prev, entry])
@@ -389,20 +408,16 @@ export function useSessionSocket(sessionId: string) {
             setCampaignComplete(entry.campaignCompleteSnapshot)
           }
           if (entry.audioUrl) {
-            // Live-found: the fixed ENTRY_REVEAL_DELAY_MS was originally
-            // sized as a "long enough to read the text" guess for when
-            // there's no audio ground truth - once real narration audio
-            // exists, a clip longer than that guess started overlapping
-            // with the next entry's own clip. The next reveal (and its
-            // audio) now waits for THIS entry's audio to actually finish
-            // playing instead of the fixed delay, whichever entry has audio -
-            // `finish` is idempotent (a rejected play() promise and a later
-            // 'error'/'ended' on the same element shouldn't double-schedule).
+            // The next reveal (and its audio) waits for THIS entry's audio
+            // to actually finish playing, not a fixed delay - `finish` is
+            // idempotent (a rejected play() promise and a later 'error'/
+            // 'ended' on the same element shouldn't double-release the gate).
             const audio = new Audio(entry.audioUrl)
             let finished = false
             const finish = () => {
               if (finished) return
               finished = true
+              drainTimerRef.current = null // only now release the busy gate
               lastRevealTimeRef.current = performance.now()
               scheduleDrain()
             }
@@ -413,10 +428,11 @@ export function useSessionSocket(sessionId: string) {
             // network hang) should never wedge the whole log forever - far
             // more generous than any real narration clip should ever take.
             window.setTimeout(finish, 20000)
-            return // scheduleDrain() runs from finish() once playback ends
+            return // drainTimerRef stays non-null until finish() releases it
           }
           lastRevealTimeRef.current = performance.now()
         }
+        drainTimerRef.current = null
         scheduleDrain() // schedules the next one, or marks caught up if none left
       }, wait)
     }
