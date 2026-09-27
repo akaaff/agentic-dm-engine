@@ -30,9 +30,8 @@ from typing import Any
 
 from src import config
 from src.engine.actions import ParsedAction, ParsedActionSequence
-from src.engine.monster_ai import approach_path, occupied_squares_by_side
+from src.engine.monster_ai import build_move_toward_target
 from src.engine.position import Position, distance_feet
-from src.engine.rules import effective_speed
 from src.engine.state import Character, GameState
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_structured, chat_structured_best_effort, load_prompt
@@ -185,45 +184,34 @@ def _resolve_move_target(action: ParsedAction, game_state: GameState) -> ParsedA
     bare destination square (no character involved at all) has no target
     to begin with, so its own params.path is untouched exactly as before.
 
-    Computes a real path via monster_ai.approach_path, the same greedy
-    algorithm already proven against turn_engine._resolve_move's own
-    affordability check for monster movement - stopping at 5ft/adjacent
-    ("move to X" most naturally means "get next to it," not stop at some
-    weapon-range-dependent distance - out of scope, see the issue), using
-    the actor's real remaining speed budget (doubled for dash, matching
-    _resolve_move's own budget formula exactly). An empty/short result
-    (blocked, occupied, not enough speed, or already adjacent) is left as
-    no `path` at all rather than a partial or stale one silently kept -
-    _resolve_move's own "move/dash action requires params['path']" error is
-    the honest, already-established way to report "couldn't get there," not
-    a new single-action-with-nothing-in-it modeled as if it succeeded."""
+    Computes a real path via monster_ai.build_move_toward_target (the exact
+    approach_path/occupied_squares_by_side combination already proven
+    against turn_engine._resolve_move's own affordability check for monster
+    movement, shared rather than duplicated here a second time - see that
+    function's own docstring) - stopping at 5ft/adjacent ("move to X" most
+    naturally means "get next to it," not stop at some weapon-range-
+    dependent distance - out of scope, see the issue). An empty/short
+    result (blocked, occupied, not enough speed, or already adjacent) is
+    left as no `path` at all rather than a partial or stale one silently
+    kept - _resolve_move's own "move/dash action requires params['path']"
+    error is the honest, already-established way to report "couldn't get
+    there," not a new single-action-with-nothing-in-it modeled as if it
+    succeeded."""
     if action.verb not in ("move", "dash") or not action.target:
         return action
     actor = game_state.characters.get(action.actor)
     target = game_state.characters.get(action.target)
-    if actor is None or target is None or game_state.battle_map is None:
+    if actor is None or target is None:
         return action
 
-    base_speed = effective_speed(actor)
-    total_budget = base_speed * 2 if action.verb == "dash" else base_speed
-    remaining_budget = max(0, total_budget - actor.movement_used_feet)
-    hostile_squares, ally_squares = occupied_squares_by_side(game_state, actor)
-    path = approach_path(
-        actor.position,
-        target.position,
-        remaining_budget,
-        5,
-        game_state.battle_map.terrain,
-        hostile_squares,
-        ally_squares,
-    )
-    # Explicitly drop any params.path the model also supplied, even on an
-    # empty computed path - already-adjacent or genuinely blocked, either
-    # way a stale/wrong model-supplied path from the same response that
-    # named this target must not survive to reach turn_engine unexamined.
+    move_action = build_move_toward_target(game_state, actor, target, verb=action.verb)
+    # Explicitly drop any params.path the model also supplied, even when no
+    # real path could be computed - already-adjacent or genuinely blocked,
+    # either way a stale/wrong model-supplied path from the same response
+    # that named this target must not survive to reach turn_engine unexamined.
     new_params = {k: v for k, v in action.params.items() if k != "path"}
-    if path:
-        new_params["path"] = [{"x": p.x, "y": p.y} for p in path]
+    if move_action is not None:
+        new_params["path"] = move_action.params["path"]
     return action.model_copy(update={"params": new_params})
 
 

@@ -34,6 +34,8 @@ tactical), same spirit as the rest of this module."""
 
 from __future__ import annotations
 
+from typing import Literal
+
 from src.engine.actions import ParsedAction
 from src.engine.position import (
     FEET_PER_SQUARE,
@@ -173,6 +175,53 @@ def occupied_squares_by_side(
         bucket = ally if c.is_pc == actor.is_pc else hostile
         bucket.add((c.position.x, c.position.y))
     return hostile, ally
+
+
+def build_move_toward_target(
+    game_state: GameState,
+    actor: Character,
+    target: Character,
+    verb: Literal["move", "dash"] = "move",
+) -> ParsedAction | None:
+    """A real move/dash ParsedAction closing the distance from `actor`
+    toward `target`, stopping at 5ft/adjacent - the exact approach_path/
+    occupied_squares_by_side combination choose_monster_action already uses
+    for monster movement, now shared so a companion's own out-of-range
+    attack/cast declaration can be redirected into an actual move instead of
+    just failing (see rules_engine_node's own AttackOutOfRangeError catch)
+    - previously that path just failed 3 times and forced an end_turn
+    (found live: the same out-of-range attack repeated verbatim, never once
+    trying to move). intent_parser._resolve_move_target's own "move toward a
+    named target" free-text case (issue #48) uses this too, rather than
+    duplicating the exact same budget/path logic a second time.
+
+    Returns None if no real path exists yet (already adjacent, blocked, or
+    genuinely out of movement budget this turn) - the caller decides what
+    to do about that (fall back to the original rejection, in both current
+    callers)."""
+    if game_state.battle_map is None:
+        return None
+    base_speed = effective_speed(actor)
+    total_budget = base_speed * 2 if verb == "dash" else base_speed
+    remaining_budget = max(0, total_budget - actor.movement_used_feet)
+    hostile_squares, ally_squares = occupied_squares_by_side(game_state, actor)
+    path = approach_path(
+        actor.position,
+        target.position,
+        remaining_budget,
+        5,
+        game_state.battle_map.terrain,
+        hostile_squares,
+        ally_squares,
+    )
+    if not path:
+        return None
+    return ParsedAction(
+        actor=actor.id,
+        verb=verb,
+        raw_text=f"{actor.name} moves toward {target.name}.",
+        params={"path": [{"x": p.x, "y": p.y} for p in path]},
+    )
 
 
 def _choose_innate_spell(actor: Character, target: Character, srd: SrdIndex) -> ParsedAction | None:

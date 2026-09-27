@@ -240,6 +240,33 @@ class TurnEngineError(ValueError):
     pass
 
 
+class AttackOutOfRangeError(TurnEngineError):
+    """Raised for any range-rejected attack roll or spell cast (weapon,
+    thrown weapon, spell, or monster innate spell - every raise site below
+    that rejects on distance alone) - carries actor_id/target_id as real
+    structured data rather than something a caller would have to regex out
+    of the plain error text. api.ws.session's rules_engine_node catches
+    this specifically to redirect a companion's own out-of-range free-text
+    declaration into an actual move toward the target instead of just
+    failing it outright (live-found: a companion repeated the identical
+    out-of-range attack 3 times in a row, never once trying to move)."""
+
+    def __init__(self, message: str, actor_id: str, target_id: str) -> None:
+        super().__init__(message)
+        self.actor_id = actor_id
+        self.target_id = target_id
+
+
+def _out_of_range_error(
+    actor: Character, target: Character, distance: int, source_name: str, max_range: int
+) -> AttackOutOfRangeError:
+    return AttackOutOfRangeError(
+        f"{target.id} is {distance}ft away - out of range for {source_name} (max {max_range}ft)",
+        actor_id=actor.id,
+        target_id=target.id,
+    )
+
+
 @dataclass(frozen=True)
 class PendingBardicChoice:
     """Issue #53: everything needed to resume a single attack roll once the
@@ -760,10 +787,7 @@ def _resolve_single_attack(
         range_long_feet = params.thrown_range_long_feet
     max_range = range_long_feet or range_normal_feet
     if distance > max_range:
-        raise TurnEngineError(
-            f"{target.id} is {distance}ft away - out of range for {params.source_name} "
-            f"(max {max_range}ft)"
-        )
+        raise _out_of_range_error(actor, target, distance, params.source_name, max_range)
     long_range_disadvantage = range_long_feet is not None and distance > range_normal_feet
     # Phase 9F: a ranged attack (anything with a "long" range tier - melee
     # weapons/actions have none, see weapon_range_feet/monster_action_range_
@@ -2800,10 +2824,7 @@ def _resolve_spare_the_dying(
     distance = distance_feet(actor.position, target.position)
     range_normal_feet = spell_range_feet(spell)
     if distance > range_normal_feet:
-        raise TurnEngineError(
-            f"{target.id} is {distance}ft away - out of range for {spell['name']} "
-            f"(max {range_normal_feet}ft)"
-        )
+        raise _out_of_range_error(actor, target, distance, spell["name"], range_normal_feet)
     target.is_stable = True
     state.events.append(
         Event(
@@ -2873,10 +2894,7 @@ def _resolve_sleep_spell(
         _validate_attack_target(actor, target)
         distance = distance_feet(actor.position, target.position)
         if distance > range_normal_feet:
-            raise TurnEngineError(
-                f"{target.id} is {distance}ft away - out of range for {spell['name']} "
-                f"(max {range_normal_feet}ft)"
-            )
+            raise _out_of_range_error(actor, target, distance, spell["name"], range_normal_feet)
         candidates.append(target)
 
     pool = roll(5, 8, rng=rng).total
@@ -2977,10 +2995,7 @@ def _resolve_ac_buff_spell(
     distance = distance_feet(actor.position, target.position)
     range_normal_feet = spell_range_feet(spell)
     if distance > range_normal_feet:
-        raise TurnEngineError(
-            f"{target.id} is {distance}ft away - out of range for {spell['name']} "
-            f"(max {range_normal_feet}ft)"
-        )
+        raise _out_of_range_error(actor, target, distance, spell["name"], range_normal_feet)
 
     if spell["index"] == "mage-armor":
         target.mage_armor_active = True
@@ -3199,10 +3214,7 @@ def _resolve_monster_innate_spell(
     range_normal_feet = spell_range_feet(spell)
     distance = distance_feet(actor.position, target.position)
     if distance > range_normal_feet:
-        raise TurnEngineError(
-            f"{target.id} is {distance}ft away - out of range for {spell['name']} "
-            f"(max {range_normal_feet}ft)"
-        )
+        raise _out_of_range_error(actor, target, distance, spell["name"], range_normal_feet)
 
     usage = spell_ref.get("usage", {})
     if usage.get("type") == "per day":
@@ -3366,10 +3378,7 @@ def _resolve_cast_spell(
     for target in targets:
         distance = distance_feet(actor.position, target.position)
         if distance > range_normal_feet:
-            raise TurnEngineError(
-                f"{target.id} is {distance}ft away - out of range for {spell['name']} "
-                f"(max {range_normal_feet}ft)"
-            )
+            raise _out_of_range_error(actor, target, distance, spell["name"], range_normal_feet)
 
     if spell_level > 0:
         remaining = actor.spell_slots.get(spell_level, 0)
