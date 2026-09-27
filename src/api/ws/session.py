@@ -538,6 +538,7 @@ async def _autoplay_non_human_turns(session: Session) -> None:
     while session.game_state.status == "in_progress":
         current_actor_id = session.game_state.turn_order[session.game_state.current_turn]
         actor = session.game_state.characters[current_actor_id]
+        forced_end_turn = False
 
         if current_actor_id in human_ids:
             if actor.hp <= 0 and not actor.is_dead:
@@ -567,6 +568,7 @@ async def _autoplay_non_human_turns(session: Session) -> None:
                 verb="end_turn",
                 raw_text="(forced end_turn after repeated invalid actions)",
             )
+            forced_end_turn = True
         elif not actor.is_pc:
             parsed_action = choose_monster_action(session.game_state, actor)
         else:
@@ -602,7 +604,24 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             continue
 
         session.game_state = result["game_state"]
-        await _broadcast_narration(session, result["narration"])
+        narration_text = result["narration"]
+        if forced_end_turn and not narration_text:
+            # A forced end_turn (see above) emits no Event at all, so
+            # narrator_node's own "nothing happened" fast path (the events
+            # list is genuinely empty) returns "" here - but something did
+            # happen worth telling the player: this actor's free-text turn
+            # failed to parse into anything legal 3 times in a row and got
+            # silently skipped. Without this, NarrationFeed.tsx renders a
+            # completely blank, traceless entry (empty text, no event badge
+            # - move isn't the only verb with no badge case, "nothing at
+            # all" has none either) - live-found from two real reports in
+            # the same round ("Fenwick moved but didn't attack", "Grom
+            # missed his turn completely") that both turned out to be this
+            # exact silent skip, not a movement/occupancy bug.
+            narration_text = (
+                f"{actor.name} hesitates, unable to settle on an action, and the moment passes."
+            )
+        await _broadcast_narration(session, narration_text)
         await _broadcast(session, _state_update_message(session))
         if result["scene_image_url"]:
             await _broadcast(session, {"type": "scene_image", "url": result["scene_image_url"]})
