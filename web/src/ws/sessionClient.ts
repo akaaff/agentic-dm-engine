@@ -291,12 +291,16 @@ function playSequentially(urls: (string | null)[]): void {
 }
 
 // How long a revealed narration entry stays "the last thing shown" before
-// the next queued one is allowed to appear - only ever adds delay when
-// entries are genuinely bursty (several resolved in a chain server-side,
-// e.g. companion/monster turns auto-playing after the human's own action);
-// an isolated entry that arrives on its own still reveals immediately, see
-// drainNext's "queue empty after this one" branch below.
-const ENTRY_REVEAL_DELAY_MS = 8000
+// the next queued one is allowed to appear - only actually matters for an
+// entry with no audio (TTS disabled, or generation skipped/failed), since
+// an entry that does have audio now paces on its own (the next reveal
+// waits for THIS entry's audio to genuinely finish - see the audio-branch
+// of scheduleDrain's own setTimeout callback below, not this constant at
+// all). Originally 8000ms, sized as a "long enough to read the text" guess
+// from before real narration audio existed; dropped to 1000ms now that
+// audio is the real pacing signal for the common case - this is just a
+// minimal gap for the audio-less fallback path, not a reading timer.
+const ENTRY_REVEAL_DELAY_MS = 1000
 
 export function useSessionSocket(sessionId: string) {
   const [gameState, setGameState] = useState<LiveGameState | null>(null)
