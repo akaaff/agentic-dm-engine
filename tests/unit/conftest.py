@@ -1,6 +1,21 @@
+from pathlib import Path
+
 import pytest
 
 from src import config
+from src.training import failed_intents
+
+
+@pytest.fixture(autouse=True)
+def _redirect_failed_intents_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """intent_parser_node's "unparseable" check and rules_engine_node's
+    "rejected" check (src.training.failed_intents) write to this file
+    unconditionally, outside the graph - same "not shielded by
+    build_graph(narrator_fn=...)" gap _disable_tts documents just below.
+    Redirected to a throwaway tmp_path for the whole offline suite so a
+    test's own deliberately-invalid/rejected fixture actions never write
+    into the real data/training/failed_intents/ directory."""
+    monkeypatch.setattr(failed_intents, "FAILED_INTENTS_PATH", tmp_path / "failed_intents.jsonl")
 
 
 @pytest.fixture(autouse=True)

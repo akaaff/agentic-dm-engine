@@ -36,6 +36,7 @@ from src.engine.rules import effective_speed
 from src.engine.state import Character, GameState
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_structured, chat_structured_best_effort, load_prompt
+from src.training.failed_intents import log_failed_intent
 
 _ORDINAL_WORDS = ["closest", "2nd closest", "3rd closest"]
 """Beyond 3rd, falls back to "Nth closest" (see _rank_label) - a hand-picked
@@ -272,6 +273,26 @@ def _postprocess_action(
     return _strip_invalid_smite(action, game_state)
 
 
+def _log_if_unparseable(action: ParsedAction, state: GraphState, prompt: str) -> None:
+    """Real (not synthetic) hard cases for later fine-tuning review - see
+    src.training.failed_intents' own module docstring. Best-effort: logging
+    failures are swallowed there, never here, so this can never turn a
+    genuinely-invalid parse into a second, different kind of failure."""
+    if action.verb != "invalid":
+        return
+    game_state = state["game_state"]
+    actor = game_state.characters.get(action.actor)
+    if actor is None:
+        return
+    log_failed_intent(
+        reason="unparseable",
+        actor=actor,
+        raw_text=state["raw_text"],
+        prompt=prompt,
+        produced_action=action,
+    )
+
+
 def intent_parser_node(state: GraphState) -> dict[str, Any]:
     if state["parsed_action"] is not None:
         return {"parsed_action": state["parsed_action"]}
@@ -285,27 +306,33 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         from src.llm.local_parser import parse_intent_local
 
         action = parse_intent_local(prompt, config.INTENT_PARSER_ADAPTER_DIR)
-        if action is None:
-            return {"parsed_action": _invalid_action(state)}
-        return {"parsed_action": _postprocess_action(action, expected_actor_id, game_state)}
-
-    if backend == "finetuned_ollama":
+        final_action = (
+            _invalid_action(state)
+            if action is None
+            else _postprocess_action(action, expected_actor_id, game_state)
+        )
+    elif backend == "finetuned_ollama":
         action = chat_structured_best_effort(
             messages=[{"role": "user", "content": prompt}],
             schema=ParsedAction,
             model=config.INTENT_PARSER_OLLAMA_MODEL,
             temperature=0.2,
         )
-        if action is None:
-            return {"parsed_action": _invalid_action(state)}
-        return {"parsed_action": _postprocess_action(action, expected_actor_id, game_state)}
+        final_action = (
+            _invalid_action(state)
+            if action is None
+            else _postprocess_action(action, expected_actor_id, game_state)
+        )
+    else:
+        action = chat_structured(
+            messages=[{"role": "user", "content": prompt}],
+            schema=ParsedAction,
+            temperature=0.2,
+        )
+        final_action = _postprocess_action(action, expected_actor_id, game_state)
 
-    action = chat_structured(
-        messages=[{"role": "user", "content": prompt}],
-        schema=ParsedAction,
-        temperature=0.2,
-    )
-    return {"parsed_action": _postprocess_action(action, expected_actor_id, game_state)}
+    _log_if_unparseable(final_action, state, prompt)
+    return {"parsed_action": final_action}
 
 
 def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
@@ -344,4 +371,8 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
         temperature=0.2,
     )
     actions = [_postprocess_action(a, expected_actor_id, game_state) for a in sequence.actions]
-    return actions or [_invalid_action(state)]
+    if not actions:
+        actions = [_invalid_action(state)]
+    for action in actions:
+        _log_if_unparseable(action, state, prompt)
+    return actions
