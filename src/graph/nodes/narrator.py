@@ -16,6 +16,23 @@ def _event_line(event: Event) -> str:
     return f"- actor={event.actor} type={event.type} payload={event.payload}"
 
 
+def _fallback_narration(new_events: list[Event], state: GraphState) -> str:
+    """Live-found: the model occasionally returns empty/whitespace-only
+    text for a real event (confirmed live for a plain repositioning move
+    with no combat significance) - and NarrationFeed.tsx renders nothing
+    at all for an empty-text entry whose events also have no badge case
+    (move events don't - see formatEvent.ts), so a blank response here
+    isn't just a dropped sentence, it's a genuinely invisible log entry
+    with no visible trace anything happened. This deterministic minimal
+    fallback (not a second LLM call) guarantees the caller always has
+    *something* to broadcast once narrator_node's own retries are
+    exhausted - a plain, honest line naming the actor beats a silent gap."""
+    actor_id = new_events[0].actor
+    character = state["game_state"].characters.get(actor_id)
+    name = character.name if character else actor_id
+    return f"{name} acts."
+
+
 def narrator_node(state: GraphState) -> dict[str, Any]:
     new_events = state["game_state"].events[state["events_before"] :]
     if not new_events:
@@ -39,5 +56,12 @@ def narrator_node(state: GraphState) -> dict[str, Any]:
     # mitigation.
     cast_names = ", ".join(sorted({c.name for c in state["game_state"].characters.values()}))
     prompt = load_prompt("narrator").format(events_summary=events_summary, cast_names=cast_names)
-    narration = chat_english_only(messages=[{"role": "user", "content": prompt}], temperature=0.7)
-    return {"narration": narration.strip()}
+    # Retried the same way chat_english_only already retries on a CJK leak
+    # (issue #16) - a real independent sample, not a deterministic failure -
+    # before falling back to _fallback_narration's deterministic minimum.
+    for _ in range(3):
+        raw = chat_english_only(messages=[{"role": "user", "content": prompt}], temperature=0.7)
+        narration = raw.strip()
+        if narration:
+            return {"narration": narration}
+    return {"narration": _fallback_narration(new_events, state)}

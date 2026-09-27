@@ -84,6 +84,58 @@ def test_narrator_describes_a_miss() -> None:
     assert not contains_cjk(narration)  # issue #16
 
 
+def test_narrator_does_not_invent_combat_from_initiative_rolls_alone() -> None:
+    # Live-found regression: the personality/dialogue instruction added for
+    # in-character flavor caused the narrator to hallucinate an entire
+    # fabricated combat exchange (hits, misses, wounds) from initiative_
+    # rolled events alone, which describe only who goes first - nothing has
+    # actually attacked yet. Confirmed live before fixing: the original
+    # (pre-dialogue) prompt never did this on this exact scenario (6/6
+    # clean); the first dialogue-enabled draft fabricated a full exchange
+    # 6/6 times. The fix explicitly bans verbs implying a weapon/spell
+    # actually connected when the only events are initiative rolls - this
+    # locks that in against a future prompt change reintroducing it.
+    events = [
+        Event(
+            round=1,
+            turn_index=0,
+            actor="thorin",
+            type="initiative_rolled",
+            payload={"natural": 17, "modifier": 3, "total": 20},
+        ),
+        Event(
+            round=1,
+            turn_index=0,
+            actor="elrond",
+            type="initiative_rolled",
+            payload={"natural": 12, "modifier": 2, "total": 14},
+        ),
+        Event(
+            round=1,
+            turn_index=0,
+            actor="goblin_1",
+            type="initiative_rolled",
+            payload={"natural": 8, "modifier": 2, "total": 10},
+        ),
+    ]
+    banned_contact_phrases = [
+        "glances off",
+        "connects",
+        "pierces",
+        "sinks into",
+        "slices through",
+        "clashes",
+        "lands a",
+        "draws blood",
+    ]
+    for _ in range(3):
+        narration = _narrate(events)
+        assert narration
+        lowered = narration.lower()
+        for phrase in banned_contact_phrases:
+            assert phrase not in lowered, f"{phrase!r} implies a landed attack in: {narration}"
+
+
 def test_narrator_does_not_hallucinate_a_monster_outside_the_actual_cast() -> None:
     # Issue #33: a live multi-round session produced "the drow's poison
     # courses through..." mid-fight against an encounter with no drow at
