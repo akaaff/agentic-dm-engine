@@ -15,6 +15,9 @@ from src.audiogen.service import MEDIA_URL_PREFIX as AUDIO_MEDIA_URL_PREFIX
 from src.config import EXTRA_CORS_ORIGINS, SHARED_ACCESS_PASSPHRASE
 from src.engine.character_creation import PORTRAIT_DIR
 from src.imagegen.service import DEFAULT_OUTPUT_DIR, MEDIA_URL_PREFIX
+from src.observability.logging_setup import configure_logging
+
+configure_logging()
 
 app = FastAPI(title="agentic-dm-engine")
 

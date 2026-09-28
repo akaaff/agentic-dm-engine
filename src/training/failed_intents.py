@@ -19,23 +19,17 @@ Two distinct failure shapes, both worth collecting under one "reason":
 the reviewer fills in by hand once they've decided what the utterance
 *should* have parsed to (or leaves null to mean "discard this one").
 
-Append-only JSONL, one real record per failed turn, flushed immediately
-(not buffered) - a crash losing the most recent few records would cost
-more than the tiny per-write overhead. Best-effort: a write failure here
-must never break a real turn, same boundary-tolerance philosophy as
-generate_narration_audio's own broad except around a local-model call.
-"""
+Written through src.observability.log_event(kind="failed_intent", ...) -
+the one centralized log stream (data/logs/events.jsonl) - rather than its
+own separate file, so scripts/log_watcher.py only ever has to watch one
+place. A reviewer wanting just this subset filters that file on
+kind == "failed_intent"."""
 
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime
-from pathlib import Path
-
 from src.engine.actions import ParsedAction
 from src.engine.state import Character
-
-FAILED_INTENTS_PATH = Path("data/training/failed_intents/intent_parser.jsonl")
+from src.observability.log_event import log_event
 
 
 def log_failed_intent(
@@ -47,22 +41,16 @@ def log_failed_intent(
     produced_action: ParsedAction | None,
     detail: str | None = None,
 ) -> None:
-    record = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "reason": reason,
-        "actor_id": actor.id,
-        "actor_name": actor.name,
-        "is_pc": actor.is_pc,
-        "is_companion": actor.is_companion,
-        "raw_text": raw_text,
-        "prompt": prompt,
-        "produced_action": produced_action.model_dump(mode="json") if produced_action else None,
-        "detail": detail,
-        "corrected_action": None,
-    }
-    try:
-        FAILED_INTENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with FAILED_INTENTS_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record) + "\n")
-    except OSError:
-        pass
+    log_event(
+        kind="failed_intent",
+        reason=reason,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        is_pc=actor.is_pc,
+        is_companion=actor.is_companion,
+        raw_text=raw_text,
+        prompt=prompt,
+        produced_action=produced_action.model_dump(mode="json") if produced_action else None,
+        detail=detail,
+        corrected_action=None,
+    )

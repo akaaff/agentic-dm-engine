@@ -19,6 +19,7 @@ ownership.
 from __future__ import annotations
 
 import random
+import traceback
 from dataclasses import dataclass, field
 from typing import Any, cast
 from uuid import uuid4
@@ -61,6 +62,7 @@ from src.graph.nodes.party_choice import (
 )
 from src.graph.state_schema import GraphState
 from src.llm.campaign_generator import generate_continuation
+from src.observability.log_event import log_event
 
 router = APIRouter()
 
@@ -1369,7 +1371,33 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
 
         while True:
             raw = await websocket.receive_json()
-            await _handle_client_message(session, websocket, connection, raw)
+            try:
+                await _handle_client_message(session, websocket, connection, raw)
+            except WebSocketDisconnect:
+                # An ordinary disconnect, not a bug - let the outer
+                # `except WebSocketDisconnect: pass` handle it as always,
+                # without logging it as a backend_error.
+                raise
+            except Exception as exc:
+                # _handle_client_message already handles every *expected*
+                # rejection (TurnEngineError, an unpending bardic/party-
+                # choice response, a bad token...) internally, reporting it
+                # to the client without ever raising. Anything that reaches
+                # here is a genuine bug - previously it just crashed this
+                # connection with nothing durable recorded anywhere except
+                # whatever happened to be in the live terminal at that exact
+                # moment. Logged, then re-raised unchanged (still closes the
+                # connection exactly as before - this is purely additive
+                # visibility, not a behavior change).
+                log_event(
+                    kind="backend_error",
+                    session_id=session_id,
+                    exc_type=type(exc).__name__,
+                    message=str(exc),
+                    traceback=traceback.format_exc(),
+                    raw=raw,
+                )
+                raise
     except WebSocketDisconnect:
         pass
     finally:

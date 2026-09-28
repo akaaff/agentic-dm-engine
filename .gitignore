@@ -19,11 +19,13 @@ data/training/curated/*.jsonl
 models/
 *.safetensors
 
-# real free-text turns that failed to parse/resolve, collected from live play
-# for hand review before folding into the fine-tuning dataset above - not
-# regenerable (pulled from real sessions, not a script), but still local,
-# personal working data rather than something to commit
-data/training/failed_intents/*.jsonl
+# the centralized structured log stream (src.observability.log_event) -
+# failed intents, backend errors, promoted warnings - plus the standalone
+# log-watcher's own checkpoint/dedup state. Not regenerable (pulled from
+# real sessions, not a script), but still local, personal working data
+# rather than something to commit.
+data/logs/*.jsonl
+data/logs/.watcher_state.json
 
 # generated scene images / portraits / narration audio - regenerable at runtime
 data/generated_images/

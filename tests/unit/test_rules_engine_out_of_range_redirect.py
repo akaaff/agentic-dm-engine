@@ -25,7 +25,7 @@ from src.engine.state import Character, GameState
 from src.engine.turn_engine import TurnEngineError
 from src.graph.nodes.rules_engine_node import make_rules_engine_node
 from src.graph.state_schema import GraphState
-from src.training import failed_intents
+from src.observability import log_event
 
 
 def _open_map(width: int, height: int) -> BattleMap:
@@ -105,7 +105,7 @@ def test_companions_out_of_range_attack_redirects_to_a_move_instead_of_failing()
     assert grom.movement_used_feet > 0
     assert [e.type for e in events] == ["move"]
     # A successful redirect isn't a real hard case - nothing to review.
-    assert not failed_intents.FAILED_INTENTS_PATH.exists()
+    assert not log_event.EVENTS_LOG_PATH.exists()
 
 
 def test_a_second_attempt_after_the_redirect_is_now_in_range_and_actually_attacks() -> None:
@@ -144,6 +144,6 @@ def test_a_human_pcs_out_of_range_attack_still_fails_honestly_and_gets_logged() 
     with pytest.raises(TurnEngineError):
         node(state)
 
-    lines = failed_intents.FAILED_INTENTS_PATH.read_text(encoding="utf-8").strip().splitlines()
+    lines = log_event.EVENTS_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
     assert "out of range" in lines[0]
