@@ -26,6 +26,7 @@ models/
 # rather than something to commit.
 data/logs/*.jsonl
 data/logs/.watcher_state.json
+data/logs/*.log
 
 # generated scene images / portraits / narration audio - regenerable at runtime
 data/generated_images/
