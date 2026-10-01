@@ -21,6 +21,7 @@ import time
 from collections.abc import Generator
 from typing import Any
 
+import httpx
 import pytest
 import uvicorn
 import websockets
@@ -223,6 +224,53 @@ def test_a_rejected_action_still_gets_re_prompted_for_input() -> None:
         retry_prompt = ws.receive_json()
         assert retry_prompt["type"] == "awaiting_input"
         assert retry_prompt["actor"] == current_actor
+
+
+def test_connect_time_autoplay_llm_timeout_does_not_hang_the_connection() -> None:
+    # Live-found (CLAUDE.md's "Also found, not fixed" entry): a real Ollama
+    # httpx.ReadTimeout during a session's connect-time autoplay used to
+    # propagate straight out of session_websocket uncaught - the client got
+    # no error message and no clean close, just an indefinite hang on
+    # "Connecting to the game server...". Reproduced here with a narrator_fn
+    # that always raises httpx.ReadTimeout, in a session whose turn_order is
+    # rigged (not the real, unseeded initiative roll) so a monster goes
+    # before the human - exactly the connect-time autoplay path.
+    #
+    # goblin_1's attack still resolves mechanically here (rules_engine runs
+    # before narrator in the graph and mutates game_state in place - see
+    # _autoplay_non_human_turns's own comment) even though its narration is
+    # permanently lost to the simulated timeout; the fix's job is just to
+    # keep the connection alive and reach thorin's own turn instead of
+    # crashing or hanging.
+    attempts = 0
+
+    def _always_times_out(state: GraphState) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadTimeout("simulated Ollama timeout")
+
+    encounter = build_demo_encounter()
+    party = build_demo_party()
+    initial_state = build_encounter_state(encounter, party, demo_initiative_rng())  # type: ignore[arg-type]
+    initial_state.turn_order = ["goblin_1", "thorin", "elrond", "goblin_2"]
+    initial_state.current_turn = 0
+    action_rng = demo_action_rng()
+    create_session(
+        "test-connect-timeout",
+        initial_state,
+        action_rng=action_rng,  # type: ignore[arg-type]
+        graph=build_graph(rng=action_rng, narrator_fn=_always_times_out),  # type: ignore[arg-type]
+        human_character_ids={"tok": "thorin"},
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws/session/test-connect-timeout") as ws:
+        msg: dict[str, Any] | None = None
+        while msg is None or msg["type"] != "awaiting_input":
+            msg = ws.receive_json()
+
+    assert msg["actor"] == "thorin"
+    assert attempts >= 1
 
 
 def test_debug_action_is_rejected_with_a_clear_error_when_disabled(

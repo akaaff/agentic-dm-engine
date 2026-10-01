@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langgraph.graph.state import CompiledStateGraph
 
@@ -598,7 +599,30 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             # pre-#53 behavior (the die always got applied to a miss
             # unconditionally). Only a real human's own turn (see
             # _handle_client_message) actually pauses to ask.
-            narration = _resolve_and_narrate_bardic_choice(session, exc.choice, True)
+            try:
+                narration = _resolve_and_narrate_bardic_choice(session, exc.choice, True)
+            except httpx.TransportError as timeout_exc:
+                # Same transient-LLM-call protection as the httpx.TransportError
+                # branch below, and the same "did the turn actually advance"
+                # distinction - see its own comment for the full reasoning.
+                # resolve_pending_bardic_choice already mutated game_state
+                # (rolled the die, applied the hit/miss, advanced the turn -
+                # same as resolve_action's own tail) before this narrator call
+                # ever ran, so the mechanical outcome isn't lost - just this
+                # one narration line.
+                logger.info("Bardic choice narration LLM call failed: %s", timeout_exc)
+                log_event(
+                    kind="backend_error",
+                    source="autoplay_non_human_turns_bardic_choice",
+                    actor=current_actor_id,
+                    exc_type=type(timeout_exc).__name__,
+                    message=str(timeout_exc),
+                )
+                new_actor_id = session.game_state.turn_order[session.game_state.current_turn]
+                consecutive_invalid = (
+                    0 if new_actor_id != current_actor_id else consecutive_invalid + 1
+                )
+                continue
             await _broadcast_narration(session, narration)
             await _broadcast(session, _state_update_message(session))
             consecutive_invalid = 0
@@ -620,6 +644,59 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             # it's just logged server-side instead of broadcast.
             logger.info("NPC turn action rejected: %s", exc)
             consecutive_invalid += 1
+            continue
+        except httpx.TransportError as exc:
+            # Live-found (CLAUDE.md's "Also found, not fixed" entry): a real
+            # Ollama call timeout/connection failure (narrator_node - any verb
+            # that produces at least one Event calls it) used to propagate
+            # straight out of this loop uncaught. During connect-time autoplay
+            # specifically (this same loop, called from session_websocket
+            # before the client has received anything at all - see that call
+            # site) that crashed the whole ASGI connection with no error
+            # message and no clean close - the client just sat on "Connecting
+            # to the game server..." forever. Reproduced live under real
+            # resource contention (another process hammering the same local
+            # Ollama instance). The identical gap exists mid-game too, since
+            # _handle_client_message calls this same function after every
+            # human action.
+            #
+            # Closing the whole connection over this would be far more
+            # disruptive than necessary, since narrator is the LAST node in
+            # the per-action graph (see graph_builder.build_graph's edge
+            # order: rules_engine -> narrator -> scene_image) - rules_engine
+            # has already mutated session.game_state in place (events
+            # appended, turn/round advanced) by the time narrator ever runs,
+            # the same way every node's output threads forward. Confirmed
+            # live via a real repro, not assumed: injecting a narrator-only
+            # failure still leaves the resolved attack's damage and turn
+            # advance in session.game_state even though this except branch
+            # never reaches `session.game_state = result["game_state"]`.
+            # So there's nothing to retry for an action that already
+            # succeeded - just a lost narration line, same acceptable-loss
+            # class as narrator_node's own empty-text fallback elsewhere in
+            # this project. Detected by comparing the current actor before
+            # and after: if it changed, the turn truly advanced and this
+            # resets the circuit breaker exactly like an ordinary successful
+            # resolution does below (conflating this with a genuinely-stuck
+            # actor would risk force-ending a healthy, unrelated actor's
+            # turn for a problem that was never theirs). If it's the SAME
+            # actor (e.g. a bonus-action verb that doesn't end the turn),
+            # this is a genuine lack of progress and the existing circuit
+            # breaker applies exactly as it does for a rejected action -
+            # after 3 straight failures the forced-end_turn fallback takes
+            # over (it emits no Event, so no further narrator call for this
+            # particular turn), guaranteeing forward progress even through a
+            # sustained outage instead of retrying forever.
+            logger.info("NPC turn LLM call failed: %s", exc)
+            log_event(
+                kind="backend_error",
+                source="autoplay_non_human_turns",
+                actor=current_actor_id,
+                exc_type=type(exc).__name__,
+                message=str(exc),
+            )
+            new_actor_id = session.game_state.turn_order[session.game_state.current_turn]
+            consecutive_invalid = 0 if new_actor_id != current_actor_id else consecutive_invalid + 1
             continue
 
         session.game_state = result["game_state"]
