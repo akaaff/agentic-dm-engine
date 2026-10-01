@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type EquipmentSummary, type SpellSummary } from '../api/client'
 import type { CombatAttackSummary, CombatSummary, LiveCharacter } from '../ws/sessionClient'
+import ConditionBadges from './ConditionBadges'
 import InfoTip from './InfoTip'
 import { equipmentDetail, equipmentHint } from '../utils/equipmentDetail'
 import { portraitUrl } from '../utils/portraits'
@@ -267,12 +268,7 @@ export default function CharacterDetailSheet({
         </tbody>
       </table>
 
-      {character.exhaustion_level > 0 && (
-        <p className="wizard-error">Exhaustion level {character.exhaustion_level}</p>
-      )}
-      {character.conditions.length > 0 && (
-        <div className="conditions">{character.conditions.map((c) => c.name).join(', ')}</div>
-      )}
+      <ConditionBadges character={character} />
       {character.concentrating_on && (
         <p>
           <strong>Concentrating on:</strong> {character.concentrating_on}

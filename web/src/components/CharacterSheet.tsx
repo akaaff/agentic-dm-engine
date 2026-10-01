@@ -1,4 +1,5 @@
 import type { LiveCharacter } from '../ws/sessionClient'
+import ConditionBadges from './ConditionBadges'
 
 export default function CharacterSheet({
   character,
@@ -54,11 +55,7 @@ export default function CharacterSheet({
         {character.is_dead && ' - dead'}
         {!character.is_dead && character.hp <= 0 && (character.is_stable ? ' - stable' : ' - unconscious')}
       </div>
-      {character.conditions.length > 0 && (
-        <div className="conditions">
-          {character.conditions.map((c) => c.name).join(', ')}
-        </div>
-      )}
+      <ConditionBadges character={character} />
     </div>
   )
 }
