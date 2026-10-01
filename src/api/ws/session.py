@@ -18,6 +18,7 @@ ownership.
 
 from __future__ import annotations
 
+import logging
 import random
 import traceback
 from dataclasses import dataclass, field
@@ -63,6 +64,8 @@ from src.graph.nodes.party_choice import (
 from src.graph.state_schema import GraphState
 from src.llm.campaign_generator import generate_continuation
 from src.observability.log_event import log_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -601,7 +604,21 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             consecutive_invalid = 0
             continue
         except (TurnEngineError, NotImplementedError) as exc:
-            await _broadcast(session, {"type": "error", "detail": str(exc)})
+            # Live-found: this used to _broadcast (session-wide, not just
+            # the acting connection) a generic {"type": "error"} for an
+            # NPC's own rejected attempt - e.g. a monster's attack rejected
+            # for range. sessionClient.ts's case 'error' sets the human
+            # player's own action-error banner regardless of who the error
+            # is actually about, so a goblin's own failed swing surfaced as
+            # a confusing, self-referential-looking message ("BlessTester is
+            # 10ft away - out of range for Scimitar") in the human's UI,
+            # about an action they never took - and it stuck there until
+            # their own next submit cleared it. This loop's retry/circuit-
+            # breaker handling, the failed_intents/mechanics logs, and the
+            # forced-end-turn fallback's own narrated line already cover
+            # this internally; nothing here is actionable by any player, so
+            # it's just logged server-side instead of broadcast.
+            logger.info("NPC turn action rejected: %s", exc)
             consecutive_invalid += 1
             continue
 

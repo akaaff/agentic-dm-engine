@@ -19,6 +19,11 @@ data/training/curated/*.jsonl
 models/
 *.safetensors
 
+# real hard cases pulled from live sessions for later hand review +
+# intent-parser fine-tuning (src.training.failed_intents) - not regenerable,
+# but personal working/review data, not something to commit
+data/training/failed_intents/
+
 # the centralized structured log stream (src.observability.log_event) -
 # failed intents, backend errors, promoted warnings - plus the standalone
 # log-watcher's own checkpoint/dedup state. Not regenerable (pulled from
