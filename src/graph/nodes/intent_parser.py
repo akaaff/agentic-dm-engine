@@ -31,48 +31,27 @@ from typing import Any
 from src import config
 from src.engine.actions import ParsedAction, ParsedActionSequence
 from src.engine.monster_ai import build_move_toward_target
-from src.engine.position import Position, chebyshev_distance, distance_feet
+from src.engine.position import (
+    Position,
+    chebyshev_distance,
+    direction_label,
+    distance_feet,
+    rank_label,
+)
 from src.engine.state import Character, GameState
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_structured, chat_structured_best_effort, load_prompt
 from src.training.failed_intents import log_failed_intent
-
-_ORDINAL_WORDS = ["closest", "2nd closest", "3rd closest"]
-"""Beyond 3rd, falls back to "Nth closest" (see _rank_label) - a hand-picked
-list rather than a general ordinal-suffix function since English's 1st/2nd/
-3rd/4th... irregularity only matters for the first three anyway, and this
-project's encounters rarely have more than a handful of visible characters."""
-
-
-def _rank_label(rank: int) -> str:
-    if rank <= len(_ORDINAL_WORDS):
-        return _ORDINAL_WORDS[rank - 1]
-    return f"{rank}th closest"
-
-
-def _direction_label(actor_pos: Position, other_pos: Position) -> str:
-    """8-way compass direction of `other_pos` relative to `actor_pos`, on
-    this project's own (x right/east, y down/south) grid convention (see
-    position.py/BattleMap's own "y=0 is the top row" comment) - found live:
-    the model had no reliable way to resolve "the enemy to my left" from
-    raw (x, y) pairs alone, so this computes the answer directly instead of
-    asking it to do grid arithmetic in its head."""
-    dx = other_pos.x - actor_pos.x
-    dy = other_pos.y - actor_pos.y
-    ns = "north" if dy < 0 else "south" if dy > 0 else ""
-    ew = "west" if dx < 0 else "east" if dx > 0 else ""
-    direction = ns + ew
-    return f"{direction} of you" if direction else "at your position"
 
 
 def _character_summary_line(character: Character, actor: Character, rank: int) -> str:
     kind = "PC" if character.is_pc else "monster"
     pos = character.position
     feet = distance_feet(actor.position, pos)
-    direction = _direction_label(actor.position, pos)
+    direction = direction_label(actor.position, pos)
     return (
         f"- {character.id} ({character.name}, {kind}): HP {character.hp}/{character.max_hp}, "
-        f"position ({pos.x}, {pos.y}), {feet}ft away ({_rank_label(rank)}), {direction}"
+        f"position ({pos.x}, {pos.y}), {feet}ft away ({rank_label(rank)}), {direction}"
     )
 
 
