@@ -96,6 +96,15 @@ TTS_ENABLED = os.environ.get("TTS_ENABLED", "1") != "0"
 TTS_BACKEND = os.environ.get("TTS_BACKEND", "kokoro")
 NARRATOR_VOICE = os.environ.get("NARRATOR_VOICE", "am_michael")
 
+# User-requested: a server-side log of every resolved game mechanic (attack
+# rolls, damage incl. resistance/immunity adjustments, saves, conditions...),
+# separate from src.observability.log_event (failures only) - see
+# src/observability/mechanics_log.py. Rotates daily (at local midnight);
+# MECHANICS_LOG_RETENTION_DAYS controls how many rotated days are kept
+# before the oldest is deleted.
+MECHANICS_LOG_ENABLED = os.environ.get("MECHANICS_LOG_ENABLED", "1") != "0"
+MECHANICS_LOG_RETENTION_DAYS = int(os.environ.get("MECHANICS_LOG_RETENTION_DAYS", "14"))
+
 # Story-adaptive-encounters Phase 3: caps how many times one live session
 # can chain a model-generated story continuation onto an "open" party_choice
 # scene (next_scene_id left unset - see campaign_generator.generate_

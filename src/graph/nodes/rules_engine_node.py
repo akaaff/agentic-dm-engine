@@ -15,6 +15,7 @@ from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import GameState
 from src.engine.turn_engine import AttackOutOfRangeError, TurnEngineError, resolve_action
 from src.graph.state_schema import GraphState
+from src.observability.mechanics_log import log_mechanic
 from src.training.failed_intents import log_failed_intent
 
 
@@ -85,18 +86,29 @@ def make_rules_engine_node(
         action = state["parsed_action"]
         if action is None:
             raise TurnEngineError("rules_engine_node requires a parsed_action")
+        game_state = state["game_state"]
+        # resolve_action validates before ever mutating state (a documented
+        # invariant throughout turn_engine.py), so a failed first attempt
+        # below never adds events - capturing this once up front, before
+        # either the normal happy path or the out-of-range redirect's own
+        # resolve_action call, correctly covers both.
+        events_before = len(game_state.events)
         try:
-            resolve_action(state["game_state"], action, rng, srd)
+            resolve_action(game_state, action, rng, srd)
         except AttackOutOfRangeError as exc:
-            redirect = _redirect_out_of_range(state["game_state"], action, exc)
+            redirect = _redirect_out_of_range(game_state, action, exc)
             if redirect is not None:
-                resolve_action(state["game_state"], redirect, rng, srd)
-                return {"game_state": state["game_state"]}
+                resolve_action(game_state, redirect, rng, srd)
+                for event in game_state.events[events_before:]:
+                    log_mechanic(event, game_state)
+                return {"game_state": game_state}
             _log_rejected(state, action, exc)
             raise
         except TurnEngineError as exc:
             _log_rejected(state, action, exc)
             raise
-        return {"game_state": state["game_state"]}
+        for event in game_state.events[events_before:]:
+            log_mechanic(event, game_state)
+        return {"game_state": game_state}
 
     return rules_engine_node

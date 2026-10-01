@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from src import config
-from src.observability import log_event
+from src.observability import log_event, mechanics_log
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +17,22 @@ def _redirect_events_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     rejected fixture actions never write into the real data/logs/
     directory."""
     monkeypatch.setattr(log_event, "EVENTS_LOG_PATH", tmp_path / "events.jsonl")
+
+
+@pytest.fixture(autouse=True)
+def _redirect_mechanics_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """rules_engine_node logs every successfully-resolved Event to this
+    separate stream unconditionally too - same reasoning as
+    _redirect_events_log above. mechanics_log._get_logger caches its
+    TimedRotatingFileHandler at module scope (correct for a real
+    long-running process - a handler should only ever be opened once),
+    so redirecting MECHANICS_LOG_PATH alone isn't enough once any earlier
+    test has already triggered that cache: the module-level cache itself
+    is reset here too, so every test gets a fresh handler bound to its
+    own tmp_path rather than silently reusing whichever path the first
+    test in the process happened to configure."""
+    monkeypatch.setattr(mechanics_log, "MECHANICS_LOG_PATH", tmp_path / "mechanics.log")
+    monkeypatch.setattr(mechanics_log, "_logger", None)
 
 
 @pytest.fixture(autouse=True)
