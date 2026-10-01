@@ -13,6 +13,22 @@ from src.llm.providers import chat_english_only, load_prompt
 
 
 def _event_line(event: Event) -> str:
+    # Live-found: "actor" means the perpetrator for every other
+    # damage-causing event (attack_roll/damage_dealt - actor hits target),
+    # but hazard_damage inverts that (actor is the one who stepped on the
+    # hazard and got hurt themselves, no attacker at all - see
+    # turn_engine._apply_hazard_damage's own docstring). The model
+    # apparently read "actor=qasz type=hazard_damage" the same way as a
+    # combat event and invented a wolf bite to explain it, even though no
+    # attack_roll event for any wolf was present. Spelling this one out
+    # explicitly removes the ambiguity the generic "actor=.../type=..."
+    # format otherwise leaves for the model to guess at.
+    if event.type == "hazard_damage":
+        return (
+            f"- {event.actor} steps on hazardous terrain and takes "
+            f"{event.payload.get('amount')} {event.payload.get('damage_type')} damage "
+            "(environmental/terrain damage - not caused by any other character)"
+        )
     return f"- actor={event.actor} type={event.type} payload={event.payload}"
 
 
