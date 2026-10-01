@@ -195,12 +195,27 @@ def build_move_toward_target(
     named target" free-text case (issue #48) uses this too, rather than
     duplicating the exact same budget/path logic a second time.
 
-    Returns None if no real path exists yet (already adjacent, blocked, or
-    genuinely out of movement budget this turn) - the caller decides what
-    to do about that (fall back to the original rejection, in both current
-    callers)."""
+    Returns None if genuinely no progress can be made (blocked, or out of
+    movement budget this turn) - the caller decides what to do about that
+    (fall back to the original rejection, in both current callers). If the
+    actor is *already* within range, returns a real ParsedAction with an
+    explicitly empty `params["path"]` instead of None - a different,
+    deliberate outcome from "couldn't get there": turn_engine._resolve_move
+    treats an explicitly-empty path as a genuine no-op (nothing to move,
+    not a malformed declaration), while treating a *missing* path key as
+    the real error it's always been. Live-found: a companion saying "I
+    move toward my ally to back them up" while already standing right next
+    to them used to hard-fail with a confusing "requires params['path']"
+    error instead of just... already being there."""
     if game_state.battle_map is None:
         return None
+    if distance_feet(actor.position, target.position) <= 5:
+        return ParsedAction(
+            actor=actor.id,
+            verb=verb,
+            raw_text=f"{actor.name} is already close enough to {target.name}.",
+            params={"path": []},
+        )
     base_speed = effective_speed(actor)
     total_budget = base_speed * 2 if verb == "dash" else base_speed
     remaining_budget = max(0, total_budget - actor.movement_used_feet)

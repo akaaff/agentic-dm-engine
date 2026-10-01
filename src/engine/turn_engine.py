@@ -1879,8 +1879,37 @@ def _resolve_move(
     if state.battle_map is None:
         raise TurnEngineError("Cannot resolve movement without a battle_map on GameState")
     raw_path = action.params.get("path")
-    if not raw_path:
+    if raw_path is None:
         raise TurnEngineError("move/dash action requires params['path']")
+    if not raw_path:
+        # Explicitly empty (the key IS present, just with nothing in it) -
+        # not the same as missing entirely. Live-found: intent_parser.
+        # _resolve_move_target (via monster_ai.build_move_toward_target)
+        # sets exactly this when a "move/dash toward X" declaration
+        # resolves to a target the actor is *already* as close to as
+        # moving could ever get - a real, harmless no-op, not a malformed
+        # declaration, so it shouldn't raise the same error a genuinely
+        # missing path does. Still a real event (so the narrator/log has
+        # something to describe instead of a silent gap - the same
+        # "a plain, honest line beats a silent gap" reasoning already
+        # applied to narrator_node's own empty-narration fallback) and
+        # still consumes disengage's own one-move protection, same as any
+        # other move.
+        actor.disengaged_this_turn = False
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="move",
+                payload={
+                    "from": {"x": actor.position.x, "y": actor.position.y},
+                    "to": {"x": actor.position.x, "y": actor.position.y},
+                    "dashed": action.verb == "dash",
+                },
+            )
+        )
+        return
 
     steps = [Position(x=p["x"], y=p["y"]) for p in raw_path]
     full_path = [actor.position, *steps]

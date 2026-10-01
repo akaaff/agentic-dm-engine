@@ -190,3 +190,52 @@ def test_dash_still_ends_the_turn() -> None:
     resolve_action(state, dash_action, _FixedRandom([]))  # type: ignore[arg-type]
     # Unlike plain move, dash still spends the action - the turn moves on.
     assert state.turn_order[state.current_turn] == "goblin_1"
+
+
+def test_an_explicitly_empty_path_resolves_as_a_real_no_op_not_an_error() -> None:
+    # Live-found: intent_parser._resolve_move_target/monster_ai.
+    # build_move_toward_target set exactly this (params["path"] = [], the
+    # key present but empty) when a "move toward X" declaration resolves
+    # to a target the actor is already as close to as moving could ever
+    # get. Distinct from a genuinely missing path (see the sibling test
+    # below) - a real, harmless no-op, not a malformed declaration.
+    state = _thorin_and_goblin_state(Position(x=0, y=0), Position(x=9, y=9))
+    move_action = ParsedAction(
+        actor="thorin", verb="move", raw_text="I'm already there", params={"path": []}
+    )
+
+    resolve_action(state, move_action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    thorin = state.characters["thorin"]
+    assert thorin.position == Position(x=0, y=0)  # unchanged
+    assert thorin.movement_used_feet == 0  # no cost
+    assert state.turn_order[state.current_turn] == "thorin"  # move doesn't end the turn
+    move_events = [e for e in state.events if e.type == "move"]
+    assert len(move_events) == 1  # a real event, not a silent gap
+    assert move_events[0].payload == {
+        "from": {"x": 0, "y": 0},
+        "to": {"x": 0, "y": 0},
+        "dashed": False,
+    }
+
+
+def test_an_explicitly_empty_dash_path_is_a_no_op_but_still_ends_the_turn() -> None:
+    # Dash genuinely *is* the action (trades the action for extra
+    # movement) - even a no-op dash still spends it, same as a dash that
+    # actually moved somewhere (test_dash_still_ends_the_turn above).
+    state = _thorin_and_goblin_state(Position(x=0, y=0), Position(x=9, y=9))
+    dash_action = ParsedAction(
+        actor="thorin", verb="dash", raw_text="I'm already there", params={"path": []}
+    )
+
+    resolve_action(state, dash_action, _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert state.turn_order[state.current_turn] == "goblin_1"
+
+
+def test_a_genuinely_missing_path_still_raises_unlike_an_explicitly_empty_one() -> None:
+    state = _thorin_and_goblin_state(Position(x=0, y=0), Position(x=9, y=9))
+    move_action = ParsedAction(actor="thorin", verb="move", raw_text="I move", params={})
+
+    with pytest.raises(TurnEngineError, match="requires params\\['path'\\]"):
+        resolve_action(state, move_action, _FixedRandom([]))  # type: ignore[arg-type]

@@ -170,6 +170,26 @@ def test_ignores_a_non_move_verb() -> None:
     assert resolved is action
 
 
+def test_already_adjacent_target_resolves_to_an_explicit_empty_path_not_dropped() -> None:
+    # Live-found: a companion saying "I move toward my ally to back them
+    # up" while already standing right next to them used to leave the
+    # path key entirely absent (build_move_toward_target returned None,
+    # same as the genuinely-can't-get-there case), which turn_engine.
+    # _resolve_move then rejected outright as a malformed declaration - a
+    # confusing failure for what's actually a real, harmless no-op. An
+    # EXPLICIT empty list (the key IS present) signals "nothing to move"
+    # rather than "couldn't compute a path at all".
+    actor = _actor()
+    wolf = _wolf(Position(x=1, y=0))  # already adjacent (5ft)
+    game_state = _game_state(actor, wolf)
+    action = ParsedAction(actor="thorin", verb="move", target="wolf_1", raw_text="x")
+
+    resolved = _resolve_move_target(action, game_state)
+
+    assert "path" in resolved.params
+    assert resolved.params["path"] == []
+
+
 def test_unknown_target_is_left_for_turn_engines_own_error() -> None:
     actor = _actor()
     wolf = _wolf(Position(x=3, y=0))
