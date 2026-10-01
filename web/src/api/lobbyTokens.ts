@@ -50,3 +50,19 @@ export function setLastSessionId(sessionId: string): void {
     // Best-effort, same as above.
   }
 }
+
+// Live-found: a player leaving a session via the in-game "Exit to Main
+// Menu" button (rather than just closing the tab) landed right back in it
+// on the very next reload, since the auto-resume effect above has no way
+// to tell "I got disconnected" apart from "I chose to leave." Deliberately
+// only clears the auto-resume pointer, not the lobby's own token
+// (setLobbyToken/getLobbyToken) - a player can still deliberately rejoin
+// the same game later via "Join with a Code" using the same code, which
+// looks up the still-present token to resume as the same character.
+export function clearLastSessionId(): void {
+  try {
+    localStorage.removeItem(LAST_SESSION_KEY)
+  } catch {
+    // Best-effort, same as above.
+  }
+}

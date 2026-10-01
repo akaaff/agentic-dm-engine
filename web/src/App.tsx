@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react'
 import { getAccessKey } from './api/accessKey'
 import { api, ApiError } from './api/client'
-import { getLastSessionId, getLobbyToken, setLastSessionId, setLobbyToken } from './api/lobbyTokens'
+import {
+  clearLastSessionId,
+  getLastSessionId,
+  getLobbyToken,
+  setLastSessionId,
+  setLobbyToken,
+} from './api/lobbyTokens'
 import AccessGate from './screens/AccessGate'
 import CharacterCreator from './screens/CharacterCreator'
 import CampaignSelect from './screens/CampaignSelect'
@@ -213,7 +219,16 @@ function App() {
     return <Lobby sessionId={sessionId} onStarted={() => setFlow({ screen: 'live', sessionId, characterId })} />
   }
 
-  return <LivePlay sessionId={flow.sessionId} myCharacterId={flow.characterId} />
+  return (
+    <LivePlay
+      sessionId={flow.sessionId}
+      myCharacterId={flow.characterId}
+      onExit={() => {
+        clearLastSessionId()
+        setFlow({ screen: 'home' })
+      }}
+    />
+  )
 }
 
 export default App

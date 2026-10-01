@@ -447,9 +447,27 @@ button.secondary {
   gap: 1.5rem;
 }
 
+.live-play-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
 .live-play-main h1 {
   font-size: 1.3rem;
   text-transform: capitalize;
+}
+
+.exit-button {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid #444;
+  opacity: 0.75;
+}
+
+.exit-button:hover {
+  opacity: 1;
 }
 
 .status-banner {

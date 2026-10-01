@@ -11,9 +11,11 @@ import { useSessionSocket } from '../ws/sessionClient'
 export default function LivePlay({
   sessionId,
   myCharacterId,
+  onExit,
 }: {
   sessionId: string
   myCharacterId: string
+  onExit: () => void
 }) {
   const {
     gameState,
@@ -111,7 +113,16 @@ export default function LivePlay({
     // check that just looks like a still-connecting spinner forever, with
     // no way to tell a real content/server bug apart from a slow network.
     if (error) {
-      return <div className="wizard wizard-error">{error}</div>
+      return (
+        <div className="wizard wizard-error">
+          {error}
+          <div>
+            <button type="button" onClick={onExit}>
+              Exit to Main Menu
+            </button>
+          </div>
+        </div>
+      )
     }
     return <div className="wizard">Connecting to the game server...</div>
   }
@@ -119,10 +130,15 @@ export default function LivePlay({
   return (
     <div className="live-play">
       <div className="live-play-main">
-        <h1>
-          {gameState?.encounter_id.replace(/_/g, ' ') ?? 'Adventure'}
-          {gameState && ` - round ${gameState.round}`}
-        </h1>
+        <div className="live-play-header">
+          <h1>
+            {gameState?.encounter_id.replace(/_/g, ' ') ?? 'Adventure'}
+            {gameState && ` - round ${gameState.round}`}
+          </h1>
+          <button type="button" className="exit-button" onClick={onExit}>
+            Exit to Main Menu
+          </button>
+        </div>
         <label className="checkbox-row debug-mode-toggle">
           <input type="checkbox" checked={debugMode} onChange={toggleDebugMode} />
           Debug mode (show roll breakdowns)
