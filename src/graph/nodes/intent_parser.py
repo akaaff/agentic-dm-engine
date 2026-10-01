@@ -151,15 +151,51 @@ def _promote_stray_target(action: ParsedAction) -> ParsedAction:
     the real field is set), so applying this generically is strictly safer
     than trying to enumerate which verbs need it. A deterministic,
     model-agnostic safety net either way - the data the model extracted is
-    already correct, it's just in the wrong place in the JSON."""
+    already correct, it's just in the wrong place in the JSON.
+
+    Live-found a third shape: a genuinely multi-target cast (e.g. "I cast
+    Bane on kobold_1, kobold_2, and kobold_3" - a real SRD "up to three
+    creatures" spell, not Magic Missile's own dart-splitting case) put
+    all three ids under the *singular* key params["target"] as a list,
+    confirmed 4/4 live - matching neither the single-string params.target
+    case nor the plural params.targets case this function already
+    handled, so the whole declaration silently had no target at all and
+    failed with "cast_spell action requires a target". A list under the
+    singular key is promoted to the real plural "targets" field for
+    exactly this reason."""
     if action.target or action.targets:
         return action
     stray_target = action.params.get("target")
     stray_targets = action.params.get("targets")
     if isinstance(stray_target, str):
         return action.model_copy(update={"target": stray_target})
+    if (
+        isinstance(stray_target, list)
+        and stray_target
+        and all(isinstance(t, str) for t in stray_target)
+    ):
+        return action.model_copy(update={"targets": stray_target})
     if isinstance(stray_targets, list) and all(isinstance(t, str) for t in stray_targets):
         return action.model_copy(update={"targets": stray_targets})
+    return action
+
+
+def _promote_stray_item_or_spell(action: ParsedAction) -> ParsedAction:
+    """Live-found alongside the target-nesting quirk _promote_stray_target
+    already handles, in the exact same response: a real multi-target cast
+    ("I cast Bane on kobold_1, kobold_2, and kobold_3") that correctly got
+    its three ids promoted to the top-level "targets" field still had
+    item_or_spell nested under params instead of the real top-level field
+    - "Bane" never made it out of params["item_or_spell"], leaving the
+    top-level field None and failing a later, different check ("cast_spell
+    action requires item_or_spell"). Same deterministic, model-agnostic
+    promotion as the target case - the data is already correct, just in
+    the wrong place in the JSON."""
+    if action.item_or_spell:
+        return action
+    stray = action.params.get("item_or_spell")
+    if isinstance(stray, str):
+        return action.model_copy(update={"item_or_spell": stray})
     return action
 
 
@@ -301,12 +337,13 @@ def _postprocess_action(
 ) -> ParsedAction:
     """The full pipeline every parsed action goes through, regardless of
     which backend produced it - forcing the real actor, fixing a
-    misplaced cast_spell target, computing a real move/dash path from a
-    named target, and dropping a hallucinated non-Paladin smite. Order
-    matters only in that each step is independent of the others (none
-    touch fields the next one reads)."""
+    misplaced cast_spell target/item_or_spell, computing a real move/dash
+    path from a named target, and dropping a hallucinated non-Paladin
+    smite. Order matters only in that each step is independent of the
+    others (none touch fields the next one reads)."""
     action = _force_actor(action, expected_actor_id)
     action = _promote_stray_target(action)
+    action = _promote_stray_item_or_spell(action)
     action = _resolve_move_target(action, game_state)
     return _strip_invalid_smite(action, game_state)
 

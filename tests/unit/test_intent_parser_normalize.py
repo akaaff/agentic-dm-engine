@@ -7,7 +7,7 @@ golden-set case for the live round trip this exists to patch up).
 from __future__ import annotations
 
 from src.engine.actions import ParsedAction
-from src.graph.nodes.intent_parser import _promote_stray_target
+from src.graph.nodes.intent_parser import _promote_stray_item_or_spell, _promote_stray_target
 
 
 def _cast(**overrides: object) -> ParsedAction:
@@ -29,6 +29,23 @@ def test_promotes_a_stray_params_target_to_the_top_level_field() -> None:
     assert normalized.target == "goblin_1"
     assert normalized.verb == "cast_spell"
     assert normalized.item_or_spell == "acid splash"
+
+
+def test_promotes_a_stray_list_under_the_singular_params_target_key() -> None:
+    # Live-found: a real multi-target cast ("I cast Bane on kobold_1,
+    # kobold_2, and kobold_3" - a genuine SRD "up to three creatures"
+    # spell, not Magic Missile's own dart-splitting shape) put all three
+    # ids under the *singular* key params["target"] as a list, 4/4 live -
+    # matching neither the single-string params.target case nor the
+    # plural params.targets case, so the whole declaration silently had
+    # no target at all and failed with "cast_spell action requires a
+    # target".
+    action = _cast(params={"target": ["kobold_1", "kobold_2", "kobold_3"]})
+
+    normalized = _promote_stray_target(action)
+
+    assert normalized.targets == ["kobold_1", "kobold_2", "kobold_3"]
+    assert normalized.target is None
 
 
 def test_promotes_a_stray_params_targets_list_to_the_top_level_field() -> None:
@@ -84,4 +101,34 @@ def test_prefers_the_real_target_field_over_a_stray_params_one() -> None:
     normalized = _promote_stray_target(action)
 
     assert normalized.target == "goblin_1"
+    assert normalized is action
+
+
+def test_promotes_a_stray_params_item_or_spell_to_the_top_level_field() -> None:
+    # Live-found in the same real response as the multi-target Bane case
+    # above: the model correctly promoted "targets" via the top-level
+    # field but still nested item_or_spell under params, leaving the real
+    # field None and failing a later, different check ("cast_spell action
+    # requires item_or_spell").
+    action = ParsedAction.model_validate(
+        {
+            "actor": "companion_pip",
+            "verb": "cast_spell",
+            "targets": ["kobold_1", "kobold_2", "kobold_3"],
+            "raw_text": "I cast Bane on kobold_1, kobold_2, and kobold_3",
+            "params": {"item_or_spell": "Bane"},
+        }
+    )
+
+    normalized = _promote_stray_item_or_spell(action)
+
+    assert normalized.item_or_spell == "Bane"
+
+
+def test_does_not_promote_item_or_spell_when_the_real_field_is_already_set() -> None:
+    action = _cast(item_or_spell="acid splash", params={"item_or_spell": "fireball"})
+
+    normalized = _promote_stray_item_or_spell(action)
+
+    assert normalized.item_or_spell == "acid splash"
     assert normalized is action
