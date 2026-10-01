@@ -241,12 +241,33 @@ def test_attack_naming_ammunition_falls_back_to_the_equipped_ranged_weapon() -> 
     assert attack_event.payload["source"] == "Longbow"
 
 
-def test_attack_naming_gibberish_still_rejects() -> None:
-    # Contrast with the ammunition case above - "my fireproof toaster"
-    # isn't a real SRD item at all, so it's a genuinely confused
-    # declaration rather than a same-hand-different-noun case, and should
-    # still surface a clear error rather than silently guessing.
+def test_attack_naming_unrecognized_text_falls_back_when_only_one_weapon_equipped() -> None:
+    # Live-requested: with only one weapon equipped, text that doesn't
+    # match any real SRD item at all ("my fireproof toaster") can't
+    # possibly mean anything else - falls back to the sole equipped
+    # weapon instead of rejecting, so a player/companion is never forced
+    # to name (or correctly phrase) a weapon there's no ambiguity about.
     thorin = _fighter()
+    state = _make_state(thorin, _goblin("goblin_1", Position(x=1, y=0)))
+    action = ParsedAction(
+        actor="thorin",
+        verb="attack",
+        target="goblin_1",
+        item_or_spell="my fireproof toaster",
+        raw_text="I attack with my fireproof toaster",
+    )
+    resolve_action(state, action, _FixedRandom([15, 3]))  # type: ignore[arg-type]
+    attack_event = next(e for e in state.events if e.type == "attack_roll")
+    assert attack_event.payload["source"] == "Longsword"
+
+
+def test_attack_naming_unrecognized_text_still_rejects_when_genuinely_ambiguous() -> None:
+    # Contrast with the single-weapon case above - with two different
+    # weapons equipped, unrecognized text stays rejected, since there's a
+    # real correction to offer ("you have a longsword and a dagger, not
+    # that") rather than nothing else it could possibly mean.
+    thorin = _fighter()
+    thorin.equipped_weapons = ["longsword", "dagger"]
     state = _make_state(thorin, _goblin("goblin_1", Position(x=5, y=5)))
     action = ParsedAction(
         actor="thorin",

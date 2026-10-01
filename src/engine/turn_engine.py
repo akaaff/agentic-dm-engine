@@ -454,13 +454,24 @@ def _pc_attack_params(
             # weapon, equip first" case, e.g. naming a longsword while only
             # a dagger is equipped) - a real SRD entry that isn't a weapon
             # at all (ammunition, adventuring gear) falls back to whatever's
-            # equipped instead, same as naming none. Gibberish that matches
-            # no real SRD item either way (e.g. "my fireproof toaster")
-            # keeps raising - that's a genuinely confused declaration, not
-            # a same-hand-different-noun case like ammunition.
+            # equipped instead, same as naming none.
             real_item = srd.equipment.get(weapon_index)
             if real_item is not None and not real_item.get("weapon_category"):
                 weapon = equipped[0] if equipped else None
+            elif real_item is None and len(equipped) == 1:
+                # Live-requested: genuinely unrecognized text (not a real
+                # SRD item at all, e.g. a flavorful description like "my
+                # trusty blade" that doesn't fuzzy-match the equipped
+                # weapon's own name) - but with only one weapon equipped,
+                # there's nothing else it could mean, so there's no useful
+                # "equip the right one first" correction to offer the way
+                # there is when a genuinely *different* real weapon is
+                # actually available (see the sibling "no longer equipped"
+                # test, which still rejects that case on purpose regardless
+                # of how many weapons are equipped). Only applies when
+                # nothing real was named at all - naming an actual
+                # different weapon you're not holding still rejects.
+                weapon = equipped[0]
             else:
                 equipped_names = ", ".join(item["name"] for item in equipped) or "nothing (unarmed)"
                 raise TurnEngineError(

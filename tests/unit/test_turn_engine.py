@@ -216,11 +216,30 @@ def test_pc_attack_params_matches_a_real_weapon_with_an_invented_adjective() -> 
     assert (params.range_normal_feet, params.range_long_feet) == (150, 600)
 
 
-def test_pc_attack_params_rejects_a_name_matching_no_real_weapon() -> None:
+def test_pc_attack_params_rejects_a_name_matching_no_real_weapon_when_genuinely_ambiguous() -> None:
+    # Two different weapons equipped - a confused/mismatched name is still
+    # worth rejecting here, since there's a real correction to offer
+    # ("you have a longsword and a dagger, not that").
     srd = load_srd()
-    fighter = _two_person_party()[0]
+    fighter = _two_person_party()[0]  # Thorin, longsword
+    fighter.equipped_weapons = ["longsword", "dagger"]
     with pytest.raises(TurnEngineError):
         _pc_attack_params(fighter, "my fireproof toaster", srd)
+
+
+def test_pc_attack_params_with_one_weapon_equipped_ignores_unrecognized_text() -> None:
+    # Live-requested: with only one weapon equipped, there's nothing to
+    # disambiguate - text that doesn't match any real SRD item at all
+    # (gibberish, or a flavorful description that doesn't fuzzy-match)
+    # resolves to the sole equipped weapon instead of rejecting, so a
+    # player/companion never has to specify a weapon they couldn't
+    # possibly mean anything else by. Naming an actual *different* real
+    # weapon still rejects regardless of equipped count - see the
+    # "genuinely ambiguous" sibling test above.
+    srd = load_srd()
+    fighter = _two_person_party()[0]  # Thorin, longsword only
+    params = _pc_attack_params(fighter, "my fireproof toaster", srd)
+    assert params.source_name == "Longsword"
 
 
 def test_monster_attack_params_defaults_to_first_action() -> None:
