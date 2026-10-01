@@ -31,7 +31,7 @@ from typing import Any
 from src import config
 from src.engine.actions import ParsedAction, ParsedActionSequence
 from src.engine.monster_ai import build_move_toward_target
-from src.engine.position import Position, distance_feet
+from src.engine.position import Position, chebyshev_distance, distance_feet
 from src.engine.state import Character, GameState
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_structured, chat_structured_best_effort, load_prompt
@@ -190,18 +190,30 @@ def _resolve_move_target(action: ParsedAction, game_state: GameState) -> ParsedA
     movement, shared rather than duplicated here a second time - see that
     function's own docstring) - stopping at 5ft/adjacent ("move to X" most
     naturally means "get next to it," not stop at some weapon-range-
-    dependent distance - out of scope, see the issue). An empty/short
-    result (blocked, occupied, not enough speed, or already adjacent) is
-    left as no `path` at all rather than a partial or stale one silently
-    kept - _resolve_move's own "move/dash action requires params['path']"
+    dependent distance - out of scope, see the issue). A genuinely
+    unreachable result (blocked, not enough speed) is left as no `path` at
+    all - _resolve_move's own "move/dash action requires params['path']"
     error is the honest, already-established way to report "couldn't get
-    there," not a new single-action-with-nothing-in-it modeled as if it
-    succeeded."""
-    if action.verb not in ("move", "dash") or not action.target:
+    there." An *already adjacent* result gets an explicitly empty path
+    instead (see build_move_toward_target's own docstring) - a different,
+    deliberate outcome turn_engine._resolve_move treats as a real no-op,
+    not an error, rather than a new single-action-with-nothing-in-it
+    modeled as if it moved somewhere.
+
+    No target at all falls through to _discard_unresolvable_raw_path -
+    see its own docstring for the second, distinct failure mode that
+    covers."""
+    if action.verb not in ("move", "dash"):
         return action
     actor = game_state.characters.get(action.actor)
+    if actor is None:
+        return action
+
+    if not action.target:
+        return _discard_unresolvable_raw_path(action, actor)
+
     target = game_state.characters.get(action.target)
-    if actor is None or target is None:
+    if target is None:
         return action
 
     move_action = build_move_toward_target(game_state, actor, target, verb=action.verb)
@@ -212,6 +224,44 @@ def _resolve_move_target(action: ParsedAction, game_state: GameState) -> ParsedA
     new_params = {k: v for k, v in action.params.items() if k != "path"}
     if move_action is not None:
         new_params["path"] = move_action.params["path"]
+    return action.model_copy(update={"params": new_params})
+
+
+def _discard_unresolvable_raw_path(action: ParsedAction, actor: Character) -> ParsedAction:
+    """Live-found: a move/dash describing a vague or unresolvable reference
+    (e.g. "the one in the flank") correctly leaves `target` unset - but
+    confirmed live, the model still often invents its own destination
+    square anyway, almost always nowhere near actually adjacent to the
+    actor's real position. This isn't limited to genuinely ambiguous
+    phrasing either: the identical utterance ("I dash to the wolves and
+    stab the closest one") resolved `target` correctly on one trial and
+    produced this exact bogus-path shape on another - real LLM sampling
+    variance, not just a hard case the prompt can't cover.
+
+    Without a target to resolve a real path against, that guess would
+    otherwise reach turn_engine's own adjacency check completely
+    unexamined and fail with a confusing "cost=None" error (the path's
+    first "step" is usually nowhere near one square away). Discarded
+    here instead, so it fails the same clean, already-handled "requires
+    params['path']" way a genuinely path-less declaration does - this
+    doesn't resolve the underlying "which hostile did you mean"
+    ambiguity (nothing can, without more information than the utterance
+    itself gives), just makes the failure mode consistent and non-
+    confusing rather than a cryptic engine-level number. A real,
+    genuinely adjacent single-step destination (intent_parser.md's own
+    "a single obviously-adjacent step" case, e.g. "I step east") is left
+    completely untouched - only an invalid guess gets discarded."""
+    raw_path = action.params.get("path")
+    if isinstance(raw_path, list) and len(raw_path) == 1:
+        try:
+            step = Position(x=raw_path[0]["x"], y=raw_path[0]["y"])
+        except (KeyError, TypeError, ValueError):
+            step = None
+        if step is not None and chebyshev_distance(actor.position, step) == 1:
+            return action  # a real, legitimate single adjacent step
+    if not raw_path:
+        return action
+    new_params = {k: v for k, v in action.params.items() if k != "path"}
     return action.model_copy(update={"params": new_params})
 
 

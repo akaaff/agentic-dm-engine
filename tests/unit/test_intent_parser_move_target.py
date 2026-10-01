@@ -199,3 +199,59 @@ def test_unknown_target_is_left_for_turn_engines_own_error() -> None:
     resolved = _resolve_move_target(action, game_state)
 
     assert resolved is action
+
+
+def test_an_invented_non_adjacent_path_with_no_target_is_discarded() -> None:
+    # Live-found: a vague/unresolvable reference ("the one in the flank")
+    # correctly leaves target unset, but the model still often invents its
+    # own destination square anyway - almost always nowhere near actually
+    # adjacent. Discarded so it fails the same clean "requires path" way a
+    # genuinely path-less declaration does, instead of reaching
+    # turn_engine's own adjacency check and failing with a confusing
+    # "cost=None".
+    actor = _actor()  # at (0, 0)
+    wolf = _wolf(Position(x=3, y=0))
+    game_state = _game_state(actor, wolf)
+    action = ParsedAction(
+        actor="thorin",
+        verb="dash",
+        params={"path": [{"x": 5, "y": 2}]},  # nowhere near adjacent to (0, 0)
+        raw_text="I dash past them and stab the one in the flank",
+    )
+
+    resolved = _resolve_move_target(action, game_state)
+
+    assert "path" not in resolved.params
+
+
+def test_a_genuinely_adjacent_single_step_with_no_target_is_left_untouched() -> None:
+    # The real "a single obviously-adjacent step" case intent_parser.md
+    # itself describes (e.g. "I step east") - no character named at all,
+    # and the one step given really is adjacent. Must not be discarded by
+    # the same guard that catches an invented distant guess.
+    actor = _actor()  # at (0, 0)
+    wolf = _wolf(Position(x=3, y=0))
+    game_state = _game_state(actor, wolf)
+    action = ParsedAction(
+        actor="thorin",
+        verb="move",
+        params={"path": [{"x": 1, "y": 0}]},
+        raw_text="I step east",
+    )
+
+    resolved = _resolve_move_target(action, game_state)
+
+    assert resolved is action
+
+
+def test_a_missing_path_with_no_target_is_left_untouched() -> None:
+    # Nothing to discard - already the clean, already-handled "missing
+    # path" shape turn_engine itself reports.
+    actor = _actor()
+    wolf = _wolf(Position(x=3, y=0))
+    game_state = _game_state(actor, wolf)
+    action = ParsedAction(actor="thorin", verb="move", raw_text="I ponder")
+
+    resolved = _resolve_move_target(action, game_state)
+
+    assert resolved is action
