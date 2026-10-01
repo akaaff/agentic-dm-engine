@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getAccessKey } from './api/accessKey'
 import { api, ApiError } from './api/client'
-import { getLobbyToken, setLobbyToken } from './api/lobbyTokens'
+import { getLastSessionId, getLobbyToken, setLastSessionId, setLobbyToken } from './api/lobbyTokens'
 import AccessGate from './screens/AccessGate'
 import CharacterCreator from './screens/CharacterCreator'
 import CampaignSelect from './screens/CampaignSelect'
@@ -32,6 +32,13 @@ function App() {
   // app) before we know whether the backend even requires a passphrase, or
   // whether an already-stored one from a prior visit is still valid.
   const [gate, setGate] = useState<'checking' | 'locked' | 'unlocked'>('checking')
+  // Live-found: a plain page refresh mid-game always dropped back to Home,
+  // even though everything needed to resume (lobbyTokens.ts's stored
+  // token + last-session-id) was already sitting in localStorage - nothing
+  // on mount ever looked it up. 'resuming' gates the very first render the
+  // same way 'checking' already does, so there's no flash of Home before
+  // this redirects straight back into the game.
+  const [resuming, setResuming] = useState(true)
 
   useEffect(() => {
     api
@@ -57,7 +64,35 @@ function App() {
       .catch(() => setGate('unlocked')) // /health itself unreachable - let the rest of the app surface that error normally rather than getting stuck behind a gate that can never resolve.
   }, [])
 
-  if (gate === 'checking') {
+  useEffect(() => {
+    if (gate !== 'unlocked') return
+    const lastSessionId = getLastSessionId()
+    const token = lastSessionId ? getLobbyToken(lastSessionId) : null
+    if (!lastSessionId || !token) {
+      setResuming(false)
+      return
+    }
+    ;(async () => {
+      try {
+        const status = await api.getLobbyStatus(lastSessionId)
+        const { character_id } = await api.joinLobby(lastSessionId, { token })
+        setFlow(
+          status.status === 'in_progress'
+            ? { screen: 'live', sessionId: lastSessionId, characterId: character_id }
+            : { screen: 'lobby', sessionId: lastSessionId, characterId: character_id }
+        )
+      } catch {
+        // Session gone, token invalid, server state wiped by a restart
+        // (see DECISIONS.md - mid-fight progress doesn't survive a
+        // backend restart) - fall back to Home cleanly rather than
+        // getting stuck on a blank screen.
+      } finally {
+        setResuming(false)
+      }
+    })()
+  }, [gate])
+
+  if (gate === 'checking' || resuming) {
     return null
   }
 
@@ -116,6 +151,7 @@ function App() {
               // lobby rather than assuming it - the server may have been
               // reset, or this could be a stale/corrupted local value.
               const { character_id } = await api.joinLobby(code, { token: existingToken })
+              setLastSessionId(code)
               setFlow(
                 status.status === 'in_progress'
                   ? { screen: 'live', sessionId: code, characterId: character_id }
@@ -155,6 +191,7 @@ function App() {
                 character_id: character.id,
               })
               setLobbyToken(sessionId, token)
+              setLastSessionId(sessionId)
               setFlow({ screen: 'lobby', sessionId, characterId: character_id })
               return
             } catch (err) {
