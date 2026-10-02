@@ -37,6 +37,18 @@ def _isolated_sessions() -> None:
     reset_sessions()
 
 
+@pytest.fixture(autouse=True)
+def _stub_standalone_narrator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The resume path (_resolve_and_narrate_bardic_choice) calls narrator_node
+    directly rather than through the compiled graph - so the graph's own
+    narrator_fn stub below doesn't cover it. Without this, the accept/decline
+    tests made a real Ollama call: they passed on a machine with Ollama running
+    and failed with ConnectError on CI, which has none."""
+    monkeypatch.setattr(
+        ws_session_module, "narrator_node", lambda _state: {"narration": "[stub narration]"}
+    )
+
+
 class _FixedRandom:
     def __init__(self, values: list[int]) -> None:
         self._values = list(values)
