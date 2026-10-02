@@ -37,6 +37,9 @@ EventType = Literal[
     "wild_shape",
     "wild_shape_ended",
     "bardic_inspiration",
+    "death_ward",
+    "mirror_image",
+    "sanctuary_blocked",
 ]
 
 

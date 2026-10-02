@@ -1751,6 +1751,26 @@ def _apply_damage_and_handle_downing(
             )
         )
 
+    # Death Ward (issue #59): "the first time the target would drop to 0 hit
+    # points as a result of taking damage, the target instead drops to 1 hit
+    # point, and the spell then ends." Checked after Relentless Endurance,
+    # which also leaves the target at 1 HP: a Half-Orc spends the free
+    # once-per-rest trait first and keeps the ward the spell slot paid for.
+    # Applied before the damage_dealt event below so its target_hp_remaining
+    # reflects the real outcome (1, not 0).
+    if target.hp == 0 and has_condition(target, "death_warded"):
+        target.hp = 1
+        remove_condition(target, "death_warded")
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=target.id,
+                type="death_ward",
+                payload={"target": target.id},
+            )
+        )
+
     state.events.append(
         Event(
             round=state.round,
@@ -3447,6 +3467,15 @@ def _resolve_cast_spell(
         target_ids = (
             action.targets if action.targets else ([action.target] if action.target else None)
         )
+    # A Self-range buff (Blur, Divine Favor, Mirror Image) can only ever
+    # affect its caster: naming no target means "myself" (found live, same as
+    # Mage Armor: "I cast mage armor on myself" left `target` unset - the
+    # model treats a reflexive "myself" as needing no explicit name), and
+    # naming anyone else is a real rules error, not something to quietly
+    # redirect.
+    self_only = mechanic == "condition" and spell.get("range") == "Self"
+    if not target_ids and self_only:
+        target_ids = [actor.id]
     if not target_ids:
         raise TurnEngineError("cast_spell action requires a target")
 
@@ -3455,6 +3484,8 @@ def _resolve_cast_spell(
         target = state.characters.get(target_id)
         if target is None:
             raise TurnEngineError(f"Unknown spell target: {target_id}")
+        if self_only and target.id != actor.id:
+            raise TurnEngineError(f"{spell['name']} can only be cast on yourself")
         # A heal or condition (issue #55 - e.g. Invisibility) spell targets
         # an ally by design - only the offensive mechanics need the
         # friendly-fire/charmed guard. Condition spells get the opposite-

@@ -38,6 +38,7 @@ from src.engine.position import (
     distance_feet,
     rank_label,
 )
+from src.engine.rules import effective_speed
 from src.engine.state import Character, GameState
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_structured, chat_structured_best_effort, load_prompt
@@ -76,7 +77,7 @@ def build_intent_parser_prompt(state: GraphState) -> str:
         actor_id=actor.id,
         actor_x=actor.position.x,
         actor_y=actor.position.y,
-        actor_speed=actor.speed,
+        actor_speed=effective_speed(actor),
         characters_summary=characters_summary,
         utterance=state["raw_text"],
     )

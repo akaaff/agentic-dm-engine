@@ -18,13 +18,15 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from src.cli.play import build_demo_encounter
 from src.engine.actions import ParsedAction
 from src.engine.character_creation import create_character
 from src.engine.conditions import apply_condition, has_condition, tick_conditions
 from src.engine.encounter import build_encounter_state
 from src.engine.state import Character, Condition, GameState
-from src.engine.turn_engine import resolve_action
+from src.engine.turn_engine import TurnEngineError, resolve_action
 
 
 class _FixedRandom:
@@ -257,3 +259,155 @@ def test_ticking_a_condition_preserves_its_spell_and_detail_tags() -> None:
         "X",
         "fire",
     )
+
+
+# ----------------------------------------------- issue #59: Blur / Longstrider / Death Ward
+
+
+def _prepare(state: GameState, caster_id: str, spell: str, level: int) -> Character:
+    """Gives a caster a spell outside their real class list plus one slot of
+    its level - same "poke state" precedent test_turn_engine_spell_audit.py
+    uses for level-gap/class-gap spells, since these tests are about the
+    spell's mechanic, not about who may learn it."""
+    caster = state.characters[caster_id]
+    caster.prepared_spells.append(spell)
+    caster.spell_slots[level] = caster.spell_slots.get(level, 0) + 1
+    return caster
+
+
+def test_blur_is_a_self_only_concentration_condition() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "blur", 2)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "blur")  # no target named: Blur is Self-range
+    assert has_condition(elrond, "blurred")
+    assert elrond.concentrating_on == "Blur"
+    assert elrond.spell_slots[2] == 0
+    (blurred,) = elrond.conditions
+    assert (blurred.duration_rounds, blurred.source, blurred.spell) == (10, "elrond", "Blur")
+
+
+def test_blur_cannot_be_cast_on_someone_else() -> None:
+    state = _build_demo_state()
+    _prepare(state, "elrond", "blur", 2)
+    _end_turn(state, "thorin")
+    with pytest.raises(TurnEngineError, match="only be cast on yourself"):
+        _cast(state, "elrond", "blur", target="thorin")
+    # A rejected cast must not burn the slot or start concentrating.
+    assert state.characters["elrond"].spell_slots[2] == 1
+    assert state.characters["elrond"].concentrating_on is None
+
+
+def test_attacks_against_a_blurred_target_have_disadvantage() -> None:
+    state = _build_demo_state()
+    apply_condition(state.characters["elrond"], Condition(name="blurred", duration_rounds=10))
+    # Disadvantage rolls two d20s and keeps the lower: 20 then 2 -> natural 2
+    # (+4 = 6 vs AC 13) is a miss. Without Blur a single 20 would be a crit.
+    _goblin_attacks(state, "elrond", [20, 2])
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert attack.payload["natural"] == 2
+    assert attack.payload["hit"] is False
+
+
+def test_attacks_against_an_unblurred_target_roll_a_single_d20() -> None:
+    state = _build_demo_state()
+    _goblin_attacks(state, "elrond", [20, 3, 10])  # d20, damage die, CON save
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert attack.payload["natural"] == 20
+    assert attack.payload["hit"] is True
+
+
+def test_longstrider_adds_ten_feet_to_speed() -> None:
+    from src.engine.rules import effective_speed
+
+    thorin = _two_person_party()[0]
+    assert effective_speed(thorin) == 30
+    apply_condition(thorin, Condition(name="longstrider", duration_rounds=600))
+    assert effective_speed(thorin) == 40
+
+
+def test_longstrider_composes_with_the_speed_penalties_instead_of_overriding_them() -> None:
+    from src.engine.rules import effective_speed
+
+    thorin = _two_person_party()[0]
+    apply_condition(thorin, Condition(name="longstrider", duration_rounds=600))
+    thorin.exhaustion_level = 2  # SRD: speed halved - applied to the boosted total
+    assert effective_speed(thorin) == 20
+    thorin.exhaustion_level = 5  # speed 0 stays 0
+    assert effective_speed(thorin) == 0
+    thorin.exhaustion_level = 0
+    apply_condition(thorin, Condition(name="grappled", duration_rounds=3))
+    assert effective_speed(thorin) == 0
+
+
+def test_longstrider_can_be_cast_on_an_ally_and_is_not_concentration() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "longstrider", 1)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "longstrider", target="thorin")
+    thorin = state.characters["thorin"]
+    assert has_condition(thorin, "longstrider")
+    assert elrond.concentrating_on is None
+    (condition,) = thorin.conditions
+    assert condition.duration_rounds == 600  # SRD: 1 hour = 600 six-second rounds
+
+
+def test_death_ward_drops_a_lethal_hit_to_one_hp_and_is_consumed() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    apply_condition(elrond, Condition(name="death_warded", duration_rounds=4800, source="thorin"))
+    # Natural 15 hits; damage die 6 (+2 = 8) would drop Elrond (7 HP) to 0.
+    _goblin_attacks(state, "elrond", [15, 6])
+    assert elrond.hp == 1
+    assert not has_condition(elrond, "unconscious")
+    assert not has_condition(elrond, "death_warded"), "the spell ends once it triggers"
+    assert [e.type for e in state.events if e.type == "death_ward"] == ["death_ward"]
+    damage = next(e for e in state.events if e.type == "damage_dealt")
+    assert damage.payload["target_hp_remaining"] == 1
+
+
+def test_death_ward_does_not_trigger_on_damage_that_leaves_the_target_standing() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    apply_condition(elrond, Condition(name="death_warded", duration_rounds=4800, source="thorin"))
+    _goblin_attacks(state, "elrond", [15, 1])  # 1 + 2 = 3 damage, 7 -> 4
+    assert elrond.hp == 4
+    assert has_condition(elrond, "death_warded")
+    assert not [e for e in state.events if e.type == "death_ward"]
+
+
+def test_a_second_lethal_hit_after_death_ward_is_spent_downs_the_target() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    apply_condition(elrond, Condition(name="death_warded", duration_rounds=4800, source="thorin"))
+    _goblin_attacks(state, "elrond", [15, 6])
+    assert elrond.hp == 1
+    _goblin_attacks(state, "elrond", [15, 1], goblin="goblin_2")  # any damage now drops him
+    assert elrond.hp == 0
+    assert has_condition(elrond, "unconscious")
+
+
+def test_death_ward_can_be_cast_on_an_ally() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "death-ward", 4)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "death-ward", target="thorin")
+    thorin = state.characters["thorin"]
+    assert has_condition(thorin, "death_warded")
+    assert elrond.concentrating_on is None  # SRD: not a concentration spell
+    (condition,) = thorin.conditions
+    assert condition.duration_rounds == 4800  # 8 hours
+
+
+def test_death_ward_is_kept_when_relentless_endurance_triggers_first() -> None:
+    # Both leave the target at 1 HP. Spending the free once-per-rest trait
+    # first keeps the ward the spell slot paid for for the next lethal hit.
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    elrond.race_index = "half-orc"
+    apply_condition(elrond, Condition(name="death_warded", duration_rounds=4800, source="thorin"))
+    _goblin_attacks(state, "elrond", [15, 6])
+    assert elrond.hp == 1
+    assert elrond.used_relentless_endurance_this_rest is True
+    assert has_condition(elrond, "death_warded")
+    assert not [e for e in state.events if e.type == "death_ward"]

@@ -27,7 +27,12 @@ from typing import Any
 
 from src.engine.actions import ParsedAction
 from src.engine.position import direction_label, distance_feet, rank_label
-from src.engine.rules import class_spell_indices, spell_range_feet, weapon_range_feet
+from src.engine.rules import (
+    class_spell_indices,
+    effective_speed,
+    spell_range_feet,
+    weapon_range_feet,
+)
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
 from src.graph.personas import persona_block
@@ -137,7 +142,7 @@ def _build_prompt(game_state: GameState, actor: Character, srd: SrdIndex) -> str
         actor_y=actor.position.y,
         actor_hp=actor.hp,
         actor_max_hp=actor.max_hp,
-        actor_speed=actor.speed,
+        actor_speed=effective_speed(actor),
         actor_options_summary=_actor_options_summary(actor, srd),
         characters_summary=characters_summary,
         recent_events_summary=_recent_events_summary(game_state),

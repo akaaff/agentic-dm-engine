@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 import re
 from dataclasses import dataclass, replace
+from typing import Literal
 
 from src.engine.conditions import has_condition
 from src.engine.dice import RollResult, roll, roll_d20
@@ -309,17 +310,31 @@ SRD spell should have - not a guess from memory."""
 class ConditionSpellSpec:
     condition: ConditionName
     duration_rounds: int | None
-    """1 minute (a common real-SRD buff duration) -> 10 combat rounds (6s
-    each). None means "until removed by something else" - not used by any
-    entry here yet, but left open for a future one that genuinely has no
-    duration to tick down (e.g. an instantaneous effect with a lingering
-    condition)."""
+    """A round is 6 seconds, so 1 minute -> 10 rounds, 10 minutes -> 100,
+    1 hour -> 600, 8 hours -> 4800 (the SRD's own durations, converted).
+    None means "until removed by something else" - not used by any entry
+    here, but left open for a future one that genuinely has no duration to
+    tick down."""
+    target_side: Literal["ally", "enemy"] = "ally"
+    """Who it may be cast on: almost every buff targets a willing ally (or
+    the caster); Hunter's Mark is the one that marks an enemy."""
+    detail: str | None = None
+    """Initial Condition.detail - Mirror Image's starting duplicate count."""
+    choose_damage_type: bool = False
+    """The cast must name one damage type (Protection from Energy); it's
+    recorded as Condition.detail - see turn_engine._chosen_damage_type."""
+    cures: ConditionName | None = None
+    """An existing condition the cast removes from each target first
+    (Protection from Poison cures `poisoned`)."""
 
 
 _CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     "invisibility": ConditionSpellSpec(condition="invisible", duration_rounds=10),
     "greater-invisibility": ConditionSpellSpec(condition="invisible", duration_rounds=10),
     "bless": ConditionSpellSpec(condition="blessed", duration_rounds=10),
+    "blur": ConditionSpellSpec(condition="blurred", duration_rounds=10),
+    "longstrider": ConditionSpellSpec(condition="longstrider", duration_rounds=600),
+    "death-ward": ConditionSpellSpec(condition="death_warded", duration_rounds=4800),
 }
 """Issue #55 spell audit (bucket 4's "general condition mechanic" - see
 #54): spells whose entire real effect is "apply this existing ConditionName
@@ -1033,9 +1048,10 @@ def condition_attack_advantage(actor: Character, target: Character, distance_fee
 def condition_attack_disadvantage(actor: Character, target: Character, distance_feet: int) -> bool:
     """The disadvantage-side mirror of condition_attack_advantage - an
     actor's own blinded/poisoned/restrained/prone/frightened status, an
-    invisible target, a prone target attacked from beyond melee range, or
-    exhaustion level 3+ (SRD: disadvantage on attack rolls and saving
-    throws)."""
+    invisible or blurred target (Blur, issue #59: "any creature has
+    disadvantage on attack rolls against you"), a prone target attacked from
+    beyond melee range, or exhaustion level 3+ (SRD: disadvantage on attack
+    rolls and saving throws)."""
     return (
         has_condition(actor, "blinded")
         or has_condition(actor, "poisoned")
@@ -1044,6 +1060,7 @@ def condition_attack_disadvantage(actor: Character, target: Character, distance_
         or has_condition(actor, "frightened")
         or actor.exhaustion_level >= 3
         or has_condition(target, "invisible")
+        or has_condition(target, "blurred")
         or (has_condition(target, "prone") and distance_feet > 5)
     )
 
@@ -1065,14 +1082,17 @@ def condition_check_disadvantage(character: Character) -> bool:
 
 
 def effective_speed(character: Character) -> int:
-    """Character.speed as authored, adjusted for conditions that reduce it:
-    grappled or exhaustion level 5+ reduces speed to 0; exhaustion level 2+
-    halves it (SRD rounds down, matching plain integer division)."""
+    """Character.speed as authored, adjusted for what changes it: Longstrider
+    (issue #59) adds 10 feet; then grappled or exhaustion level 5+ reduces
+    the result to 0, and exhaustion level 2+ halves it (SRD rounds down,
+    matching plain integer division) - the penalties apply to the boosted
+    total, so they compose rather than the bonus overriding them."""
     if has_condition(character, "grappled") or character.exhaustion_level >= 5:
         return 0
+    speed = character.speed + (10 if has_condition(character, "longstrider") else 0)
     if character.exhaustion_level >= 2:
-        return character.speed // 2
-    return character.speed
+        return speed // 2
+    return speed
 
 
 # --- Multiattack sub-action parsing (Phase 9F) ----------------------------
