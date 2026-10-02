@@ -280,46 +280,35 @@ def _choose_innate_spell(actor: Character, target: Character, srd: SrdIndex) -> 
     return None
 
 
-def choose_monster_action(game_state: GameState, actor: Character) -> ParsedAction:
-    living_targets = [
-        c for c in game_state.characters.values() if c.is_pc and not c.is_dead and c.id != actor.id
-    ]
-    if not living_targets:
-        return ParsedAction(
-            actor=actor.id, verb="end_turn", raw_text=f"{actor.name} has no target left."
-        )
-
-    # Issue #66: an unconscious-but-alive party member (down at 0 HP, or put
-    # to sleep) is still "alive" for victory/defeat, but a monster that keeps
-    # swinging at whoever's nearest can pile onto one downed character -
-    # every hit against an unconscious target is an auto-crit plus 2
-    # automatic death-save failures (Phase 9C), so 1-2 more hits finish them
-    # while the rest of the party stands untouched. Prefer anyone still
-    # conscious; only once nobody is left conscious fall back to finishing
-    # off the downed. The targeting tail below (innate spells, range,
-    # approach path) just takes whatever this picks, so nothing else changes.
-    conscious_targets = [c for c in living_targets if not has_condition(c, "unconscious")]
-    target = min(
-        conscious_targets or living_targets,
-        key=lambda c: (chebyshev_distance(actor.position, c.position), c.id),
-    )
-
-    spell_action = _choose_innate_spell(actor, target, load_srd())
+def _action_against(
+    game_state: GameState, actor: Character, target: Character, srd: SrdIndex
+) -> tuple[ParsedAction, bool]:
+    """What `actor` does about `target` this turn, and whether it is
+    *blocked*: had movement budget left, wasn't already in range, and still
+    found no way to close the distance (a hostile body or wall in the way -
+    approach_path is greedy, not real pathfinding). The action is the same
+    either way (an attack that turn_engine will reject as out of range when
+    blocked - an honest rejection beats silently doing nothing); `blocked`
+    lets choose_monster_action try someone else instead of repeating a doomed
+    attack forever. Having already spent this turn's movement is NOT blocked:
+    nothing is in the way, there's just no distance left to cover."""
+    spell_action = _choose_innate_spell(actor, target, srd)
     if spell_action is not None:
-        return spell_action
+        return spell_action, False
 
     range_feet = _monster_range_feet(actor)
+    attack = ParsedAction(
+        actor=actor.id,
+        verb="attack",
+        target=target.id,
+        raw_text=f"{actor.name} attacks {target.name}.",
+    )
 
     if (
         distance_feet(actor.position, target.position) <= range_feet
         or game_state.battle_map is None
     ):
-        return ParsedAction(
-            actor=actor.id,
-            verb="attack",
-            target=target.id,
-            raw_text=f"{actor.name} attacks {target.name}.",
-        )
+        return attack, False
 
     hostile_squares, ally_squares = occupied_squares_by_side(game_state, actor)
     # Move no longer ends the turn (found live), so this can now be called a
@@ -341,17 +330,62 @@ def choose_monster_action(game_state: GameState, actor: Character) -> ParsedActi
         # Can't get any closer (blocked, or no speed left) - attack anyway.
         # turn_engine's own range check gives an honest rejection rather
         # than this heuristic silently doing nothing.
-        return ParsedAction(
+        return attack, remaining_speed > 0
+
+    return (
+        ParsedAction(
             actor=actor.id,
-            verb="attack",
-            target=target.id,
-            raw_text=f"{actor.name} attacks {target.name}.",
+            verb="move",
+            target=target.id,  # not used by _resolve_move - documents intent
+            params={"path": [{"x": p.x, "y": p.y} for p in path]},
+            raw_text=f"{actor.name} closes in on {target.name}.",
+        ),
+        False,
+    )
+
+
+def choose_monster_action(game_state: GameState, actor: Character) -> ParsedAction:
+    living_targets = [
+        c for c in game_state.characters.values() if c.is_pc and not c.is_dead and c.id != actor.id
+    ]
+    if not living_targets:
+        return ParsedAction(
+            actor=actor.id, verb="end_turn", raw_text=f"{actor.name} has no target left."
         )
 
-    return ParsedAction(
-        actor=actor.id,
-        verb="move",
-        target=target.id,  # not used by _resolve_move - documents intent
-        params={"path": [{"x": p.x, "y": p.y} for p in path]},
-        raw_text=f"{actor.name} closes in on {target.name}.",
-    )
+    # Issue #66: an unconscious-but-alive party member (down at 0 HP, or put
+    # to sleep) is still "alive" for victory/defeat, but a monster that keeps
+    # swinging at whoever's nearest can pile onto one downed character -
+    # every hit against an unconscious target is an auto-crit plus 2
+    # automatic death-save failures (Phase 9C), so 1-2 more hits finish them
+    # while the rest of the party stands untouched. Prefer anyone still
+    # conscious; fall back to the downed once nobody conscious is left...
+    #
+    # ...or once the conscious ones can't be reached. Found by the full
+    # suite hanging intermittently: with a downed-but-stable human (skipped)
+    # and the only conscious party member stuck behind the human's body in a
+    # corridor, a monster that refuses to touch the downed one has nothing it
+    # can actually do - every round is a doomed attack and a forced end_turn,
+    # nobody else acts, and the fight never ends (a livelock that blocks the
+    # server's event loop). A monster that has no route to its preferred
+    # target therefore moves on to the next pool instead.
+    conscious = [c for c in living_targets if not has_condition(c, "unconscious")]
+    downed = [c for c in living_targets if has_condition(c, "unconscious")]
+
+    def nearest(pool: list[Character]) -> Character:
+        return min(pool, key=lambda c: (chebyshev_distance(actor.position, c.position), c.id))
+
+    srd = load_srd()
+    first_choice: ParsedAction | None = None
+    for pool in (conscious, downed):
+        if not pool:
+            continue
+        action, blocked = _action_against(game_state, actor, nearest(pool), srd)
+        if not blocked:
+            return action
+        first_choice = first_choice or action
+    # Every pool was blocked: the preferred target's (rejected) attack is as
+    # honest an answer as this heuristic has - turn_engine's breaker handles
+    # the rest, exactly as it did before pools existed.
+    assert first_choice is not None  # living_targets was non-empty
+    return first_choice

@@ -359,3 +359,62 @@ def test_a_conscious_but_dead_free_target_set_still_ends_the_turn() -> None:
     action = choose_monster_action(state, goblin)
 
     assert action.verb == "end_turn"
+
+
+def test_falls_back_to_the_downed_target_when_the_conscious_one_is_unreachable() -> None:
+    # The livelock the "prefer conscious" rule (issue #66) introduced and the
+    # full suite caught intermittently: a 1-wide corridor, a goblin, the
+    # downed (stable, so skipped) human right in front of it, and the one
+    # conscious companion stuck behind the human's body. approach_path treats
+    # a hostile-occupied square as impassable and is greedy, so the goblin
+    # has no way to close on the companion - its doomed out-of-range attack
+    # just trips the forced-end_turn breaker every round, and since nobody
+    # else acts the fight never ends (the autoplay loop spins forever, which
+    # freezes the server). Before the rule it would simply have finished the
+    # adjacent downed human. A target the monster genuinely can't approach
+    # must not stop it from acting on one it can.
+    goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=0))
+    downed = _make_character("thorin", is_pc=True, position=Position(x=1, y=0))
+    companion = _make_character("grom", is_pc=True, position=Position(x=3, y=0))
+    _down(downed)
+    state = _make_state([goblin, downed, companion], battle_map=_open_map(5, 1))
+
+    action = choose_monster_action(state, goblin)
+
+    assert action.verb == "attack"
+    assert action.target == "thorin"
+
+
+def test_still_pursues_a_reachable_conscious_target_rather_than_the_adjacent_downed_one() -> None:
+    # Same arrangement on an open map: there IS a way around the body, so the
+    # monster should keep pursuing the conscious target (issue #66's intent)
+    # rather than stopping to finish the downed one.
+    goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=1))
+    downed = _make_character("thorin", is_pc=True, position=Position(x=1, y=1))
+    companion = _make_character("grom", is_pc=True, position=Position(x=4, y=1))
+    _down(downed)
+    state = _make_state([goblin, downed, companion], battle_map=_open_map(5, 3))
+
+    action = choose_monster_action(state, goblin)
+
+    assert action.verb == "move"
+    path = action.params["path"]
+    assert path, "expected a real path toward the conscious companion"
+    assert (path[0]["x"], path[0]["y"]) != (1, 1), "must not path through the downed body"
+
+
+def test_a_monster_that_has_spent_its_movement_is_not_treated_as_blocked() -> None:
+    # No movement left this turn is not the same as "no route exists": the
+    # fallback to a downed target is only for a monster that had budget and
+    # still found no way. One that already moved keeps its conscious target
+    # (its follow-up attack is simply out of range, as it always was).
+    goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=1))
+    downed = _make_character("thorin", is_pc=True, position=Position(x=1, y=1))
+    companion = _make_character("grom", is_pc=True, position=Position(x=4, y=1))
+    goblin.movement_used_feet = goblin.speed
+    _down(downed)
+    state = _make_state([goblin, downed, companion], battle_map=_open_map(5, 3))
+
+    action = choose_monster_action(state, goblin)
+
+    assert action.target == "grom"
