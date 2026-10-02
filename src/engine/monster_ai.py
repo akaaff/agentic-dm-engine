@@ -37,6 +37,7 @@ from __future__ import annotations
 from typing import Literal
 
 from src.engine.actions import ParsedAction
+from src.engine.conditions import has_condition
 from src.engine.position import (
     FEET_PER_SQUARE,
     Position,
@@ -288,8 +289,19 @@ def choose_monster_action(game_state: GameState, actor: Character) -> ParsedActi
             actor=actor.id, verb="end_turn", raw_text=f"{actor.name} has no target left."
         )
 
+    # Issue #66: an unconscious-but-alive party member (down at 0 HP, or put
+    # to sleep) is still "alive" for victory/defeat, but a monster that keeps
+    # swinging at whoever's nearest can pile onto one downed character -
+    # every hit against an unconscious target is an auto-crit plus 2
+    # automatic death-save failures (Phase 9C), so 1-2 more hits finish them
+    # while the rest of the party stands untouched. Prefer anyone still
+    # conscious; only once nobody is left conscious fall back to finishing
+    # off the downed. The targeting tail below (innate spells, range,
+    # approach path) just takes whatever this picks, so nothing else changes.
+    conscious_targets = [c for c in living_targets if not has_condition(c, "unconscious")]
     target = min(
-        living_targets, key=lambda c: (chebyshev_distance(actor.position, c.position), c.id)
+        conscious_targets or living_targets,
+        key=lambda c: (chebyshev_distance(actor.position, c.position), c.id),
     )
 
     spell_action = _choose_innate_spell(actor, target, load_srd())

@@ -1,6 +1,7 @@
+from src.engine.conditions import apply_condition
 from src.engine.monster_ai import choose_monster_action
 from src.engine.position import BattleMap, Position
-from src.engine.state import Character, GameState
+from src.engine.state import Character, Condition, GameState
 from src.engine.turn_engine import resolve_action
 
 
@@ -299,3 +300,62 @@ def test_attacks_anyway_when_movement_is_impossible() -> None:
     action = choose_monster_action(state, goblin)
 
     assert action.verb == "attack"
+
+
+def _down(character: Character, *, source: str = "0 HP") -> None:
+    apply_condition(character, Condition(name="unconscious", source=source))
+
+
+def test_prefers_a_conscious_target_over_a_nearer_unconscious_one() -> None:
+    # Issue #66: the downed PC is the nearest (5ft vs 25ft), but a monster
+    # shouldn't keep finishing off one downed character while a conscious
+    # one is still standing.
+    goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=0))
+    downed = _make_character("thorin", is_pc=True, position=Position(x=1, y=0))
+    standing = _make_character("elrond", is_pc=True, position=Position(x=5, y=0))
+    _down(downed)
+    state = _make_state([goblin, downed, standing])
+
+    action = choose_monster_action(state, goblin)
+
+    assert action.target == "elrond"
+
+
+def test_falls_back_to_the_nearest_downed_pc_once_nobody_is_conscious() -> None:
+    goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=0))
+    near_downed = _make_character("thorin", is_pc=True, position=Position(x=1, y=0))
+    far_downed = _make_character("elrond", is_pc=True, position=Position(x=5, y=0))
+    _down(near_downed)
+    _down(far_downed)
+    state = _make_state([goblin, near_downed, far_downed])
+
+    action = choose_monster_action(state, goblin)
+
+    assert action.verb == "attack"
+    assert action.target == "thorin"
+
+
+def test_a_sleeping_pc_counts_as_unconscious_for_targeting_too() -> None:
+    # Same "unconscious" condition name, different source (Sleep, not 0 HP) -
+    # the monster still shouldn't prefer helpless over conscious.
+    goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=0))
+    sleeper = _make_character("thorin", is_pc=True, position=Position(x=1, y=0))
+    awake = _make_character("elrond", is_pc=True, position=Position(x=4, y=0))
+    _down(sleeper, source="sleep")
+    state = _make_state([goblin, sleeper, awake])
+
+    action = choose_monster_action(state, goblin)
+
+    assert action.target == "elrond"
+
+
+def test_a_conscious_but_dead_free_target_set_still_ends_the_turn() -> None:
+    # Regression guard for the unchanged "no living target" branch: dead PCs
+    # are filtered before the conscious/unconscious split ever happens.
+    goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=0))
+    dead = _make_character("thorin", is_pc=True, position=Position(x=1, y=0), is_dead=True)
+    state = _make_state([goblin, dead])
+
+    action = choose_monster_action(state, goblin)
+
+    assert action.verb == "end_turn"
