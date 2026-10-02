@@ -246,6 +246,22 @@ def blessed_bonus(character: Character, rng: random.Random) -> int:
     return roll(1, 4, rng=rng).total
 
 
+def baned_penalty(character: Character, rng: random.Random) -> int:
+    """Bane (issue #68), blessed_bonus's mirror: rolls 1d4 and returns its
+    *magnitude* if `character` currently has the "baned" condition, else 0 -
+    callers SUBTRACT it (and log it as a negative breakdown entry). Same
+    contract as blessed_bonus: no RNG consumed when not baned (every
+    pre-existing fixed-RNG fixture stays aligned), computed once per roll by
+    the caller so the total and its debug breakdown can't disagree, applied
+    to every attack roll and saving throw (a concentration save included -
+    it's a real saving throw) and never to death saves, which this engine
+    keeps flat by design. When a creature is both blessed and baned, Bless's
+    die is rolled first (see turn_engine._bless_and_bane)."""
+    if not has_condition(character, "baned"):
+        return 0
+    return roll(1, 4, rng=rng).total
+
+
 def normalize_skill_name(raw: str) -> str:
     """ "Perception", "skill-perception", "Sleight of Hand" -> "perception",
     "sleight-of-hand" (srd.skills' bare-index form)."""
@@ -358,6 +374,28 @@ anywhere else either), so it needed no new dispatch shape, only this
 table entry plus blessed_bonus (the part real Invisibility never needed:
 an ongoing, repeatable dice bonus rather than a passive advantage/
 disadvantage flag)."""
+
+
+_FAILED_SAVE_CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
+    "bane": ConditionSpellSpec(condition="baned", duration_rounds=10),
+}
+"""Issue #68: save-based spells whose real effect is an ongoing condition on
+every target that FAILS the save (the "save" mechanic otherwise resolves only
+the roll and, if the spell has damage, the damage). Bane is the first: no
+damage, `dc_success: "none"`, but a failed CHA save subtracts a d4 from the
+target's attack rolls and saving throws for the spell's duration. Same
+"apply a condition" shape as _CONDITION_SPELLS, just gated on a failed save
+instead of applied unconditionally to a willing ally - so a separate table,
+not an entry there (an entry would make spell_mechanic classify it as the
+no-save "condition" mechanic). Hold Person's paralysis is the same documented
+gap (SaveSpellParams.damage_type's docstring) and would be one more row here,
+but isn't part of this issue."""
+
+
+def failed_save_condition(spell: SrdEntry) -> ConditionSpellSpec | None:
+    """The condition a "save" spell applies to targets that fail, if any -
+    see _FAILED_SAVE_CONDITION_SPELLS."""
+    return _FAILED_SAVE_CONDITION_SPELLS.get(spell.get("index", ""))
 
 
 def spell_mechanic(spell: SrdEntry) -> str | None:

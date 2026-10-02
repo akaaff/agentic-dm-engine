@@ -137,10 +137,12 @@ from src.engine.movement import can_afford_move, move_cost_feet
 from src.engine.position import Position, distance_feet
 from src.engine.rules import (
     AttackResult,
+    ConditionSpellSpec,
     ability_check_modifier,
     ability_modifier,
     apply_damage,
     armor_ac,
+    baned_penalty,
     bardic_inspiration_die_sides,
     blessed_bonus,
     condition_attack_advantage,
@@ -149,6 +151,7 @@ from src.engine.rules import (
     condition_save_disadvantage,
     condition_spell_spec,
     effective_speed,
+    failed_save_condition,
     has_lucky_trait,
     has_non_proficient_armor,
     has_relentless_endurance,
@@ -708,6 +711,26 @@ def _monster_attack_params(
     )
 
 
+def _bless_and_bane(character: Character, rng: random.Random) -> tuple[int, list[tuple[str, int]]]:
+    """The net d20-roll modifier from Bless (+1d4, issue #57) and Bane (-1d4,
+    issue #68) for one roll `character` is about to make, with the matching
+    debug-breakdown entries - rolled once, here, so the total and its
+    breakdown can never disagree. Bless's die is rolled first, then Bane's
+    (deterministic RNG order for fixed-RNG tests); each rolls nothing at all
+    when its condition isn't present, so a creature with neither consumes no
+    RNG. One helper for every call site (weapon attack, spell attack, a
+    spell save, a concentration save) so the two spells - which are exact
+    mirrors - are always wired identically."""
+    bless = blessed_bonus(character, rng)
+    bane = baned_penalty(character, rng)
+    entries: list[tuple[str, int]] = []
+    if bless:
+        entries.append(("blessed (1d4)", bless))
+    if bane:
+        entries.append(("baned (1d4)", -bane))
+    return bless - bane, entries
+
+
 def _validate_attack_target(actor: Character, target: Character) -> None:
     """Rejects friendly fire: `is_pc` doubles as "which side" a character is
     on (party vs monsters), so a same-side target is never a legitimate
@@ -852,16 +875,17 @@ def _resolve_single_attack(
     # it on.
     bardic_die_sides = actor.bardic_inspiration_die
 
-    # Bless (issue #57): rolled once here (not inside resolve_attack), so
-    # the same value backs both the total and the debug-mode breakdown -
-    # see rules.blessed_bonus's own docstring for why this can't be two
-    # separate rolls. 0 (no RNG consumed) when the actor isn't blessed.
-    bless = blessed_bonus(actor, rng)
-    if bless:
+    # Bless (issue #57) / Bane (issue #68): rolled once here (not inside
+    # resolve_attack), so the same value backs both the total and the
+    # debug-mode breakdown - see rules.blessed_bonus's own docstring for why
+    # this can't be two separate rolls. No RNG consumed when the actor has
+    # neither.
+    roll_bonus, roll_entries = _bless_and_bane(actor, rng)
+    if roll_entries:
         params = replace(
             params,
-            attack_bonus=params.attack_bonus + bless,
-            attack_bonus_breakdown=[*params.attack_bonus_breakdown, ("blessed (1d4)", bless)],
+            attack_bonus=params.attack_bonus + roll_bonus,
+            attack_bonus_breakdown=[*params.attack_bonus_breakdown, *roll_entries],
         )
 
     disadvantage = (
@@ -1620,11 +1644,11 @@ def _check_concentration_break(
     if character.concentrating_on is None or damage <= 0:
         return
     dc = max(10, damage // 2)
-    # Bless (issue #57) applies here too - a concentration save is a real
-    # saving throw, not a special case - see _resolve_single_attack's
-    # identical handling.
-    bless = blessed_bonus(character, rng)
-    save_bonus = _target_saving_throw_bonus(character, "CON", srd) + bless
+    # Bless (issue #57) and Bane (issue #68) apply here too - a concentration
+    # save is a real saving throw, not a special case - see
+    # _resolve_single_attack's identical handling.
+    roll_bonus, roll_entries = _bless_and_bane(character, rng)
+    save_bonus = _target_saving_throw_bonus(character, "CON", srd) + roll_bonus
     result, success = resolve_saving_throw(
         save_bonus=save_bonus, dc=dc, rng=rng, lucky=has_lucky_trait(character)
     )
@@ -1643,7 +1667,7 @@ def _check_concentration_break(
                 "success": success,
                 "modifier_breakdown": [
                     *_target_saving_throw_breakdown(character, "CON", srd),
-                    *([("blessed (1d4)", bless)] if bless else []),
+                    *roll_entries,
                 ],
             },
         )
@@ -2642,13 +2666,14 @@ def _cast_attack_spell_at_target(
     # identical handling for why this is captured before the call.
     bardic_die_sides = actor.bardic_inspiration_die
 
-    # Bless (issue #57) - see _resolve_single_attack's identical handling.
-    bless = blessed_bonus(actor, rng)
-    if bless:
+    # Bless (issue #57) / Bane (issue #68) - see _resolve_single_attack's
+    # identical handling.
+    roll_bonus, roll_entries = _bless_and_bane(actor, rng)
+    if roll_entries:
         params = replace(
             params,
-            attack_bonus=params.attack_bonus + bless,
-            attack_bonus_breakdown=[*params.attack_bonus_breakdown, ("blessed (1d4)", bless)],
+            attack_bonus=params.attack_bonus + roll_bonus,
+            attack_bonus_breakdown=[*params.attack_bonus_breakdown, *roll_entries],
         )
 
     result = resolve_attack(
@@ -2717,6 +2742,10 @@ class SaveSpellParams:
     yet for that to hook into (same documented boundary as
     Character.concentrating_on not modeling an ongoing effect to remove)."""
     source_name: str
+    failed_save_condition: ConditionSpellSpec | None = None
+    """Issue #68: the ongoing condition a target that FAILS the save gets
+    (Bane's "baned") - see rules._FAILED_SAVE_CONDITION_SPELLS. None for
+    every other save spell."""
 
 
 def _spell_save_params(
@@ -2758,6 +2787,7 @@ def _spell_save_params(
         damage_bonus=notation_bonus,
         damage_type=damage_type,
         source_name=spell["name"],
+        failed_save_condition=failed_save_condition(spell),
     )
 
 
@@ -2771,9 +2801,10 @@ def _cast_save_spell_at_target(
 ) -> None:
     """One target's independent saving throw (Phase 9D multi-target - e.g.
     Fireball hitting 3 targets rolls 3 separate saves)."""
-    # Bless (issue #57) - see _resolve_single_attack's identical handling.
-    bless = blessed_bonus(target, rng)
-    save_bonus = _target_saving_throw_bonus(target, params.dc_ability, srd) + bless
+    # Bless (issue #57) / Bane (issue #68) - see _resolve_single_attack's
+    # identical handling.
+    roll_bonus, roll_entries = _bless_and_bane(target, rng)
+    save_bonus = _target_saving_throw_bonus(target, params.dc_ability, srd) + roll_bonus
     result, success = resolve_saving_throw(
         save_bonus=save_bonus,
         dc=params.dc,
@@ -2804,14 +2835,39 @@ def _cast_save_spell_at_target(
                 "success": success,
                 "modifier_breakdown": [
                     *_target_saving_throw_breakdown(target, params.dc_ability, srd),
-                    *([("blessed (1d4)", bless)] if bless else []),
+                    *roll_entries,
                 ],
             },
         )
     )
 
+    # Issue #68 (Bane): a failed save applies the spell's ongoing condition,
+    # tagged with the caster and spell so ending their concentration strips
+    # it (_end_concentration). A passed save applies nothing - unlike the
+    # "condition" mechanic (Bless/Blur/...), which has no save at all.
+    if not success and params.failed_save_condition is not None:
+        spec = params.failed_save_condition
+        apply_condition(
+            target,
+            Condition(
+                name=spec.condition,
+                duration_rounds=spec.duration_rounds,
+                source=actor.id,
+                spell=params.source_name,
+            ),
+        )
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=target.id,
+                type="condition_applied",
+                payload={"condition": spec.condition, "source": params.source_name},
+            )
+        )
+
     if params.damage_type is None:
-        return  # no-damage control spell - Phase 9D only resolves the save
+        return  # no-damage control spell - nothing further to resolve
 
     damage_roll = roll(
         params.damage_dice_count, params.damage_dice_sides, modifier=params.damage_bonus, rng=rng

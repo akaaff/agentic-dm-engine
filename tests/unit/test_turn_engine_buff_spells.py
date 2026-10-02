@@ -411,3 +411,115 @@ def test_death_ward_is_kept_when_relentless_endurance_triggers_first() -> None:
     assert elrond.used_relentless_endurance_this_rest is True
     assert has_condition(elrond, "death_warded")
     assert not [e for e in state.events if e.type == "death_ward"]
+
+
+# ------------------------------------------------------------- issue #68: Bane
+
+
+def test_a_failed_bane_save_applies_the_baned_condition() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "bane", 1)
+    _end_turn(state, "thorin")
+    # Spell save DC 8 + proficiency 2 + INT mod 2 = 12; goblin CHA 8 = -1.
+    # Two targets, two independent saves: natural 5 (4 < 12) fails, natural 15
+    # (14 >= 12) passes.
+    _cast(state, "elrond", "bane", targets=["goblin_1", "goblin_2"], rng=[5, 15])
+    goblin_1, goblin_2 = state.characters["goblin_1"], state.characters["goblin_2"]
+    assert has_condition(goblin_1, "baned")
+    assert not has_condition(goblin_2, "baned")
+    (baned,) = goblin_1.conditions
+    assert (baned.duration_rounds, baned.source, baned.spell) == (10, "elrond", "Bane")
+    assert elrond.concentrating_on == "Bane"
+    applied = [e for e in state.events if e.type == "condition_applied"]
+    assert [(e.actor, e.payload["condition"]) for e in applied] == [("goblin_1", "baned")]
+
+
+def test_a_baned_creature_subtracts_a_d4_from_its_attack_rolls() -> None:
+    state = _build_demo_state()
+    apply_condition(
+        state.characters["goblin_1"],
+        Condition(name="baned", duration_rounds=10, source="elrond", spell="Bane"),
+    )
+    # RNG order: baned_penalty's 1d4 first (3), then the attack's d20 (11).
+    # +4 attack bonus -3 = +1 -> 12 < Elrond's AC 13: a miss that would have
+    # been a hit (15) without Bane.
+    _goblin_attacks(state, "elrond", [3, 11])
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert attack.payload["roll_total"] == 12
+    assert attack.payload["hit"] is False
+    assert ("baned (1d4)", -3) in attack.payload["attack_bonus_breakdown"]
+
+
+def test_a_baned_creature_subtracts_a_d4_from_its_saving_throws() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    elrond.concentrating_on = "Some Spell"
+    apply_condition(elrond, Condition(name="baned", duration_rounds=10, source="x", spell="Bane"))
+    # Goblin hits Elrond (natural 15, damage die 1 -> 3 damage; DC 10), then
+    # Elrond's CON save: baned_penalty's 1d4 (4) first, then the d20 (12).
+    # CON mod +1 - 4 = -3: 12 - 3 = 9 < 10 fails - without Bane, 13 would pass.
+    _goblin_attacks(state, "elrond", [15, 1, 4, 12])
+    save = next(
+        e
+        for e in state.events
+        if e.type == "saving_throw" and e.payload.get("kind") == "concentration"
+    )
+    assert ("baned (1d4)", -4) in save.payload["modifier_breakdown"]
+    assert save.payload["success"] is False
+    assert elrond.concentrating_on is None
+
+
+def test_a_baned_target_penalty_applies_to_a_spell_save_too() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "bane", 1)
+    goblin = state.characters["goblin_1"]
+    apply_condition(goblin, Condition(name="baned", duration_rounds=3, source="x", spell="Bane"))
+    _end_turn(state, "thorin")
+    # Save: baned_penalty's 1d4 (4), then natural 14. CHA -1 - 4 = -5 ->
+    # 14 - 5 = 9 < DC 12 fails (13 would have passed unpenalized).
+    _cast(state, "elrond", "bane", target="goblin_1", rng=[4, 14])
+    save = next(e for e in state.events if e.payload.get("kind") == "spell_save")
+    assert save.payload["success"] is False
+    assert ("baned (1d4)", -4) in save.payload["modifier_breakdown"]
+    # Recasting refreshes the (single, non-stacking) condition to a full duration.
+    (condition,) = goblin.conditions
+    assert condition.duration_rounds == 10
+    assert elrond.concentrating_on == "Bane"
+
+
+def test_bane_does_not_touch_death_saves() -> None:
+    state = _build_demo_state()
+    thorin = state.characters["thorin"]
+    thorin.hp = 0
+    apply_condition(thorin, Condition(name="unconscious", source="0 HP"))
+    apply_condition(thorin, Condition(name="baned", duration_rounds=10, source="x", spell="Bane"))
+    # A death save is a flat d20: a baned_penalty roll before it would
+    # consume this list's only value as the d4 and crash on the d20.
+    resolve_action(
+        state,
+        ParsedAction(actor="thorin", verb="death_save", raw_text="hold on"),
+        _FixedRandom([12]),  # type: ignore[arg-type]
+    )
+    assert thorin.death_save_successes == 1
+
+
+def test_an_unbaned_creature_consumes_no_extra_rng() -> None:
+    # Regression guard for every pre-existing fixed-RNG attack/save in the
+    # suite: baned_penalty must roll nothing when the actor isn't baned.
+    state = _build_demo_state()
+    _goblin_attacks(state, "elrond", [15, 1, 10])  # attack, damage die, (no bane d4)
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert all(label != "baned (1d4)" for label, _ in attack.payload["attack_bonus_breakdown"])
+    assert attack.payload["roll_total"] == 19
+
+
+def test_losing_concentration_on_bane_frees_the_baned_creature() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "bane", 1)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "bane", target="goblin_1", rng=[5])
+    assert has_condition(state.characters["goblin_1"], "baned")
+    # goblin_2 (not baned) hits Elrond for 3; his CON save fails (natural 1).
+    _goblin_attacks(state, "elrond", [15, 1, 1], goblin="goblin_2")
+    assert elrond.concentrating_on is None
+    assert not has_condition(state.characters["goblin_1"], "baned")
