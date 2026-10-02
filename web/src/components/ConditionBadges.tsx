@@ -14,7 +14,7 @@ export default function ConditionBadges({ character }: { character: LiveCharacte
   return (
     <div className="condition-badges">
       {character.conditions.map((condition, i) => {
-        const desc = conditionDescription(condition.name)
+        const desc = conditionDescription(condition.name, condition.detail)
         return (
           <span className="condition-badge" key={`${condition.name}-${i}`}>
             {conditionLabel(condition)}

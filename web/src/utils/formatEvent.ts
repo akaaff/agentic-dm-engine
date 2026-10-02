@@ -1,4 +1,5 @@
 import type { LiveCharacter, LiveEvent } from '../ws/sessionClient'
+import { conditionDisplayName, isSpellEffectCondition } from './conditionDetail'
 
 export const DAMAGE_COLOR = '#ff6b6b'
 export const HEAL_COLOR = '#4dabff'
@@ -139,11 +140,61 @@ export function formatEvent(
         label: `${actorName} refuses to fall - Relentless Endurance!`,
         highlight: { text: '1 HP', color: HEAL_COLOR },
       }
+    case 'death_ward':
+      // Death Ward (issue #59): the spell turns a would-be 0 HP into 1 HP,
+      // then ends - payload is just the warded character's id (the actor).
+      return {
+        key: event.id,
+        color,
+        label: `${actorName}'s Death Ward holds - they stay on their feet!`,
+        highlight: { text: '1 HP', color: HEAL_COLOR },
+      }
+    case 'mirror_image': {
+      // Mirror Image (issue #61): an attack aimed at the image's owner was
+      // redirected to a duplicate instead. actor is the attacker, target the
+      // image's owner; image_hit says whether that attack then actually hit
+      // (and so destroyed) the duplicate.
+      const target = characterName(p.target, characters)
+      const hit = p.image_hit === true
+      const left = typeof p.images_remaining === 'number' ? ` (${p.images_remaining} left)` : ''
+      return {
+        key: event.id,
+        color,
+        label: `${actorName}'s attack ${hit ? 'destroys a mirror image of' : 'misses a mirror image of'} ${target}${left}`,
+      }
+    }
+    case 'sanctuary_blocked': {
+      // Sanctuary (issue #61): the attacker failed the Wisdom save and lost
+      // the attack - the saving_throw badge just before this one has the roll.
+      const target = characterName(p.target, characters)
+      return {
+        key: event.id,
+        color,
+        label: `${actorName}'s attack on ${target} is turned aside by Sanctuary`,
+      }
+    }
     case 'condition_applied': {
       const condition = typeof p.condition === 'string' ? p.condition : 'a condition'
       const targetId = typeof p.target === 'string' ? p.target : event.actor
       const target = characterName(targetId, characters)
-      return { key: event.id, color, label: `${target} is now ${condition}` }
+      // A spell's ongoing effect has an internal snake_case id ("death_
+      // warded") and reads better as "affected by Death Ward" than "now
+      // death_warded"; an SRD condition keeps its plain "is now blinded".
+      const text = isSpellEffectCondition(condition)
+        ? `affected by ${conditionDisplayName(condition)}`
+        : `now ${condition}`
+      return { key: event.id, color, label: `${target} is ${text}` }
+    }
+    case 'condition_removed': {
+      // Emitted when a caster's concentration ends (a failed save, a new
+      // concentration spell, going unconscious) and strips what it was
+      // sustaining, or when an effect is otherwise cut short - plain time
+      // expiry stays silent.
+      const condition = typeof p.condition === 'string' ? p.condition : 'a condition'
+      const spell = typeof p.spell === 'string' ? p.spell : conditionDisplayName(condition)
+      const reason = typeof p.reason === 'string' ? ` (${p.reason})` : ''
+      const target = characterName(event.actor, characters)
+      return { key: event.id, color, label: `${spell} ends on ${target}${reason}` }
     }
     case 'saving_throw': {
       const kind = typeof p.kind === 'string' ? p.kind : 'save'

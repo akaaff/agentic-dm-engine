@@ -10,6 +10,12 @@ export interface LiveCondition {
   name: string
   duration_rounds: number | null
   source: string
+  // Spell-effect conditions (issues #58-#61/#68) - the spell that applied it,
+  // and a per-spell payload some of them carry (the damage type Protection
+  // from Energy was cast against, Mirror Image's remaining duplicate count).
+  // Optional: an SRD condition or an older payload simply doesn't have them.
+  spell?: string | null
+  detail?: string | null
 }
 
 export interface LiveCharacter {
