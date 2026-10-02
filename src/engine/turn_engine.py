@@ -2197,6 +2197,27 @@ def _resolve_opportunity_attacks(
             return
 
 
+def _dash_is_unnecessary(state: GameState, actor: Character, action: ParsedAction) -> bool:
+    """True if a declared dash's path fits within what a plain move could
+    still cover this turn (effective speed minus movement already spent) -
+    including an explicitly empty path, a no-op. False for a missing/
+    malformed path or one that can't be priced, so those still reach
+    _resolve_move's own errors untouched."""
+    if state.battle_map is None:
+        return False
+    raw_path = action.params.get("path")
+    if raw_path is None:
+        return False
+    try:
+        steps = [Position(x=p["x"], y=p["y"]) for p in raw_path]
+    except (KeyError, TypeError):
+        return False
+    cost = move_cost_feet([actor.position, *steps], state.battle_map.terrain)
+    if cost is None:
+        return False
+    return cost <= max(0, effective_speed(actor) - actor.movement_used_feet)
+
+
 def _resolve_move(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> None:
@@ -4366,7 +4387,20 @@ def resolve_action(
         # unconditional-ends_turn behavior for exactly this case).
         ends_turn = actor.is_dead or actor.hp <= 0
     elif action.verb == "dash":
-        _resolve_move(state, actor, action, rng, srd)
+        if _dash_is_unnecessary(state, actor, action):
+            # Found live (twice, two different companions): a Dash for a
+            # distance a plain move already covers just throws the action
+            # away - e.g. 10ft with 25ft of speed, after which the companion
+            # can't attack. Dash only matters when it buys movement beyond
+            # the plain budget, so otherwise resolve it as the move it
+            # effectively is: same path, same events (dashed=False), the
+            # turn stays open, and the autoplay loop asks the model for the
+            # actor's real action next. Applies to every actor - a human who
+            # types "I dash" for a short hop simply keeps their action.
+            _resolve_move(state, actor, action.model_copy(update={"verb": "move"}), rng, srd)
+            ends_turn = actor.is_dead or actor.hp <= 0
+        else:
+            _resolve_move(state, actor, action, rng, srd)
     elif action.verb == "skill_check":
         _resolve_skill_check(state, actor, action, rng, srd)
     elif action.verb == "dodge":

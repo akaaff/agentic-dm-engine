@@ -179,17 +179,79 @@ def test_movement_used_feet_resets_on_the_actors_own_next_turn() -> None:
     assert state.characters["thorin"].movement_used_feet == 0
 
 
-def test_dash_still_ends_the_turn() -> None:
+def test_a_needed_dash_still_ends_the_turn() -> None:
+    # 7 squares = 35ft > Thorin's 30ft plain budget: the dash genuinely buys
+    # movement, so it still spends the action.
     state = _thorin_and_goblin_state(Position(x=0, y=0), Position(x=9, y=9))
     dash_action = ParsedAction(
         actor="thorin",
         verb="dash",
         raw_text="I dash",
-        params={"path": [{"x": 1, "y": 0}]},
+        params={"path": [{"x": i, "y": 0} for i in range(1, 8)]},
     )
     resolve_action(state, dash_action, _FixedRandom([]))  # type: ignore[arg-type]
-    # Unlike plain move, dash still spends the action - the turn moves on.
     assert state.turn_order[state.current_turn] == "goblin_1"
+    move = next(e for e in state.events if e.type == "move")
+    assert move.payload["dashed"] is True
+
+
+def test_an_unnecessary_dash_is_resolved_as_a_plain_move_and_keeps_the_turn() -> None:
+    # Found live (Pip, then Fenwick): a Dash for 10ft with 25-30ft of speed
+    # wasted the action, so the companion couldn't also attack. A dash whose
+    # path a plain move already covers is just a move - same path, same
+    # event but dashed=False, and the turn stays open for a real action.
+    state = _thorin_and_goblin_state(Position(x=0, y=0), Position(x=9, y=9))
+    dash_action = ParsedAction(
+        actor="thorin",
+        verb="dash",
+        raw_text="I dash",
+        params={"path": [{"x": 1, "y": 0}, {"x": 2, "y": 0}]},
+    )
+    resolve_action(state, dash_action, _FixedRandom([]))  # type: ignore[arg-type]
+    thorin = state.characters["thorin"]
+    assert thorin.position == Position(x=2, y=0)
+    assert thorin.movement_used_feet == 10
+    assert state.turn_order[state.current_turn] == "thorin", "the action is still available"
+    move = next(e for e in state.events if e.type == "move")
+    assert move.payload["dashed"] is False
+
+
+def test_a_dash_is_judged_against_the_movement_still_left_this_turn() -> None:
+    # After spending 20ft of a 30ft budget, a 15ft path no longer fits a
+    # plain move - the dash is real now and ends the turn.
+    state = _thorin_and_goblin_state(Position(x=0, y=0), Position(x=9, y=9))
+    resolve_action(
+        state,
+        ParsedAction(
+            actor="thorin",
+            verb="move",
+            raw_text="I step",
+            params={"path": [{"x": i, "y": 0} for i in range(1, 5)]},
+        ),
+        _FixedRandom([]),  # type: ignore[arg-type]
+    )
+    assert state.characters["thorin"].movement_used_feet == 20
+    resolve_action(
+        state,
+        ParsedAction(
+            actor="thorin",
+            verb="dash",
+            raw_text="I dash on",
+            params={"path": [{"x": i, "y": 0} for i in range(5, 8)]},
+        ),
+        _FixedRandom([]),  # type: ignore[arg-type]
+    )
+    assert state.turn_order[state.current_turn] == "goblin_1"
+
+
+def test_a_dash_with_a_missing_path_still_raises() -> None:
+    state = _thorin_and_goblin_state(Position(x=0, y=0), Position(x=9, y=9))
+    with pytest.raises(TurnEngineError, match=r"requires params\['path'\]"):
+        resolve_action(
+            state,
+            ParsedAction(actor="thorin", verb="dash", raw_text="I dash", params={}),
+            _FixedRandom([]),  # type: ignore[arg-type]
+        )
 
 
 def test_an_explicitly_empty_path_resolves_as_a_real_no_op_not_an_error() -> None:
@@ -219,10 +281,10 @@ def test_an_explicitly_empty_path_resolves_as_a_real_no_op_not_an_error() -> Non
     }
 
 
-def test_an_explicitly_empty_dash_path_is_a_no_op_but_still_ends_the_turn() -> None:
-    # Dash genuinely *is* the action (trades the action for extra
-    # movement) - even a no-op dash still spends it, same as a dash that
-    # actually moved somewhere (test_dash_still_ends_the_turn above).
+def test_an_explicitly_empty_dash_path_is_a_no_op_that_keeps_the_turn() -> None:
+    # Already there: nothing to dash, so the action isn't spent (an
+    # unnecessary dash resolves as a plain move - see
+    # test_an_unnecessary_dash_is_resolved_as_a_plain_move_and_keeps_the_turn).
     state = _thorin_and_goblin_state(Position(x=0, y=0), Position(x=9, y=9))
     dash_action = ParsedAction(
         actor="thorin", verb="dash", raw_text="I'm already there", params={"path": []}
@@ -230,7 +292,7 @@ def test_an_explicitly_empty_dash_path_is_a_no_op_but_still_ends_the_turn() -> N
 
     resolve_action(state, dash_action, _FixedRandom([]))  # type: ignore[arg-type]
 
-    assert state.turn_order[state.current_turn] == "goblin_1"
+    assert state.turn_order[state.current_turn] == "thorin"
 
 
 def test_a_genuinely_missing_path_still_raises_unlike_an_explicitly_empty_one() -> None:
