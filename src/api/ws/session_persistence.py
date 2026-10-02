@@ -58,6 +58,8 @@ class RestoredSession:
     adaptive_generations_used: int
     pending_bardic_choice: PendingBardicChoice | None
     pending_party_choice: dict[str, Any] | None
+    hook_messages: list[dict[str, Any]]
+    hook_scene_id: str | None
     """{"scene_id", "situation", "responses"} - raw, see session.py."""
 
 
@@ -86,6 +88,10 @@ def build_snapshot(
             if session.pending_bardic_choice is not None
             else None
         ),
+        # Small, and its audio/image files are already on disk - kept so a
+        # page refresh right after a backend restart can still replay the hook.
+        "hook_messages": session.hook_messages,
+        "hook_scene_id": session.hook_scene_id,
         "pending_party_choice": (
             {
                 "scene_id": pending_party.scene_id,
@@ -143,4 +149,6 @@ def restore_snapshot(snapshot: dict[str, Any], party_character_ids: list[str]) -
         adaptive_generations_used=int(snapshot.get("adaptive_generations_used", 0)),
         pending_bardic_choice=bardic,
         pending_party_choice=snapshot.get("pending_party_choice"),
+        hook_messages=list(snapshot.get("hook_messages") or []),
+        hook_scene_id=snapshot.get("hook_scene_id"),
     )
