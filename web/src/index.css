@@ -393,6 +393,12 @@ button.secondary {
   color: #9d94ad;
 }
 
+/* Issue #67: why an Equipment-step checkbox is disabled (hand occupancy) -
+   warm enough to read as "can't", not a plain muted hint. */
+.companion-meta.equip-problem {
+  color: #d4a35a;
+}
+
 .companion-thumbnail {
   width: 48px;
   height: 48px;

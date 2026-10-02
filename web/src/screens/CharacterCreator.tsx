@@ -15,6 +15,7 @@ import CharacterPreviewSheet from '../components/CharacterPreviewSheet'
 import InfoTip from '../components/InfoTip'
 import { equipmentDetail, equipmentHint } from '../utils/equipmentDetail'
 import { nameWithSpellDetail } from '../utils/spellDetail'
+import { isShield, weaponComboProblem } from '../utils/weaponCombo'
 
 // Mirrors character_creation.VALID_GENDERS - portrait-selection only, no
 // mechanical weight (see that module's docstring).
@@ -278,9 +279,40 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     })
   }
 
-  function toggleEquipment(index: string) {
+  // Issue #67: the picks that would end up wielded (weapons) / worn on a hand
+  // (shield) - what weaponComboProblem checks a new pick against, mirroring
+  // rules.weapon_combo_is_legal's own server-side rule so what's checked here
+  // is what actually gets equipped, not silently trimmed by
+  // character_creation.py's auto-equip loop afterwards.
+  const chosenWeapons = useMemo(
+    () =>
+      proficientEquipment.filter(
+        (e) => e.category === 'weapon' && chosenEquipment.includes(e.index),
+      ),
+    [proficientEquipment, chosenEquipment],
+  )
+  const shieldChosen = useMemo(
+    () => proficientEquipment.some((e) => isShield(e) && chosenEquipment.includes(e.index)),
+    [proficientEquipment, chosenEquipment],
+  )
+
+  /** Why adding `item` would make the hand-occupancy illegal, or null if it's
+   * fine (or it's already checked - unchecking is always allowed). */
+  function equipProblem(item: EquipmentSummary): string | null {
+    if (chosenEquipment.includes(item.index)) return null
+    if (item.category === 'weapon') {
+      return weaponComboProblem([...chosenWeapons, item], shieldChosen)
+    }
+    if (isShield(item)) return weaponComboProblem(chosenWeapons, true)
+    return null
+  }
+
+  function toggleEquipment(item: EquipmentSummary) {
+    // The checkbox is already disabled for an illegal add - this is the
+    // same check again for a click that raced a stale render.
+    if (equipProblem(item)) return
     setChosenEquipment((prev) =>
-      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index],
+      prev.includes(item.index) ? prev.filter((i) => i !== item.index) : [...prev, item.index],
     )
   }
 
@@ -710,16 +742,19 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 .map((item) => {
                   const detail = equipmentDetail(item)
                   const hint = equipmentHint(item)
+                  const problem = equipProblem(item)
                   return (
                     <label key={item.index} className="checkbox-row">
                       <input
                         type="checkbox"
                         checked={chosenEquipment.includes(item.index)}
-                        onChange={() => toggleEquipment(item.index)}
+                        disabled={problem !== null}
+                        onChange={() => toggleEquipment(item)}
                       />
                       {item.name}
                       {detail && <span className="companion-meta"> ({detail})</span>}
                       {hint && <InfoTip text={hint} />}
+                      {problem && <span className="companion-meta equip-problem"> - {problem}</span>}
                     </label>
                   )
                 })}
@@ -734,16 +769,19 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
                 .map((item) => {
                   const detail = equipmentDetail(item)
                   const hint = equipmentHint(item)
+                  const problem = equipProblem(item)
                   return (
                     <label key={item.index} className="checkbox-row">
                       <input
                         type="checkbox"
                         checked={chosenEquipment.includes(item.index)}
-                        onChange={() => toggleEquipment(item.index)}
+                        disabled={problem !== null}
+                        onChange={() => toggleEquipment(item)}
                       />
                       {item.name}
                       {detail && <span className="companion-meta"> ({detail})</span>}
                       {hint && <InfoTip text={hint} />}
+                      {problem && <span className="companion-meta equip-problem"> - {problem}</span>}
                     </label>
                   )
                 })}
