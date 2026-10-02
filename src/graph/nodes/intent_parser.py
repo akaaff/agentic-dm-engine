@@ -390,6 +390,51 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
     return {"parsed_action": final_action}
 
 
+def _normalize_weapon_name(name: str | None) -> str:
+    return (name or "").strip().lower().replace(" ", "-")
+
+
+def _split_dual_wield_attacks(
+    actions: list[ParsedAction], game_state: GameState, actor_id: str
+) -> list[ParsedAction]:
+    """Live-found: "I attack wolf 3 with handaxe and scimitar" parsed into
+    two plain `attack` actions, and the first one ends the turn - so the
+    second weapon never swung (the sequencing loop correctly stops once the
+    turn is over). Dual-wielding is not two attacks, it is one attack plus
+    the Two-Weapon Fighting bonus-action `offhand_attack`, which doesn't end
+    the turn. Whether a pair of consecutive attacks names exactly the
+    actor's two equipped weapons is a plain lookup, so Python rewrites it
+    rather than asking the model to know the engine's verb split: the
+    equipped_weapons[1] swing becomes the off-hand attack and is placed
+    FIRST (the engine has no "after the Attack action" prerequisite for it,
+    and the main attack ends the turn, so it has to come before it).
+    Each swing keeps its own named target."""
+    actor = game_state.characters.get(actor_id)
+    if actor is None or len(actor.equipped_weapons) != 2 or actor.bonus_action_used:
+        return actions
+    main_weapon, off_weapon = (_normalize_weapon_name(w) for w in actor.equipped_weapons)
+    for i in range(len(actions) - 1):
+        first, second = actions[i], actions[i + 1]
+        if first.verb != "attack" or second.verb != "attack":
+            continue
+        if not first.target or not second.target:
+            continue
+        named = {
+            _normalize_weapon_name(first.item_or_spell),
+            _normalize_weapon_name(second.item_or_spell),
+        }
+        if named != {main_weapon, off_weapon}:
+            continue
+        main_attack, off_attack = (
+            (first, second)
+            if _normalize_weapon_name(first.item_or_spell) == main_weapon
+            else (second, first)
+        )
+        offhand = off_attack.model_copy(update={"verb": "offhand_attack", "item_or_spell": None})
+        return [*actions[:i], offhand, main_attack, *actions[i + 2 :]]
+    return actions
+
+
 def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
     """Issue #47: like intent_parser_node, but can return more than one
     ParsedAction for a single utterance describing multiple distinct
@@ -426,6 +471,7 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
         temperature=0.2,
     )
     actions = [_postprocess_action(a, expected_actor_id, game_state) for a in sequence.actions]
+    actions = _split_dual_wield_attacks(actions, game_state, expected_actor_id)
     if not actions:
         actions = [_invalid_action(state)]
     for action in actions:
