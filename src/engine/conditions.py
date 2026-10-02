@@ -35,8 +35,9 @@ def tick_conditions(character: Character) -> list[Condition]:
         elif c.duration_rounds <= 1:
             expired.append(c)
         else:
-            remaining.append(
-                Condition(name=c.name, duration_rounds=c.duration_rounds - 1, source=c.source)
-            )
+            # model_copy, not a fresh Condition(name=..., duration_rounds=...,
+            # source=...): rebuilding from a hand-picked field list silently
+            # drops every field added since (spell, detail).
+            remaining.append(c.model_copy(update={"duration_rounds": c.duration_rounds - 1}))
     character.conditions = remaining
     return expired

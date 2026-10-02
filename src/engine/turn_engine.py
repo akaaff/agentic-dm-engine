@@ -1158,7 +1158,7 @@ def resolve_pending_bardic_choice(
     # ends_turn branching to reproduce here, just the two calls themselves.
     _check_victory_defeat(state)
     if state.status == "in_progress":
-        _advance_turn_skipping_dead(state)
+        _advance_turn_skipping_dead(state, srd)
 
 
 def _apply_unconscious_hit_death_save_failures(state: GameState, target: Character) -> None:
@@ -1554,6 +1554,59 @@ def _target_saving_throw_breakdown(
     ]
 
 
+def _end_concentration(state: GameState, caster: Character, srd: SrdIndex) -> None:
+    """Drops `caster`'s concentration AND everything it was sustaining: every
+    condition on any character that this caster applied via the concentrated
+    spell (Condition.source == caster, Condition.spell == the spell's name).
+
+    Until the buff spells of issue #55 existed, no concentration spell
+    applied an ongoing effect, so clearing the `concentrating_on` label was
+    all a lost concentration needed to do (Phase 9D). Bless (#57) changed
+    that - it kept working for its full duration after its caster lost
+    concentration, which is a real rules error, not just a display one - and
+    issues #58-#61/#68 would have multiplied it (8 of those spells are
+    concentration spells). Removing a Barkskin condition also has to
+    recompute AC, since that spell's effect is baked into the stored `ac`."""
+    spell_name = caster.concentrating_on
+    if spell_name is None:
+        return
+    caster.concentrating_on = None
+    for character in state.characters.values():
+        ended = [c for c in character.conditions if c.source == caster.id and c.spell == spell_name]
+        if not ended:
+            continue
+        character.conditions = [
+            c for c in character.conditions if not (c.source == caster.id and c.spell == spell_name)
+        ]
+        for condition in ended:
+            state.events.append(
+                Event(
+                    round=state.round,
+                    turn_index=state.current_turn,
+                    actor=character.id,
+                    type="condition_removed",
+                    payload={
+                        "condition": condition.name,
+                        "spell": spell_name,
+                        "reason": "concentration ended",
+                    },
+                )
+            )
+        if any(c.name == "barkskin" for c in ended):
+            _recompute_ac(character, srd)
+
+
+def _begin_concentration(
+    state: GameState, caster: Character, spell_name: str, srd: SrdIndex
+) -> None:
+    """Starting a new concentration spell always drops whatever the caster
+    was concentrating on before, per SRD - including the old spell's effects
+    (see _end_concentration). Plain reassignment used to be enough when
+    nothing needed removing."""
+    _end_concentration(state, caster, srd)
+    caster.concentrating_on = spell_name
+
+
 def _check_concentration_break(
     state: GameState, character: Character, damage: int, rng: random.Random, srd: SrdIndex
 ) -> None:
@@ -1562,10 +1615,8 @@ def _check_concentration_break(
     concentration. `damage` is the amount actually dealt (before HP
     clamping), matching the SRD rule ("half the damage you take"), not the
     possibly-smaller actual_loss apply_damage returns for an overkill hit.
-    This engine doesn't yet model removing an ongoing effect on a failed
-    save - no concentration spell applies one yet (Phase 9D scope; see
-    Character.concentrating_on's docstring) - so a failure here only clears
-    the tracking field."""
+    A failure ends the concentration and strips whatever it was sustaining
+    from every character it reached (see _end_concentration)."""
     if character.concentrating_on is None or damage <= 0:
         return
     dc = max(10, damage // 2)
@@ -1598,7 +1649,7 @@ def _check_concentration_break(
         )
     )
     if not success:
-        character.concentrating_on = None
+        _end_concentration(state, character, srd)
 
 
 def _apply_damage_and_handle_downing(
@@ -1759,6 +1810,10 @@ def _apply_damage_and_handle_downing(
             payload={"condition": "unconscious"},
         )
     )
+    # SRD: concentration ends the moment you're incapacitated (or killed) -
+    # no save involved, unlike a hit that leaves you standing. Placed after
+    # the unconscious event so existing event-order expectations hold.
+    _end_concentration(state, target, srd)
 
 
 def _apply_hazard_damage(state: GameState, actor: Character, position: Position) -> None:
@@ -3340,7 +3395,7 @@ def _resolve_cast_spell(
                     )
                 actor.spell_slots[spell_level] = remaining - 1
             if spell.get("concentration"):
-                actor.concentrating_on = spell["name"]
+                _begin_concentration(state, actor, spell["name"], srd)
 
             if normalized == "spare-the-dying":
                 _resolve_spare_the_dying(state, actor, action, spell, srd)
@@ -3427,12 +3482,13 @@ def _resolve_cast_spell(
         actor.spell_slots[spell_level] = remaining - 1
 
     # Concentration (Phase 9D): starting a new concentration spell always
-    # drops whatever the caster was concentrating on before, per SRD - plain
-    # reassignment does that for free. A spell without `concentration`
-    # (every attack-roll spell in the SRD, and some save/heal ones) leaves
-    # any prior concentration untouched.
+    # drops whatever the caster was concentrating on before, per SRD -
+    # including that spell's effects on other characters (see
+    # _end_concentration). A spell without `concentration` (every attack-roll
+    # spell in the SRD, and some save/heal ones) leaves any prior
+    # concentration untouched.
     if spell.get("concentration"):
-        actor.concentrating_on = spell["name"]
+        _begin_concentration(state, actor, spell["name"], srd)
 
     if mechanic == "attack":
         attack_params = _spell_attack_params(actor, spell, spell_level, srd)
@@ -3461,6 +3517,7 @@ def _resolve_cast_spell(
                     name=condition_spec.condition,
                     duration_rounds=condition_spec.duration_rounds,
                     source=actor.id,
+                    spell=spell["name"],
                 ),
             )
             state.events.append(
@@ -3732,20 +3789,52 @@ def _skip_this_turn(character: Character) -> bool:
     return character.is_dead or (character.hp <= 0 and character.is_stable)
 
 
-def _advance_turn_skipping_dead(state: GameState) -> None:
+def _handle_expired_conditions(
+    state: GameState, expired: list[tuple[Character, Condition]], srd: SrdIndex | None
+) -> None:
+    """Follow-ups for conditions that just ran out of time (a round-count
+    expiry, as opposed to _end_concentration's early removal). Silent - no
+    events, same as expiry always was - but two things have to stay
+    consistent with the condition being gone: a Barkskin's AC floor is baked
+    into the stored `ac`, so it needs a recompute; and once the LAST effect a
+    caster's concentration was sustaining has lapsed, that concentration is
+    over too (otherwise the sheet reads "Concentrating on: Bless" forever
+    after Bless fades)."""
+    if srd is not None:
+        for character, condition in expired:
+            if condition.name == "barkskin":
+                _recompute_ac(character, srd)
+    for source, spell in {(c.source, c.spell) for _, c in expired if c.source and c.spell}:
+        caster = state.characters.get(source)
+        if caster is None or caster.concentrating_on != spell:
+            continue
+        still_sustained = any(
+            c.source == source and c.spell == spell
+            for character in state.characters.values()
+            for c in character.conditions
+        )
+        if not still_sustained:
+            caster.concentrating_on = None
+
+
+def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -> None:
     """A character killed mid-round (e.g. on an earlier actor's turn) must
     not be prompted for its own turn later that same round - skip forward
     until landing on a combatant who still needs one. Guarded by
     len(turn_order) since _check_victory_defeat already ends combat before
-    every combatant could ever be skippable simultaneously."""
+    every combatant could ever be skippable simultaneously. `srd` is only
+    needed for the AC recompute a lapsing Barkskin triggers - optional so a
+    caller without one (none today) degrades to skipping just that step."""
     for _ in range(len(state.turn_order)):
         next_index, next_round = next_turn(state.turn_order, state.current_turn, state.round)
         if next_round != state.round:
+            expired: list[tuple[Character, Condition]] = []
             for character in state.characters.values():
-                tick_conditions(character)
+                expired.extend((character, c) for c in tick_conditions(character))
                 # Phase 9H: a reaction (opportunity attacks, the only one
                 # this engine models) is a per-round resource, not per-turn.
                 character.reaction_used_this_round = False
+            _handle_expired_conditions(state, expired, srd)
         state.current_turn = next_index
         state.round = next_round
         next_actor = state.characters[state.turn_order[state.current_turn]]
@@ -3919,6 +4008,6 @@ def resolve_action(
     _check_victory_defeat(state)
 
     if state.status == "in_progress" and ends_turn:
-        _advance_turn_skipping_dead(state)
+        _advance_turn_skipping_dead(state, srd)
 
     return state

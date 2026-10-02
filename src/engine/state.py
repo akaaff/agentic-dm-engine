@@ -28,15 +28,34 @@ ConditionName = Literal[
     "stunned",
     "unconscious",
     "blessed",
+    "baned",
+    "blurred",
+    "longstrider",
+    "death_warded",
+    "barkskin",
+    "stoneskinned",
+    "energy_resistant",
+    "poison_protected",
+    "divine_favor",
+    "hunters_marked",
+    "warded",
+    "mirror_image",
+    "protected_from_evil",
 ]
 """Exhaustion isn't in this list - SRD exhaustion is a leveled (0-6) effect
 with per-level rules, not an on/off tag like these - see
 Character.exhaustion_level and rules.set_exhaustion_level.
 
-"blessed" isn't one of the SRD's 15 real conditions (it's the Bless spell's
-own effect, issue #57) - added here anyway to reuse this exact apply/tick/
-remove-on-expiry machinery rather than building a second, parallel one for
-a single spell. rules.blessed_bonus is the only place that reads it."""
+Everything after "unconscious" isn't one of the SRD's 15 real conditions -
+each is a spell's own ongoing effect (Bless #57, then Bane/Blur/Longstrider/
+Death Ward/Barkskin/Stoneskin/Protection from Energy/Protection from Poison/
+Divine Favor/Hunter's Mark/Sanctuary/Mirror Image/Protection from Evil and
+Good, issues #58-#61/#68), added here to reuse this exact apply/tick/remove-
+on-expiry machinery (and the condition badges the UI already renders from
+Character.conditions) rather than building a parallel one per spell. Each
+name is read by exactly one mechanic - see the rules.py/turn_engine.py
+function that checks it. Condition.spell/Condition.source tie one back to
+the concentration that sustains it (turn_engine._end_concentration)."""
 
 AbilityScore = Literal["STR", "DEX", "CON", "INT", "WIS", "CHA"]
 
@@ -46,6 +65,21 @@ class Condition(BaseModel):
     duration_rounds: int | None = None
     """None means indefinite - removed by an explicit effect, not by ticking down."""
     source: str | None = None
+    """Who/what applied it - a caster's character id for a spell effect (and
+    a charmer's id for "charmed", see _validate_attack_target), or a short
+    cause tag ("0 HP", "sleep", "hazard") for an unconscious condition."""
+    spell: str | None = None
+    """Name of the spell that applied this condition, if one did. Together
+    with `source` this identifies "everything caster X's concentration on
+    spell Y is sustaining", which turn_engine._end_concentration strips when
+    that concentration ends (a failed CON save, a new concentration spell,
+    going unconscious) - a concentration spell's effect used to outlive its
+    caster's concentration, since only the `concentrating_on` label was ever
+    cleared, never what it had applied to anyone."""
+    detail: str | None = None
+    """Free-form per-spell payload the condition's own mechanic reads back -
+    the damage type Protection from Energy was cast against, Mirror Image's
+    remaining duplicate count. Shown in the UI label when present."""
 
 
 class WildShapeSnapshot(BaseModel):
