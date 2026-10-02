@@ -34,6 +34,7 @@ from src.api.db.models import CampaignProgress, CharacterRecord
 from src.api.db.session import SessionLocal
 from src.api.routes.characters import _record_to_character
 from src.api.ws.rate_limit import TokenBucket
+from src.api.ws.session_persistence import build_snapshot, restore_snapshot
 from src.audiogen.service import MEDIA_URL_PREFIX as AUDIO_MEDIA_URL_PREFIX
 from src.audiogen.service import generate_narration_audio
 from src.cli.play import build_demo_encounter, build_demo_party
@@ -104,6 +105,10 @@ class Session:
     game_state: GameState
     action_rng: random.Random
     graph: CompiledStateGraph[GraphState, Any, Any, Any]
+    session_id: str | None = None
+    """The key this session is registered under in _sessions (and, for a real
+    session, the CampaignProgress row id) - what _persist_session writes its
+    snapshot against. None only for a Session built outside create_session()."""
     connections: list[SessionConnection] = field(default_factory=list)
     human_character_ids: dict[str, str] = field(default_factory=dict)
     """Issue #44: personal token -> character id, replacing the old singular
@@ -229,6 +234,7 @@ def create_session(
         game_state=game_state,
         action_rng=action_rng,
         graph=graph or build_graph(rng=action_rng),
+        session_id=session_id,
         human_character_ids=human_character_ids or {},
         campaign=campaign,
         party=party,
@@ -249,6 +255,17 @@ class _RealSessionSetup:
     combat_scene_id: str
     srd: SrdIndex
     human_character_ids: dict[str, str]
+
+
+def _human_character_ids_for(progress: CampaignProgress) -> dict[str, str]:
+    """token -> character id for every human seat in this CampaignProgress row
+    (issue #44's player_tokens, or - for a legacy single-shot row that never
+    recorded one - a throwaway token for party_character_ids[0]). Shared by
+    the from-scratch build and the snapshot restore so both derive the seats
+    identically."""
+    if progress.player_tokens:
+        return dict(progress.player_tokens)
+    return {uuid4().hex: progress.party_character_ids[0]}
 
 
 def _build_real_session_setup(progress: CampaignProgress) -> _RealSessionSetup | None:
@@ -285,11 +302,7 @@ def _build_real_session_setup(progress: CampaignProgress) -> _RealSessionSetup |
     # (party_character_ids[0] is the one human) so every pre-#44 session
     # keeps working unchanged, including the WS connect side (see
     # session_websocket's own "single human seat needs no token" handling).
-    human_character_ids = (
-        dict(progress.player_tokens)
-        if progress.player_tokens
-        else {uuid4().hex: progress.party_character_ids[0]}
-    )
+    human_character_ids = _human_character_ids_for(progress)
     human_ids = set(human_character_ids.values())
 
     party: list[Character] = []
@@ -346,6 +359,10 @@ def _get_or_create_default_session(session_id: str) -> Session:
         with SessionLocal() as db:
             progress = db.get(CampaignProgress, session_id)
 
+        restored = _restore_session(session_id, progress) if progress else None
+        if restored is not None:
+            return restored
+
         setup = _build_real_session_setup(progress) if progress else None
         if setup is not None:
             create_session(
@@ -364,6 +381,80 @@ def _get_or_create_default_session(session_id: str) -> Session:
             demo_state = build_encounter_state(encounter, party, random.Random())
             create_session(session_id, demo_state)
     return _sessions[session_id]
+
+
+def _restore_session(session_id: str, progress: CampaignProgress) -> Session | None:
+    """Rebuilds a live session from the snapshot _persist_session last wrote,
+    or returns None (the caller then builds from scratch, exactly as it did
+    before persistence existed) when there's no snapshot or it can't be used.
+    Any failure here is logged and swallowed on purpose: a corrupt or
+    version-mismatched snapshot must never be the reason a game can't start."""
+    if not progress.session_snapshot:
+        return None
+    try:
+        restored = restore_snapshot(progress.session_snapshot, list(progress.party_character_ids))
+        session = create_session(
+            session_id,
+            restored.game_state,
+            human_character_ids=_human_character_ids_for(progress),
+            campaign=restored.campaign,
+            party=restored.party,
+            srd=load_srd(),
+            current_scene_id=restored.current_scene_id,
+        )
+    except Exception as exc:
+        log_event(
+            kind="backend_error",
+            session_id=session_id,
+            exc_type=type(exc).__name__,
+            message=f"session snapshot restore failed: {exc}",
+            traceback=traceback.format_exc(),
+            raw={"where": "restore_session"},
+        )
+        return None
+    session.campaign_complete = restored.campaign_complete
+    session.adaptive_generations_used = restored.adaptive_generations_used
+    session.pending_bardic_choice = restored.pending_bardic_choice
+    if restored.pending_party_choice is not None:
+        session.pending_party_choice = PendingPartyChoice(**restored.pending_party_choice)
+    logger.info("Restored session %s from its persisted snapshot", session_id)
+    return session
+
+
+_PERSISTED_MESSAGE_TYPES = frozenset(
+    {"state_update", "bardic_inspiration_offer", "party_choice_offer", "party_choice_responded"}
+)
+"""Broadcast types after which the session's persisted snapshot is rewritten -
+exactly the ones that follow a change to something the snapshot holds
+(game_state, the scene pointer/completion flags via state_update, or one of the
+two pending-choice slots)."""
+
+
+def _persist_session(session: Session, game_state_json: dict[str, Any] | None = None) -> None:
+    """Writes the session's snapshot to its CampaignProgress row. A no-op for a
+    session with no row/campaign (the demo fallback and every offline test that
+    calls create_session() directly). Never raises: persistence is a safety
+    net for restarts, so a failure to write must not break the live turn that
+    triggered it - it's recorded in the shared event log instead."""
+    if session.session_id is None or session.campaign is None:
+        return
+    try:
+        snapshot = build_snapshot(session, game_state_json)
+        with SessionLocal() as db:
+            progress = db.get(CampaignProgress, session.session_id)
+            if progress is None:
+                return
+            progress.session_snapshot = snapshot
+            db.commit()
+    except Exception as exc:
+        log_event(
+            kind="backend_error",
+            session_id=session.session_id,
+            exc_type=type(exc).__name__,
+            message=f"session snapshot write failed: {exc}",
+            traceback=traceback.format_exc(),
+            raw={"where": "persist_session"},
+        )
 
 
 def reset_sessions() -> None:
@@ -393,6 +484,14 @@ async def _broadcast(session: Session, message: dict[str, object]) -> None:
         if connection in session.connections:
             session.connections.remove(connection)
         session.connected_human_character_ids -= connection.controlled_character_ids
+
+    # After the sends, not before: a slow/dead socket shouldn't be able to
+    # delay the write, but the write also shouldn't run ahead of what clients
+    # were just told. state_update already carries a fresh dump of the whole
+    # GameState, so it's reused rather than serialized a second time.
+    if message.get("type") in _PERSISTED_MESSAGE_TYPES:
+        game_state_json = message.get("game_state")
+        _persist_session(session, game_state_json if isinstance(game_state_json, dict) else None)
 
 
 def _narration_message(
@@ -515,6 +614,61 @@ def _resolve_and_narrate_bardic_choice(
         "scene_image_url": None,
     }
     return str(narrator_node(narrator_state)["narration"])
+
+
+def _bardic_offer_message(choice: PendingBardicChoice) -> dict[str, object]:
+    return {
+        "type": "bardic_inspiration_offer",
+        "holder": choice.holder_id,
+        "target": choice.target_id,
+        "natural": choice.natural,
+        "total_without_die": choice.total_without_die,
+        "defender_ac": choice.defender_ac,
+        "die_sides": choice.die_sides,
+    }
+
+
+def _living_human_ids(session: Session) -> set[str]:
+    return {
+        cid
+        for cid in session.human_character_ids.values()
+        if not any(c.id == cid and c.is_dead for c in (session.party or []))
+    }
+
+
+def _party_choice_offer_message(session: Session, pending: PendingPartyChoice) -> dict[str, object]:
+    """Rebuilds the party_choice_offer a freshly-connecting client needs (see
+    _send_pending_offers) from session state alone - companion reactions are
+    the pending responses keyed by a companion id, and `awaiting` is whichever
+    living human seat hasn't answered yet. No audio on a re-send: the
+    reactions are replayed as text only, not re-voiced on every reconnect."""
+    companion_ids = {c.id for c in (session.party or []) if c.is_companion}
+    companion_responses = {
+        cid: text for cid, text in pending.responses.items() if cid in companion_ids
+    }
+    return {
+        "type": "party_choice_offer",
+        "situation": pending.situation,
+        "companion_responses": companion_responses,
+        "companion_response_audio": {cid: None for cid in companion_responses},
+        "awaiting": sorted(_living_human_ids(session) - pending.responses.keys()),
+    }
+
+
+async def _send_pending_offers(session: Session, websocket: WebSocket) -> None:
+    """Re-sends whichever pause the session is currently in to one
+    just-connected client. Offers are broadcast once, when they're raised, so
+    a client connecting afterwards - a page refresh, a dropped socket, or the
+    reconnect after a backend restart restored this session from its snapshot
+    - would otherwise see a session paused on a choice with no UI to answer
+    it. Offered to every connecting client, not just the one who can answer:
+    the party sees the pause either way (same as the original broadcast)."""
+    if session.pending_bardic_choice is not None:
+        await websocket.send_json(_bardic_offer_message(session.pending_bardic_choice))
+    if session.pending_party_choice is not None:
+        await websocket.send_json(
+            _party_choice_offer_message(session, session.pending_party_choice)
+        )
 
 
 def _state_update_message(session: Session) -> dict[str, object]:
@@ -848,11 +1002,7 @@ async def _start_party_choice(session: Session, scene: Scene) -> None:
                 f"{AUDIO_MEDIA_URL_PREFIX}/{audio_path.name}" if audio_path else None
             )
 
-    living_human_ids = {
-        cid
-        for cid in session.human_character_ids.values()
-        if not any(c.id == cid and c.is_dead for c in session.party)
-    }
+    living_human_ids = _living_human_ids(session)
     session.pending_party_choice = PendingPartyChoice(
         scene_id=scene.id, situation=scene.narrative_intro, responses=responses
     )
@@ -1092,12 +1242,7 @@ async def _handle_client_message(
             session, {"type": "party_choice_responded", "actor": character_id, "text": text}
         )
 
-        living_human_ids = {
-            cid
-            for cid in human_ids
-            if not any(c.id == cid and c.is_dead for c in (session.party or []))
-        }
-        if living_human_ids <= pending_choice.responses.keys():
+        if _living_human_ids(session) <= pending_choice.responses.keys():
             await _resolve_party_choice(session)
             await _autoplay_non_human_turns(session)
             await _send_awaiting_input(session)
@@ -1282,18 +1427,7 @@ async def _handle_client_message(
             # ordinary rejection already drops them (issue #47) - whatever
             # already resolved stands.
             session.pending_bardic_choice = exc.choice
-            await _broadcast(
-                session,
-                {
-                    "type": "bardic_inspiration_offer",
-                    "holder": exc.choice.holder_id,
-                    "target": exc.choice.target_id,
-                    "natural": exc.choice.natural,
-                    "total_without_die": exc.choice.total_without_die,
-                    "defender_ac": exc.choice.defender_ac,
-                    "die_sides": exc.choice.die_sides,
-                },
-            )
+            await _broadcast(session, _bardic_offer_message(exc.choice))
             return
         except (TurnEngineError, NotImplementedError) as exc:
             # Caught live, two real cases: (1) a free-text action can name a
@@ -1457,6 +1591,17 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
         # continue_campaign message (or rests first), not something this
         # connect path should silently skip past.
         await websocket.send_json(_state_update_message(session))
+        await _send_pending_offers(session, websocket)
+        pending_party = session.pending_party_choice
+        if pending_party is not None and not (
+            _living_human_ids(session) - pending_party.responses.keys()
+        ):
+            # A restored snapshot can land exactly between "the last human
+            # answered" and the continuation being generated (the process
+            # stopped in that window) - nobody is left to answer, so nothing
+            # would ever resolve the pause on its own.
+            await _resolve_party_choice(session)
+            await _autoplay_non_human_turns(session)
         # Personal, not the shared _send_awaiting_input (which searches the
         # whole session for whoever should act next, after an action
         # resolves): a just-connected client needs to be told about its own
@@ -1464,7 +1609,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
         # it would never hear about it if an earlier connection happens to
         # control the same actor - which, under Day 11's "one connection
         # controls everyone" simplification, is every other connection.
-        if session.game_state.status == "in_progress":
+        if session.game_state.status == "in_progress" and session.pending_bardic_choice is None:
             current_actor = session.game_state.turn_order[session.game_state.current_turn]
             if current_actor in connection.controlled_character_ids:
                 await websocket.send_json({"type": "awaiting_input", "actor": current_actor})

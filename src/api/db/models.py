@@ -161,6 +161,13 @@ class CampaignProgress(Base):
     api/ws/session.py's _build_real_session_setup for how an empty dict
     here falls back to the original single-human-at-party_character_ids[0]
     assumption, keeping every pre-#44 session/test working unchanged."""
+    session_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    """Live-session persistence: the whole in-memory Session (GameState, the
+    campaign's scene list including any live-generated scenes, pending bardic/
+    party choices, scene pointer) as JSON, rewritten after every state-changing
+    broadcast (see api/ws/session_persistence.py) so a backend restart becomes
+    a short client reconnect instead of losing every live game. NULL until the
+    session first broadcasts, and for rows that never reached live play."""
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
