@@ -527,6 +527,10 @@ export function useSessionSocket(sessionId: string) {
       if (accessKey) params.set('key', accessKey)
       const lobbyToken = getLobbyToken(sessionId)
       if (lobbyToken) params.set('token', lobbyToken)
+      // An auto-reconnect keeps this page's narration log, so the server must not
+      // replay the opening scene text into it a second time (see
+      // Session.hook_messages in api/ws/session.py).
+      if (isReconnect) params.set('resume', '1')
       const query = params.toString() ? `?${params.toString()}` : ''
       const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}${query}`)
       wsRef.current = ws

@@ -141,11 +141,23 @@ class Session:
     encounter resolves."""
     pending_scene_narration: list[str] = field(default_factory=list)
     """Narrative-beat/skill-challenge text collected (via campaign_runner)
-    before this session's *first* encounter - delivered to the first
-    connecting client as scene_narration messages, then cleared. A second
-    connection joining later won't see it - the same "no narration replay
-    on late join" limitation this session already has for ordinary
-    per-turn narration, not something this change newly introduces."""
+    before this session's *first* encounter. Turned into scene_narration
+    messages (hook_messages below) by the first connection and then cleared -
+    the replay for everyone who connects after that works from hook_messages."""
+    hook_messages: list[dict[str, object]] = field(default_factory=list)
+    """The pre-combat hook's scene_narration messages, built ONCE (each carries
+    its already-generated audio/image URLs, so a replay never re-runs TTS or
+    image generation) and kept so a client that arrives after the first
+    connection still gets the hook - a page refresh, a second player, or the
+    dev build's StrictMode double-socket, which used to deliver it to a socket
+    the browser had already discarded. Replayed only while the game is still
+    in round 1 of the encounter it leads into (hook_scene_id) - later, a fresh
+    page replaying the opening text and holding the board until it has been
+    read aloud would be worse than missing it - and never to a reconnecting
+    client (`?resume=1`), whose log still has it."""
+    hook_scene_id: str | None = None
+    """session.current_scene_id when hook_messages was built - what "still in
+    the encounter the hook leads into" is checked against."""
     action_bucket: TokenBucket = field(
         default_factory=lambda: TokenBucket(
             capacity=config.ACTION_RATE_LIMIT_CAPACITY,
@@ -416,6 +428,8 @@ def _restore_session(session_id: str, progress: CampaignProgress) -> Session | N
     session.campaign_complete = restored.campaign_complete
     session.adaptive_generations_used = restored.adaptive_generations_used
     session.pending_bardic_choice = restored.pending_bardic_choice
+    session.hook_messages = restored.hook_messages
+    session.hook_scene_id = restored.hook_scene_id
     if restored.pending_party_choice is not None:
         session.pending_party_choice = PendingPartyChoice(**restored.pending_party_choice)
     logger.info("Restored session %s from its persisted snapshot", session_id)
@@ -1600,12 +1614,25 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
 
     try:
         # The campaign's own scene-setting text (a narrative "hook" before
-        # the fight, etc.) - collected once at session setup, sent to
-        # whichever connection arrives first. See Session.pending_scene_
-        # narration's docstring for why a second connection won't see it.
-        for message in _scene_narration_messages(session.pending_scene_narration):
-            await websocket.send_json(message)
-        session.pending_scene_narration = []
+        # the fight, etc.) - collected once at session setup and built into
+        # messages by whichever connection arrives first (generating its
+        # audio/image once), then replayed to every later connection that
+        # needs it - see Session.hook_messages for what "needs it" means.
+        if session.pending_scene_narration:
+            session.hook_messages = _scene_narration_messages(session.pending_scene_narration)
+            session.hook_scene_id = session.current_scene_id
+            session.pending_scene_narration = []
+        # `resume=1` is sent by the client's own auto-reconnect: its narration
+        # log survived the drop, so replaying would duplicate the hook in it.
+        resuming = websocket.query_params.get("resume") == "1"
+        if (
+            session.hook_messages
+            and not resuming
+            and session.game_state.round == 1
+            and session.current_scene_id == session.hook_scene_id
+        ):
+            for message in session.hook_messages:
+                await websocket.send_json(message)
 
         # Resolve any monster/companion turns that come before the human's
         # first one (e.g. a monster going first in initiative) before this
