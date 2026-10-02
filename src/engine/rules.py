@@ -363,6 +363,11 @@ _CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     "hunters-mark": ConditionSpellSpec(
         condition="hunters_marked", duration_rounds=600, target_side="enemy"
     ),
+    "sanctuary": ConditionSpellSpec(condition="warded", duration_rounds=10),
+    "mirror-image": ConditionSpellSpec(condition="mirror_image", duration_rounds=10, detail="3"),
+    "protection-from-evil-and-good": ConditionSpellSpec(
+        condition="protected_from_evil", duration_rounds=100
+    ),
 }
 """Issue #55 spell audit (bucket 4's "general condition mechanic" - see
 #54): spells whose entire real effect is "apply this existing ConditionName
@@ -707,6 +712,33 @@ def monster_has_pack_tactics(character: Character, srd: SrdIndex) -> bool:
     if monster is None:
         return False
     return any(a.get("name") == "Pack Tactics" for a in monster.get("special_abilities", []))
+
+
+_PROTECTED_AGAINST_TYPES = frozenset(
+    {"aberration", "celestial", "elemental", "fey", "fiend", "undead"}
+)
+
+
+def protected_from_evil_disadvantage(attacker: Character, target: Character, srd: SrdIndex) -> bool:
+    """Protection from Evil and Good (issue #61): "the target has disadvantage on
+    any attack roll made against the warded creature" when the attacker is an
+    aberration, celestial, elemental, fey, fiend, or undead - read from the
+    attacker's SRD monster `type`, so always False for a non-monster attacker.
+    The spell's other halves (can't charm/frighten/possess the ward; advantage on
+    saves against those creatures' effects) aren't modeled: this engine tracks
+    advantage per roll, not per source of the effect being saved against, and
+    has no possession. Same documented narrowing as the issue proposed - and as
+    Bless's own exclusion of death saves. Lives beside monster_is_undead_or_
+    fiend, whose single-type check this widens to the spell's six-type list; a
+    separate OR clause at the call sites (like monster_has_pack_tactics) rather
+    than a new parameter on condition_attack_disadvantage, which has no srd.
+    """
+    if not has_condition(target, "protected_from_evil"):
+        return False
+    if attacker.monster_index is None:
+        return False
+    monster = srd.monsters.get(attacker.monster_index)
+    return monster is not None and monster.get("type") in _PROTECTED_AGAINST_TYPES
 
 
 def monster_is_undead_or_fiend(target: Character, srd: SrdIndex) -> bool:

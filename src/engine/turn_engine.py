@@ -130,7 +130,7 @@ from src.engine.character_creation import (
     is_eligible_for_extra_attack,
 )
 from src.engine.conditions import apply_condition, has_condition, remove_condition, tick_conditions
-from src.engine.dice import RollResult, roll
+from src.engine.dice import RollResult, roll, roll_d20
 from src.engine.encounter import monster_to_character
 from src.engine.events import Event
 from src.engine.movement import can_afford_move, move_cost_feet
@@ -171,6 +171,7 @@ from src.engine.rules import (
     multiattack_sub_actions,
     normalize_skill_name,
     normalize_spell_name,
+    protected_from_evil_disadvantage,
     resolve_attack,
     resolve_saving_throw,
     resolve_skill_check,
@@ -733,6 +734,182 @@ def _bless_and_bane(character: Character, rng: random.Random) -> tuple[int, list
     return bless - bane, entries
 
 
+def _end_own_sanctuary(state: GameState, actor: Character) -> None:
+    """Sanctuary (issue #61): "the spell ends if the warded creature attacks or
+    casts a spell that affects an enemy creature" - called at the top of every
+    hostile resolver (weapon attack, attack-roll spell, a save spell, Magic
+    Missile's darts, Sleep) so a ward is dropped the moment its holder acts
+    against someone, whether or not the attack then hits."""
+    if remove_condition(actor, "warded"):
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="condition_removed",
+                payload={"condition": "warded", "spell": "Sanctuary", "reason": "attacked"},
+            )
+        )
+
+
+def _sanctuary_blocks(
+    state: GameState, attacker: Character, target: Character, rng: random.Random, srd: SrdIndex
+) -> bool:
+    """Sanctuary (issue #61): "any creature who targets the warded creature
+    with an attack or a harmful spell must first make a wisdom saving throw.
+    On a failed save, the creature must choose a new target or lose the
+    attack or spell." True if `attacker` failed and loses this attack.
+
+    This engine's only "must choose a new target" is a rejected action, which
+    leaves the turn open - and would let the attacker simply re-roll the same
+    save until it passed (and, for a monster, loop on it). So a failed save
+    costs the attack outright: the action is spent, emitting
+    `sanctuary_blocked`. Harsher than a human DM's "pick someone else", and
+    documented as such. Applied to weapon attacks, attack-roll spells and
+    Magic Missile's darts; a save-based spell isn't gated (SRD exempts area
+    effects like Fireball, and this engine can't tell a one-creature save
+    spell from an area one - it only knows a list of target ids).
+
+    The DC is the warder's own spell save DC (8 + proficiency + spellcasting
+    modifier), falling back to 10 if the warder is gone or has no spellcasting
+    - a ward whose caster can't be resolved should still hold, not crash."""
+    ward = next((c for c in target.conditions if c.name == "warded"), None)
+    if ward is None:
+        return False
+    caster = state.characters.get(ward.source) if ward.source else None
+    dc = 10
+    if caster is not None:
+        try:
+            _, ability_mod = _spellcasting_ability_mod(caster, srd)
+            dc = 8 + caster.proficiency_bonus + ability_mod
+        except TurnEngineError:
+            pass  # no spellcasting to derive a DC from - keep the fallback
+
+    roll_bonus, roll_entries = _bless_and_bane(attacker, rng)
+    result, success = resolve_saving_throw(
+        save_bonus=_target_saving_throw_bonus(attacker, "WIS", srd) + roll_bonus,
+        dc=dc,
+        rng=rng,
+        disadvantage=condition_save_disadvantage(attacker),
+        lucky=has_lucky_trait(attacker),
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=attacker.id,
+            type="saving_throw",
+            payload={
+                "kind": "sanctuary",
+                "target": target.id,
+                "ability": "WIS",
+                "dc": dc,
+                "roll_total": result.total,
+                "natural": result.kept[0],
+                "success": success,
+                "modifier_breakdown": [
+                    *_target_saving_throw_breakdown(attacker, "WIS", srd),
+                    *roll_entries,
+                ],
+            },
+        )
+    )
+    if success:
+        return False
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=attacker.id,
+            type="sanctuary_blocked",
+            payload={"target": target.id},
+        )
+    )
+    return True
+
+
+# Mirror Image's redirect threshold by how many duplicates remain (SRD: "with
+# three duplicates, you must roll a 6 or higher... two, 8 or higher... one, 11
+# or higher").
+_MIRROR_IMAGE_THRESHOLDS = {3: 6, 2: 8, 1: 11}
+
+
+def _try_mirror_image(
+    state: GameState,
+    attacker: Character,
+    target: Character,
+    attack_bonus: int,
+    advantage: bool,
+    disadvantage: bool,
+    rng: random.Random,
+) -> bool:
+    """Mirror Image (issue #61): "each time a creature targets you with an
+    attack, roll a d20 to determine whether the attack instead targets one of
+    your duplicates." True if this attack was redirected and is fully resolved
+    here - the real target is never rolled against.
+
+    A redirected attack rolls normally against the duplicate's AC (10 + the
+    target's DEX modifier); a hit destroys that duplicate, a miss leaves it
+    standing. The remaining count lives in the condition's `detail` (so the
+    sheet badge reads "Mirror Image: 2 images"), and the spell ends when the
+    last one goes. Rolls NOTHING when the target has no duplicates, so every
+    pre-existing fixed-RNG attack fixture is untouched. Not applied to Magic
+    Missile's darts (no attack roll - not an attack, per the spell)."""
+    image = next((c for c in target.conditions if c.name == "mirror_image"), None)
+    if image is None:
+        return False
+    count = int(image.detail or 0)
+    threshold = _MIRROR_IMAGE_THRESHOLDS.get(count)
+    if threshold is None:
+        return False  # no duplicates left to absorb anything
+
+    redirect = roll(1, 20, rng=rng).total
+    if redirect < threshold:
+        return False
+
+    duplicate_ac = 10 + ability_modifier(target.stats["DEX"])
+    attack = roll_d20(
+        modifier=attack_bonus, rng=rng, advantage=advantage, disadvantage=disadvantage
+    )
+    natural = attack.kept[0]
+    hit = natural != 1 and (natural == 20 or attack.total >= duplicate_ac)
+    if hit:
+        count -= 1
+        image.detail = str(count)
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=attacker.id,
+            type="mirror_image",
+            payload={
+                "target": target.id,
+                "image_hit": hit,
+                "images_remaining": count,
+                "redirect_roll": redirect,
+                "natural": natural,
+                "duplicate_ac": duplicate_ac,
+            },
+        )
+    )
+    if hit and count == 0:
+        remove_condition(target, "mirror_image")
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=target.id,
+                type="condition_removed",
+                payload={
+                    "condition": "mirror_image",
+                    "spell": "Mirror Image",
+                    "reason": "all duplicates destroyed",
+                },
+            )
+        )
+    return True
+
+
 def _validate_attack_target(actor: Character, target: Character) -> None:
     """Rejects friendly fire: `is_pc` doubles as "which side" a character is
     on (party vs monsters), so a same-side target is never a legitimate
@@ -825,6 +1002,12 @@ def _resolve_single_attack(
     if distance > max_range:
         raise _out_of_range_error(actor, target, distance, params.source_name, max_range)
     long_range_disadvantage = range_long_feet is not None and distance > range_normal_feet
+    # Sanctuary (issue #61): after the range check (a rejected attack changes
+    # nothing), before any roll - the attacker's own ward ends, then the
+    # target's ward makes them save or lose the attack.
+    _end_own_sanctuary(state, actor)
+    if _sanctuary_blocks(state, actor, target, rng, srd):
+        return
     # Phase 9F: a ranged attack (anything with a "long" range tier - melee
     # weapons/actions have none, see weapon_range_feet/monster_action_range_
     # feet) rolls with disadvantage while a hostile creature is within 5ft
@@ -896,7 +1079,14 @@ def _resolve_single_attack(
         or long_range_disadvantage
         or engaged_disadvantage
         or condition_attack_disadvantage(actor, target, distance)
+        or protected_from_evil_disadvantage(actor, target, srd)
     )
+
+    # Mirror Image (issue #61): may redirect this attack to a duplicate,
+    # resolving it entirely - after every attack-roll modifier is known (the
+    # redirected roll uses them), before the real target is ever rolled against.
+    if _try_mirror_image(state, actor, target, params.attack_bonus, advantage, disadvantage, rng):
+        return
 
     if defer_bardic_choice and bardic_die_sides:
         # Probe: roll WITHOUT the die first - this genuinely is the roll
@@ -2688,6 +2878,10 @@ def _cast_attack_spell_at_target(
     so an attack-roll spell against a downed ally gets the same treatment a
     melee/ranged weapon attack does."""
     distance = distance_feet(actor.position, target.position)
+    # Sanctuary (issue #61) - see _resolve_single_attack's identical handling.
+    _end_own_sanctuary(state, actor)
+    if _sanctuary_blocks(state, actor, target, rng, srd):
+        return
     advantage = (
         actor.has_help_advantage
         or condition_attack_advantage(actor, target, distance)
@@ -2712,6 +2906,15 @@ def _cast_attack_spell_at_target(
             attack_bonus_breakdown=[*params.attack_bonus_breakdown, *roll_entries],
         )
 
+    disadvantage = (
+        target.is_dodging
+        or condition_attack_disadvantage(actor, target, distance)
+        or protected_from_evil_disadvantage(actor, target, srd)
+    )
+    # Mirror Image (issue #61) - see _resolve_single_attack's identical handling.
+    if _try_mirror_image(state, actor, target, params.attack_bonus, advantage, disadvantage, rng):
+        return
+
     result = resolve_attack(
         defender_ac=target.ac,
         attack_bonus=params.attack_bonus,
@@ -2721,7 +2924,7 @@ def _cast_attack_spell_at_target(
         damage_type=params.damage_type,
         rng=rng,
         advantage=advantage,
-        disadvantage=target.is_dodging or condition_attack_disadvantage(actor, target, distance),
+        disadvantage=disadvantage,
         force_critical=already_unconscious,
         lucky=has_lucky_trait(actor),
         bardic_die_sides=bardic_die_sides,
@@ -2837,6 +3040,9 @@ def _cast_save_spell_at_target(
 ) -> None:
     """One target's independent saving throw (Phase 9D multi-target - e.g.
     Fireball hitting 3 targets rolls 3 separate saves)."""
+    # Casting a harmful spell ends the caster's own Sanctuary (issue #61); the
+    # target's ward doesn't gate it - see _sanctuary_blocks for why.
+    _end_own_sanctuary(state, actor)
     # Bless (issue #57) / Bane (issue #68) - see _resolve_single_attack's
     # identical handling.
     roll_bonus, roll_entries = _bless_and_bane(target, rng)
@@ -3104,6 +3310,7 @@ def _resolve_sleep_spell(
             raise _out_of_range_error(actor, target, distance, spell["name"], range_normal_feet)
         candidates.append(target)
 
+    _end_own_sanctuary(state, actor)  # Sleep affects enemies (issue #61)
     pool = roll(5, 8, rng=rng).total
     state.events.append(
         Event(
@@ -3274,6 +3481,12 @@ def _cast_auto_hit_dart_at_target(
     sum - consistent with _apply_damage_and_handle_downing's downing/
     concentration-break/Relentless-Endurance handling being correct to
     run once per dart rather than once per cast."""
+    # Sanctuary (issue #61) applies to "an attack or a harmful spell" - a dart
+    # is the latter - and each dart is its own targeting. Mirror Image does
+    # not (no attack roll, so nothing to redirect).
+    _end_own_sanctuary(state, actor)
+    if _sanctuary_blocks(state, actor, target, rng, srd):
+        return
     damage = max(
         0, roll(params.dice_count, params.dice_sides, modifier=params.damage_bonus, rng=rng).total
     )

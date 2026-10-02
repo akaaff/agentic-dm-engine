@@ -976,3 +976,326 @@ def test_hunters_mark_rejects_a_dead_target_without_dropping_current_concentrati
     assert elrond.spell_slots[1] == 3
     assert elrond.concentrating_on == "Bless", "a rejected cast must not end the current one"
     assert has_condition(state.characters["thorin"], "blessed")
+
+
+# --------------- issue #61: Sanctuary / Mirror Image / Protection from Evil and Good
+
+
+def _ward(state: GameState, target_id: str, caster_id: str = "elrond") -> None:
+    apply_condition(
+        state.characters[target_id],
+        Condition(name="warded", duration_rounds=10, source=caster_id, spell="Sanctuary"),
+    )
+
+
+def _images(state: GameState, target_id: str, count: int) -> None:
+    apply_condition(
+        state.characters[target_id],
+        Condition(
+            name="mirror_image",
+            duration_rounds=10,
+            source=target_id,
+            spell="Mirror Image",
+            detail=str(count),
+        ),
+    )
+
+
+def test_the_three_redirect_spells_are_condition_spells() -> None:
+    from src.engine.rules import spell_mechanic
+    from src.engine.srd_loader import load_srd
+
+    srd = load_srd()
+    for index in ("sanctuary", "mirror-image", "protection-from-evil-and-good"):
+        assert spell_mechanic(srd.spells[index]) == "condition", index
+
+
+# --- Sanctuary
+
+
+def test_sanctuary_is_a_bonus_action_ward_on_an_ally_and_not_concentration() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "sanctuary", 1)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "sanctuary", target="thorin")
+    (ward,) = state.characters["thorin"].conditions
+    assert (ward.name, ward.duration_rounds, ward.source, ward.spell) == (
+        "warded",
+        10,
+        "elrond",
+        "Sanctuary",
+    )
+    assert elrond.concentrating_on is None  # SRD: 1 minute, no concentration
+    assert state.turn_order[state.current_turn] == "elrond", "a bonus action keeps the turn"
+
+
+def test_an_attacker_who_fails_the_wisdom_save_loses_the_attack() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    _ward(state, "elrond")
+    # Sanctuary DC = 8 + proficiency 2 + Elrond's INT mod 2 = 12; the goblin's
+    # WIS 8 is -1. Natural 5 -> 4: fails. The list holds only that d20 - a
+    # stray attack roll would raise IndexError.
+    _goblin_attacks(state, "elrond", [5])
+    save = next(e for e in state.events if e.payload.get("kind") == "sanctuary")
+    assert (save.actor, save.payload["success"], save.payload["dc"]) == ("goblin_1", False, 12)
+    assert save.payload["target"] == "elrond"
+    blocked = next(e for e in state.events if e.type == "sanctuary_blocked")
+    assert (blocked.actor, blocked.payload["target"]) == ("goblin_1", "elrond")
+    assert not [e for e in state.events if e.type == "attack_roll"]
+    assert elrond.hp == 7
+    assert state.turn_order[state.current_turn] != "goblin_1", (
+        "the lost attack still spent the turn"
+    )
+
+
+def test_an_attacker_who_passes_the_wisdom_save_attacks_normally() -> None:
+    state = _build_demo_state()
+    _ward(state, "elrond")
+    # Natural 13 - 1 = 12 >= DC 12 passes (ties go to the roller); then the
+    # ordinary attack: natural 15, damage die 1.
+    _goblin_attacks(state, "elrond", [13, 15, 1])
+    save = next(e for e in state.events if e.payload.get("kind") == "sanctuary")
+    assert save.payload["success"] is True
+    assert next(e for e in state.events if e.type == "attack_roll")
+    assert not [e for e in state.events if e.type == "sanctuary_blocked"]
+
+
+def test_sanctuary_ends_when_the_warded_creature_attacks() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    _ward(state, "elrond")
+    _end_turn(state, "thorin")
+    _attack(state, "elrond", "goblin_1", [2])  # a miss still counts as attacking
+    assert not has_condition(elrond, "warded")
+    ended = next(e for e in state.events if e.type == "condition_removed")
+    assert (ended.actor, ended.payload["condition"], ended.payload["reason"]) == (
+        "elrond",
+        "warded",
+        "attacked",
+    )
+
+
+def test_sanctuary_ends_when_the_warded_creature_casts_a_harmful_spell() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "bane", 1)
+    _ward(state, "elrond")
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "bane", target="goblin_1", rng=[15])
+    assert not has_condition(elrond, "warded")
+
+
+def test_sanctuary_survives_a_beneficial_spell() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    _ward(state, "elrond")
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "mage armor", target="elrond")
+    assert has_condition(elrond, "warded")
+
+
+def test_sanctuary_also_stops_a_spell_attack() -> None:
+    state = _build_demo_state()
+    _ward(state, "goblin_1", caster_id="not_a_caster")  # unresolvable caster -> DC 10
+    _end_turn(state, "thorin")
+    # Elrond's Fire Bolt at the warded goblin: his WIS save is +3 (WIS 13 +1,
+    # proficient in WIS saves, +2); natural 2 -> 5 < DC 10 fails.
+    _cast(state, "elrond", "fire bolt", target="goblin_1", rng=[2])
+    assert next(e for e in state.events if e.type == "sanctuary_blocked")
+    assert state.characters["goblin_1"].hp == 7
+
+
+# --- Mirror Image
+
+
+def test_mirror_image_creates_three_images_and_is_not_concentration() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "mirror-image", 2)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "mirror-image")  # Self range: no target named
+    (image,) = elrond.conditions
+    assert (image.name, image.detail, image.duration_rounds) == ("mirror_image", "3", 10)
+    assert elrond.concentrating_on is None
+
+
+def test_mirror_image_cannot_be_cast_on_someone_else() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "mirror-image", 2)
+    _end_turn(state, "thorin")
+    with pytest.raises(TurnEngineError, match="only be cast on yourself"):
+        _cast(state, "elrond", "mirror-image", target="thorin")
+    assert elrond.spell_slots[2] == 1
+
+
+@pytest.mark.parametrize(
+    ("images", "redirect_natural", "redirected"),
+    [
+        (3, 5, False),  # three images: a 6 or higher redirects
+        (3, 6, True),
+        (2, 7, False),  # two: 8 or higher
+        (2, 8, True),
+        (1, 10, False),  # one: 11 or higher
+        (1, 11, True),
+    ],
+)
+def test_the_redirect_threshold_depends_on_how_many_images_remain(
+    images: int, redirect_natural: int, redirected: bool
+) -> None:
+    state = _build_demo_state()
+    _images(state, "elrond", images)
+    # Redirected: the goblin then rolls its attack against the duplicate (a
+    # natural 2 here, a miss), and the real Elrond is never rolled against.
+    # Not redirected: the same value list falls through to a real attack
+    # (natural 15, damage die 1) - so the two outcomes consume different RNG.
+    _goblin_attacks(
+        state, "elrond", [redirect_natural, 2] if redirected else [redirect_natural, 15, 1]
+    )
+    events = {e.type for e in state.events}
+    assert ("mirror_image" in events) is redirected
+    assert ("attack_roll" in events) is (not redirected)
+
+
+def test_an_attack_that_hits_a_duplicate_destroys_it_and_never_touches_the_real_target() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    _images(state, "elrond", 3)
+    # Redirect natural 6; duplicate AC = 10 + Elrond's DEX mod 3 = 13; the
+    # goblin's natural 10 + 4 = 14 >= 13 hits it.
+    _goblin_attacks(state, "elrond", [6, 10])
+    event = next(e for e in state.events if e.type == "mirror_image")
+    assert (event.actor, event.payload["target"]) == ("goblin_1", "elrond")
+    assert event.payload["image_hit"] is True
+    assert event.payload["images_remaining"] == 2
+    assert elrond.hp == 7
+    assert elrond.conditions[0].detail == "2"
+    assert not [e for e in state.events if e.type == "attack_roll"]
+
+
+def test_an_attack_that_misses_a_duplicate_leaves_it_standing() -> None:
+    state = _build_demo_state()
+    _images(state, "elrond", 3)
+    _goblin_attacks(state, "elrond", [6, 4])  # 4 + 4 = 8 < 13
+    event = next(e for e in state.events if e.type == "mirror_image")
+    assert event.payload["image_hit"] is False
+    assert event.payload["images_remaining"] == 3
+    assert state.characters["elrond"].conditions[0].detail == "3"
+
+
+def test_destroying_the_last_duplicate_ends_the_spell() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    _images(state, "elrond", 1)
+    _goblin_attacks(state, "elrond", [11, 10])
+    assert not has_condition(elrond, "mirror_image")
+    removed = next(e for e in state.events if e.type == "condition_removed")
+    assert (removed.payload["condition"], removed.payload["reason"]) == (
+        "mirror_image",
+        "all duplicates destroyed",
+    )
+
+
+def test_a_spell_attack_aimed_at_the_image_owner_can_hit_a_duplicate_too() -> None:
+    state = _build_demo_state()
+    goblin = state.characters["goblin_1"]
+    _images(state, "goblin_1", 3)
+    _end_turn(state, "thorin")
+    # Fire Bolt: redirect natural 6; the duplicate's AC is 10 + the goblin's
+    # DEX mod (14 -> +2) = 12; Elrond's natural 8 + 4 (INT +2, proficiency +2) =
+    # 12 >= 12 hits it.
+    _cast(state, "elrond", "fire bolt", target="goblin_1", rng=[6, 8])
+    assert next(e for e in state.events if e.type == "mirror_image").payload["image_hit"] is True
+    assert goblin.hp == 7, "the real goblin is untouched"
+
+
+def test_a_creature_without_mirror_image_rolls_no_redirect_die() -> None:
+    # Regression guard for every pre-existing fixed-RNG attack fixture: the
+    # d20 redirect check must consume nothing when there's no spell.
+    state = _build_demo_state()
+    _goblin_attacks(state, "elrond", [15, 1, 10])
+    assert next(e for e in state.events if e.type == "attack_roll").payload["roll_total"] == 19
+
+
+# --- Protection from Evil and Good
+
+
+def test_protection_from_evil_and_good_is_a_concentration_ward_on_an_ally() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "protection-from-evil-and-good", 1)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "protection-from-evil-and-good", target="thorin")
+    (ward,) = state.characters["thorin"].conditions
+    assert (ward.name, ward.duration_rounds) == ("protected_from_evil", 100)
+    assert elrond.concentrating_on == "Protection from Evil and Good"
+
+
+@pytest.mark.parametrize(
+    "creature_type", ["undead", "fiend", "celestial", "fey", "elemental", "aberration"]
+)
+def test_the_six_protected_against_types_attack_a_warded_creature_with_disadvantage(
+    creature_type: str,
+) -> None:
+    from src.engine.rules import protected_from_evil_disadvantage
+    from src.engine.srd_loader import load_srd
+
+    srd = load_srd()
+    monster_index = next(i for i, m in srd.monsters.items() if m["type"] == creature_type)
+    state = _build_demo_state()
+    attacker = state.characters["goblin_1"]
+    attacker.monster_index = monster_index
+    warded = state.characters["elrond"]
+    assert protected_from_evil_disadvantage(attacker, warded, srd) is False  # no ward yet
+    apply_condition(warded, Condition(name="protected_from_evil", duration_rounds=100))
+    assert protected_from_evil_disadvantage(attacker, warded, srd) is True
+
+
+@pytest.mark.parametrize("creature_type", ["humanoid", "beast", "dragon", "monstrosity"])
+def test_other_creature_types_are_not_hampered_by_the_ward(creature_type: str) -> None:
+    from src.engine.rules import protected_from_evil_disadvantage
+    from src.engine.srd_loader import load_srd
+
+    srd = load_srd()
+    monster_index = next(i for i, m in srd.monsters.items() if m["type"] == creature_type)
+    state = _build_demo_state()
+    attacker = state.characters["goblin_1"]
+    attacker.monster_index = monster_index
+    warded = state.characters["elrond"]
+    apply_condition(warded, Condition(name="protected_from_evil", duration_rounds=100))
+    assert protected_from_evil_disadvantage(attacker, warded, srd) is False
+
+
+def test_an_undead_attacker_rolls_with_disadvantage_against_the_warded_creature() -> None:
+    state = _build_demo_state()
+    state.characters["goblin_2"].monster_index = "skeleton"  # undead, adjacent to Elrond
+    apply_condition(
+        state.characters["elrond"], Condition(name="protected_from_evil", duration_rounds=100)
+    )
+    # Disadvantage: two d20s, the lower kept (20 then 3 -> 3; +4 = 7 < AC 13).
+    _goblin_attacks(state, "elrond", [20, 3], goblin="goblin_2")
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert attack.payload["natural"] == 3
+    assert attack.payload["hit"] is False
+
+
+def test_a_humanoid_attacker_is_unaffected_by_the_ward() -> None:
+    state = _build_demo_state()
+    apply_condition(
+        state.characters["elrond"], Condition(name="protected_from_evil", duration_rounds=100)
+    )
+    _goblin_attacks(state, "elrond", [20, 3, 10])  # one d20, damage die, CON save
+    assert next(e for e in state.events if e.type == "attack_roll").payload["natural"] == 20
+
+
+def test_a_non_monster_attacker_is_unaffected_by_the_ward() -> None:
+    from src.engine.rules import protected_from_evil_disadvantage
+    from src.engine.srd_loader import load_srd
+
+    state = _build_demo_state()
+    apply_condition(
+        state.characters["elrond"], Condition(name="protected_from_evil", duration_rounds=100)
+    )
+    assert (
+        protected_from_evil_disadvantage(
+            state.characters["thorin"], state.characters["elrond"], load_srd()
+        )
+        is False
+    )
