@@ -1,0 +1,80 @@
+name: CI
+
+# Runs the same gate every change has passed locally - lint, format, types,
+# the offline test suite, a from-scratch migration, and the frontend's
+# type-check/lint/build. Nothing here needs a GPU, Ollama, or any model: the
+# default pytest selection already deselects the llm/imagegen/integration
+# markers, and tests/unit/conftest.py turns TTS off.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch/PR supersedes a run still in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          # Keyed on uv.lock. The lock pins torch to PyTorch's cu124 wheel,
+          # which pulls ~3 GB of CUDA libraries - cached after the first run.
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Mypy
+        run: uv run mypy .
+
+      - name: Migrations apply from scratch and there is a single head
+        env:
+          DATABASE_URL: sqlite:///./ci_migrations.db
+        run: |
+          uv run alembic upgrade head
+          test "$(uv run alembic heads | wc -l)" -eq 1
+
+      - name: Tests
+        run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      # `tsc -b && vite build`: the type-check and a production build.
+      - name: Type-check and build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
