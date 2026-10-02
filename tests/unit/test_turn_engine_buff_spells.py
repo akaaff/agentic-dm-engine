@@ -523,3 +523,278 @@ def test_losing_concentration_on_bane_frees_the_baned_creature() -> None:
     _goblin_attacks(state, "elrond", [15, 1, 1], goblin="goblin_2")
     assert elrond.concentrating_on is None
     assert not has_condition(state.characters["goblin_1"], "baned")
+
+
+# ------------ issue #60: Protection from Energy / Stoneskin / Protection from Poison / Barkskin
+
+
+def _hit_with(state: GameState, target_id: str, amount: int, damage_type: str) -> int:
+    """Applies `amount` of `damage_type` damage to `target_id` through the
+    one chokepoint every attack/spell funnels through (where resistance is
+    decided), returning the HP actually lost - so a test can pin a resistance
+    rule without needing a monster that happens to deal that damage type."""
+    from src.engine.srd_loader import load_srd
+    from src.engine.turn_engine import _apply_damage_and_handle_downing
+
+    target = state.characters[target_id]
+    before = target.hp
+    _apply_damage_and_handle_downing(
+        state,
+        state.characters["goblin_1"],
+        target,
+        amount,
+        damage_type,
+        _FixedRandom([20]),  # type: ignore[arg-type]  # a passing concentration save, if asked
+        load_srd(),
+    )
+    return before - target.hp
+
+
+def test_the_four_resistance_and_ac_spells_are_condition_spells() -> None:
+    from src.engine.rules import spell_mechanic
+    from src.engine.srd_loader import load_srd
+
+    srd = load_srd()
+    for index in ("protection-from-energy", "stoneskin", "protection-from-poison", "barkskin"):
+        assert spell_mechanic(srd.spells[index]) == "condition", index
+
+
+def test_stoneskin_halves_physical_damage_but_not_other_types() -> None:
+    state = _build_demo_state()
+    thorin = state.characters["thorin"]
+    thorin.hp = thorin.max_hp = 40
+    apply_condition(thorin, Condition(name="stoneskinned", duration_rounds=600))
+    assert _hit_with(state, "thorin", 9, "slashing") == 4  # SRD: halved, rounded down
+    assert _hit_with(state, "thorin", 9, "bludgeoning") == 4
+    assert _hit_with(state, "thorin", 9, "piercing") == 4
+    assert _hit_with(state, "thorin", 9, "fire") == 9
+
+
+def test_protection_from_energy_only_resists_the_chosen_type() -> None:
+    state = _build_demo_state()
+    thorin = state.characters["thorin"]
+    thorin.hp = thorin.max_hp = 40
+    apply_condition(thorin, Condition(name="energy_resistant", duration_rounds=600, detail="fire"))
+    assert _hit_with(state, "thorin", 9, "fire") == 4
+    assert _hit_with(state, "thorin", 9, "cold") == 9
+    assert _hit_with(state, "thorin", 9, "slashing") == 9
+
+
+def test_protection_from_poison_resists_poison_damage() -> None:
+    state = _build_demo_state()
+    thorin = state.characters["thorin"]
+    thorin.hp = thorin.max_hp = 40
+    apply_condition(thorin, Condition(name="poison_protected", duration_rounds=600))
+    assert _hit_with(state, "thorin", 9, "poison") == 4
+    assert _hit_with(state, "thorin", 9, "fire") == 9
+
+
+def test_resistance_sources_do_not_stack_with_each_other_or_with_rage() -> None:
+    state = _build_demo_state()
+    thorin = state.characters["thorin"]
+    thorin.hp = thorin.max_hp = 40
+    thorin.is_raging = True
+    apply_condition(thorin, Condition(name="stoneskinned", duration_rounds=600))
+    # Rage and Stoneskin both resist slashing - SRD resistance halves once,
+    # never to a quarter.
+    assert _hit_with(state, "thorin", 8, "slashing") == 4
+
+
+def test_different_resistance_spells_coexist_on_one_target() -> None:
+    # apply_condition keeps one entry per condition NAME, so spells that each
+    # grant a resistance need distinct names or the second cast would erase
+    # the first - this is why Protection from Energy/Stoneskin/Poison aren't
+    # one shared "resistant" condition.
+    state = _build_demo_state()
+    thorin = state.characters["thorin"]
+    apply_condition(thorin, Condition(name="stoneskinned", duration_rounds=600))
+    apply_condition(thorin, Condition(name="energy_resistant", duration_rounds=600, detail="fire"))
+    apply_condition(thorin, Condition(name="poison_protected", duration_rounds=600))
+    assert {c.name for c in thorin.conditions} == {
+        "stoneskinned",
+        "energy_resistant",
+        "poison_protected",
+    }
+
+
+def test_protection_from_energy_records_the_damage_type_named_in_the_cast() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "protection-from-energy", 3)
+    _end_turn(state, "thorin")
+    _cast(
+        state,
+        "elrond",
+        "protection-from-energy",
+        target="thorin",
+        raw_text="I cast protection from energy on Thorin against fire",
+    )
+    (condition,) = state.characters["thorin"].conditions
+    assert (condition.name, condition.detail, condition.spell) == (
+        "energy_resistant",
+        "fire",
+        "Protection From Energy",
+    )
+    assert elrond.concentrating_on == "Protection From Energy"
+
+
+def test_protection_from_energy_accepts_the_type_as_a_param_too() -> None:
+    state = _build_demo_state()
+    _prepare(state, "elrond", "protection-from-energy", 3)
+    _end_turn(state, "thorin")
+    _cast(
+        state,
+        "elrond",
+        "protection-from-energy",
+        target="thorin",
+        params={"damage_type": "Thunder"},
+    )
+    assert state.characters["thorin"].conditions[0].detail == "thunder"
+
+
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "I cast protection from energy on Thorin",  # names no type
+        "I cast protection from energy on Thorin against fire or cold",  # ambiguous
+        "I cast protection from energy on Thorin against necrotic",  # not one of the five
+    ],
+)
+def test_protection_from_energy_without_one_clear_type_is_rejected_before_spending_a_slot(
+    raw_text: str,
+) -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "protection-from-energy", 3)
+    _end_turn(state, "thorin")
+    with pytest.raises(TurnEngineError, match="acid, cold, fire, lightning, or thunder"):
+        _cast(state, "elrond", "protection-from-energy", target="thorin", raw_text=raw_text)
+    assert elrond.spell_slots[3] == 1
+    assert elrond.concentrating_on is None
+    assert not state.characters["thorin"].conditions
+
+
+def test_stoneskin_is_castable_on_an_ally_and_concentrates() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "stoneskin", 4)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "stoneskin", target="thorin")
+    assert has_condition(state.characters["thorin"], "stoneskinned")
+    assert elrond.concentrating_on == "Stoneskin"
+
+
+def test_protection_from_poison_cures_poisoned_and_is_not_concentration() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "protection-from-poison", 2)
+    thorin = state.characters["thorin"]
+    apply_condition(thorin, Condition(name="poisoned", duration_rounds=5, source="goblin_1"))
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "protection-from-poison", target="thorin")
+    assert not has_condition(thorin, "poisoned")
+    assert has_condition(thorin, "poison_protected")
+    assert elrond.concentrating_on is None  # SRD: not a concentration spell
+    cure = next(e for e in state.events if e.type == "condition_removed")
+    assert (cure.actor, cure.payload["condition"], cure.payload["reason"]) == (
+        "thorin",
+        "poisoned",
+        "cured",
+    )
+
+
+def test_protection_from_poison_on_someone_not_poisoned_just_grants_the_resistance() -> None:
+    state = _build_demo_state()
+    _prepare(state, "elrond", "protection-from-poison", 2)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "protection-from-poison", target="thorin")
+    assert has_condition(state.characters["thorin"], "poison_protected")
+    assert not [e for e in state.events if e.type == "condition_removed"]
+
+
+# --- Barkskin: an AC floor, not a flat add
+
+
+def _armored_fighter() -> Character:
+    return create_character(
+        character_id="thorin",
+        name="Thorin",
+        race_index="human",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+        chosen_equipment=["chain-mail", "shield"],
+    )
+
+
+def test_barkskin_raises_ac_to_sixteen_and_the_breakdown_still_sums_to_it() -> None:
+    from src.engine.rules import armor_ac_breakdown
+    from src.engine.srd_loader import load_srd
+
+    srd = load_srd()
+    breakdown = armor_ac_breakdown(None, None, 2, None, srd.equipment, ac_floor=16)
+    assert sum(v for _, v in breakdown) == 16  # unarmored 10 + DEX 2 = 12, floored to 16
+    assert ("Barkskin minimum", 4) in breakdown
+
+
+def test_barkskin_never_lowers_an_ac_already_above_sixteen() -> None:
+    from src.engine.rules import armor_ac_breakdown
+    from src.engine.srd_loader import load_srd
+
+    srd = load_srd()
+    fighter = _armored_fighter()
+    assert fighter.ac == 18  # chain mail 16 + shield 2
+    breakdown = armor_ac_breakdown(
+        fighter.equipped_armor, fighter.equipped_shield, 2, None, srd.equipment, ac_floor=16
+    )
+    assert sum(v for _, v in breakdown) == 18
+    assert all(label != "Barkskin minimum" for label, _ in breakdown)
+
+
+def test_casting_barkskin_sets_the_floor_and_marks_concentration() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "barkskin", 2)
+    thorin = state.characters["thorin"]
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "barkskin", target="thorin")
+    assert thorin.ac == 16
+    assert has_condition(thorin, "barkskin")
+    assert elrond.concentrating_on == "Barkskin"
+
+
+def test_barkskin_floor_is_reapplied_when_ac_is_recomputed() -> None:
+    # The reason it's a condition checked by _recompute_ac rather than a
+    # one-time `ac = max(ac, 16)`: anything that recomputes AC afterwards
+    # (equipping armor, a level-up) must not silently drop the floor.
+    from src.engine.srd_loader import load_srd
+    from src.engine.turn_engine import _recompute_ac
+
+    srd = load_srd()
+    thorin = _two_person_party()[0]
+    apply_condition(thorin, Condition(name="barkskin", duration_rounds=600, source="x"))
+    _recompute_ac(thorin, srd)
+    assert thorin.ac == 16
+    thorin.conditions.clear()
+    _recompute_ac(thorin, srd)
+    assert thorin.ac == 12, "removing Barkskin restores the real AC"
+
+
+def test_losing_concentration_on_barkskin_restores_the_targets_real_ac() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "barkskin", 2)
+    thorin = state.characters["thorin"]
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "barkskin", target="thorin")
+    assert thorin.ac == 16
+    _goblin_attacks(state, "elrond", [15, 1, 1])  # hit, 3 damage, CON save natural 1: fails
+    assert elrond.concentrating_on is None
+    assert thorin.ac == 12
+
+
+def test_barkskin_expiring_by_time_restores_the_targets_real_ac() -> None:
+    state = _build_demo_state()
+    thorin = state.characters["thorin"]
+    apply_condition(thorin, Condition(name="barkskin", duration_rounds=1, source="elrond"))
+    thorin.ac = 16
+    for actor in ("thorin", "elrond", "goblin_1", "goblin_2"):
+        _end_turn(state, actor)
+    assert state.round == 2
+    assert not has_condition(thorin, "barkskin")
+    assert thorin.ac == 12

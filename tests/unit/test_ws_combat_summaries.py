@@ -8,10 +8,11 @@ narrator/intent-parser nodes, nothing here calls an LLM.
 from __future__ import annotations
 
 from src.api.ws.session import Session, _combat_summaries, _state_update_message, create_session
+from src.engine.conditions import apply_condition
 from src.engine.encounter import monster_to_character
 from src.engine.position import Position
 from src.engine.srd_loader import SrdIndex, load_srd
-from src.engine.state import Character, GameState
+from src.engine.state import Character, Condition, GameState
 
 
 def _fighter() -> Character:
@@ -89,6 +90,26 @@ def test_combat_summaries_reflects_mage_armor_and_temporary_ac_bonus() -> None:
     breakdown = entry["ac_breakdown"]
     assert ("Mage Armor base", 13) in breakdown
     assert ("temporary AC bonus", 2) in breakdown
+
+
+def test_combat_summaries_reflects_the_barkskin_ac_floor() -> None:
+    # Issue #60 - the same drift trap as Mage Armor above: the breakdown is a
+    # second AC computation, so the floor has to reach it too (via
+    # rules.ac_floor_for, which both it and turn_engine._recompute_ac ask).
+    # The components must still sum to the AC the sheet shows.
+    srd = load_srd()
+    fighter = _fighter()
+    fighter.equipped_armor = None
+    fighter.equipped_shield = None
+    apply_condition(fighter, Condition(name="barkskin", duration_rounds=600, source="x"))
+    session = _session_with(fighter, srd_index=srd)
+
+    entry = _combat_summaries(session)["thorin"]
+
+    assert isinstance(entry, dict)
+    breakdown = entry["ac_breakdown"]
+    assert sum(value for _, value in breakdown) == 16
+    assert any(label == "Barkskin minimum" for label, _ in breakdown)
 
 
 def test_combat_summaries_excludes_monsters() -> None:

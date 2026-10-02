@@ -140,6 +140,7 @@ from src.engine.rules import (
     ConditionSpellSpec,
     ability_check_modifier,
     ability_modifier,
+    ac_floor_for,
     apply_damage,
     armor_ac,
     baned_penalty,
@@ -176,6 +177,7 @@ from src.engine.rules import (
     saving_throw_bonus,
     skill_ability,
     spell_damage_notation,
+    spell_damage_resistance,
     spell_dc_info,
     spell_mechanic,
     spell_range_feet,
@@ -1693,7 +1695,13 @@ def _apply_damage_and_handle_downing(
     # damage (rounded down, plain integer division) before anything else
     # sees it - the concentration check below uses "half the damage you
     # take" per SRD, meaning the post-resistance amount, not the raw hit.
-    if target.is_raging and damage_type in _RAGE_RESISTANT_DAMAGE_TYPES:
+    #
+    # Issue #60: spell-granted resistance (Stoneskin, Protection from
+    # Energy/Poison) joins Rage here. SRD resistance never stacks, so any
+    # number of sources halves once - a raging, stoneskinned Barbarian takes
+    # half, not a quarter.
+    rage_resists = target.is_raging and damage_type in _RAGE_RESISTANT_DAMAGE_TYPES
+    if rage_resists or spell_damage_resistance(target, damage_type):
         damage //= 2
     # Issue #18: a monster's own SRD resistances/immunities/vulnerabilities
     # - always a 1.0 no-op for a PC/companion target, see
@@ -2256,6 +2264,7 @@ def _recompute_ac(actor: Character, srd: SrdIndex) -> None:
         con_mod=ability_modifier(actor.stats["CON"]),
         mage_armor_active=actor.mage_armor_active,
         temporary_ac_bonus=actor.temporary_ac_bonus,
+        ac_floor=ac_floor_for(actor),
     )
 
 
@@ -3405,6 +3414,31 @@ def _resolve_monster_innate_spell(
     return True
 
 
+_ENERGY_DAMAGE_TYPES = ("acid", "cold", "fire", "lightning", "thunder")
+
+
+def _chosen_damage_type(action: ParsedAction, spell: SrdEntry) -> str:
+    """The one damage type a Protection from Energy cast names (issue #60) -
+    the first spell in this engine that takes a player sub-choice. Read from
+    `params["damage_type"]` if the intent parser filled it, else found in the
+    caster's own words: it's a closed set of five plain words, which Python
+    can look for deterministically, instead of leaning on a 7B model to put
+    the right value in the right JSON slot (the same split as every other
+    parsing gap this project has hit - cast_spell's target, the closest
+    enemy). Exactly one distinct type is required: none, several ("fire or
+    cold"), or something outside the five (necrotic) is rejected with the
+    valid list, before any slot is spent."""
+    named = action.params.get("damage_type")
+    if isinstance(named, str) and named.strip().lower() in _ENERGY_DAMAGE_TYPES:
+        return named.strip().lower()
+    found = {t for t in _ENERGY_DAMAGE_TYPES if t in action.raw_text.lower()}
+    if len(found) == 1:
+        return found.pop()
+    raise TurnEngineError(
+        f"{spell['name']} needs one damage type: acid, cold, fire, lightning, or thunder"
+    )
+
+
 def _resolve_cast_spell(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> bool:
@@ -3562,6 +3596,16 @@ def _resolve_cast_spell(
         if distance > range_normal_feet:
             raise _out_of_range_error(actor, target, distance, spell["name"], range_normal_feet)
 
+    # Protection from Energy needs a damage type named in the cast - resolved
+    # (and possibly rejected) here, BEFORE the slot is spent, so a cast that
+    # didn't say which type doesn't burn a slot or start concentrating.
+    condition_detail: str | None = None
+    if mechanic == "condition":
+        spec = condition_spell_spec(spell)
+        condition_detail = (
+            _chosen_damage_type(action, spell) if spec.choose_damage_type else spec.detail
+        )
+
     if spell_level > 0:
         remaining = actor.spell_slots.get(spell_level, 0)
         if remaining <= 0:
@@ -3598,6 +3642,22 @@ def _resolve_cast_spell(
         # spec'd ConditionName to every named (willing) target.
         condition_spec = condition_spell_spec(spell)
         for target in targets:
+            # Protection from Poison: "if it is poisoned, you neutralize the
+            # poison" - an immediate cure before the ongoing resistance.
+            if condition_spec.cures and remove_condition(target, condition_spec.cures):
+                state.events.append(
+                    Event(
+                        round=state.round,
+                        turn_index=state.current_turn,
+                        actor=target.id,
+                        type="condition_removed",
+                        payload={
+                            "condition": condition_spec.cures,
+                            "spell": spell["name"],
+                            "reason": "cured",
+                        },
+                    )
+                )
             apply_condition(
                 target,
                 Condition(
@@ -3605,8 +3665,12 @@ def _resolve_cast_spell(
                     duration_rounds=condition_spec.duration_rounds,
                     source=actor.id,
                     spell=spell["name"],
+                    detail=condition_detail,
                 ),
             )
+            # Barkskin's AC floor is baked into the stored `ac`.
+            if condition_spec.condition == "barkskin":
+                _recompute_ac(target, srd)
             state.events.append(
                 Event(
                     round=state.round,

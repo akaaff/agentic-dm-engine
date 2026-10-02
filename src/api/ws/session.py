@@ -45,7 +45,12 @@ from src.engine.encounter import GameStateBuildError, build_encounter_state, loa
 from src.engine.monster_ai import approach_path, choose_monster_action, occupied_squares_by_side
 from src.engine.position import Position
 from src.engine.resting import apply_long_rest, apply_short_rest
-from src.engine.rules import ability_modifier, armor_ac_breakdown, effective_speed
+from src.engine.rules import (
+    ability_modifier,
+    ac_floor_for,
+    armor_ac_breakdown,
+    effective_speed,
+)
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
 from src.engine.turn_engine import (
@@ -464,6 +469,7 @@ def _combat_summaries(session: Session) -> dict[str, object]:
             con_mod,
             character.mage_armor_active,
             character.temporary_ac_bonus,
+            ac_floor_for(character),
         )
         attacks = current_attack_summaries(character, session.srd)
         summaries[character.id] = {

@@ -351,6 +351,14 @@ _CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     "blur": ConditionSpellSpec(condition="blurred", duration_rounds=10),
     "longstrider": ConditionSpellSpec(condition="longstrider", duration_rounds=600),
     "death-ward": ConditionSpellSpec(condition="death_warded", duration_rounds=4800),
+    "barkskin": ConditionSpellSpec(condition="barkskin", duration_rounds=600),
+    "stoneskin": ConditionSpellSpec(condition="stoneskinned", duration_rounds=600),
+    "protection-from-energy": ConditionSpellSpec(
+        condition="energy_resistant", duration_rounds=600, choose_damage_type=True
+    ),
+    "protection-from-poison": ConditionSpellSpec(
+        condition="poison_protected", duration_rounds=600, cures="poisoned"
+    ),
 }
 """Issue #55 spell audit (bucket 4's "general condition mechanic" - see
 #54): spells whose entire real effect is "apply this existing ConditionName
@@ -640,6 +648,28 @@ def monster_damage_multiplier(target: Character, damage_type: str, srd: SrdIndex
     return 1.0
 
 
+_PHYSICAL_DAMAGE_TYPES = frozenset({"bludgeoning", "piercing", "slashing"})
+
+
+def spell_damage_resistance(target: Character, damage_type: str) -> bool:
+    """Whether a spell currently gives `target` resistance to `damage_type`
+    (issue #60): Stoneskin (bludgeoning/piercing/slashing - real SRD says
+    "nonmagical", but this engine has no magical-weapon concept anywhere, so it
+    resists all three, the same simplification monster_damage_multiplier already
+    makes for a monster's "nonmagical" clause), Protection from Poison (poison),
+    and Protection from Energy (the one type named at cast time, kept in
+    Condition.detail). A boolean, not a multiplier: SRD resistance never stacks,
+    so the caller halves once however many sources apply (Rage included)."""
+    for condition in target.conditions:
+        if condition.name == "stoneskinned" and damage_type in _PHYSICAL_DAMAGE_TYPES:
+            return True
+        if condition.name == "poison_protected" and damage_type == "poison":
+            return True
+        if condition.name == "energy_resistant" and condition.detail == damage_type:
+            return True
+    return False
+
+
 def monster_is_immune_to_condition(
     target: Character, condition_name: ConditionName, srd: SrdIndex
 ) -> bool:
@@ -785,6 +815,7 @@ def armor_ac_breakdown(
     con_mod: int = 0,
     mage_armor_active: bool = False,
     temporary_ac_bonus: int = 0,
+    ac_floor: int | None = None,
 ) -> list[tuple[str, int]]:
     """The named components that sum to `armor_ac`'s own return value -
     extracted so the two can never drift (armor_ac is now just
@@ -847,6 +878,16 @@ def armor_ac_breakdown(
     if temporary_ac_bonus:
         breakdown.append(("temporary AC bonus", temporary_ac_bonus))
 
+    # Barkskin (issue #60): "the target's AC can't be less than 16, regardless of what
+    # kind of armor it is wearing" - a floor, not a flat add like Shield of Faith,
+    # so it only contributes the shortfall. Recorded as its own breakdown entry
+    # (rather than silently returning a bigger total) so the components still sum
+    # to the AC the sheet shows. Applied last, after every other source.
+    if ac_floor is not None:
+        shortfall = ac_floor - sum(value for _, value in breakdown)
+        if shortfall > 0:
+            breakdown.append(("Barkskin minimum", shortfall))
+
     return breakdown
 
 
@@ -861,6 +902,7 @@ def armor_ac(
     con_mod: int = 0,
     mage_armor_active: bool = False,
     temporary_ac_bonus: int = 0,
+    ac_floor: int | None = None,
 ) -> int:
     """AC from a character's two armor slots (issue #13) - the same formula
     character_creation._compute_ac originally computed once at creation by
@@ -907,8 +949,21 @@ def armor_ac(
             con_mod,
             mage_armor_active,
             temporary_ac_bonus,
+            ac_floor,
         )
     )
+
+
+BARKSKIN_AC_FLOOR = 16
+
+
+def ac_floor_for(character: Character) -> int | None:
+    """The AC floor a spell currently imposes on `character` (Barkskin, issue
+    #60), or None. The one place turn_engine._recompute_ac and the character
+    sheet's AC breakdown (api/ws/session.py) both ask, so the displayed
+    breakdown can't drift from the stored `ac` - the exact gap Mage Armor's
+    own display hit when its two new inputs reached only one of the two."""
+    return BARKSKIN_AC_FLOOR if has_condition(character, "barkskin") else None
 
 
 def weapon_combo_is_legal(
