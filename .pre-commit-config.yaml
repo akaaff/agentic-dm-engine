@@ -1,6 +1,15 @@
 repos:
   - repo: local
     hooks:
+      - id: no-commit-to-main
+        name: no commit to main
+        # One branch per change, merged via PR once CI passes - see
+        # scripts/no_commit_to_main.py. Listed first so a commit on main fails
+        # immediately instead of after the slower ruff/mypy hooks.
+        entry: uv run python scripts/no_commit_to_main.py
+        language: system
+        always_run: true
+        pass_filenames: false
       - id: ruff-check
         name: ruff check
         # Local (uv run), not astral-sh/ruff-pre-commit's pinned isolated env -
