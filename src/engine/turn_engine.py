@@ -3891,6 +3891,19 @@ def _resolve_cast_spell(
         # Issue #55 spell audit: e.g. Invisibility - no roll, apply the
         # spec'd ConditionName to every named (willing) target.
         condition_spec = condition_spell_spec(spell)
+        # Who cast what. The per-target condition_applied events below have
+        # the TARGET as their actor, so without this the narrator had nothing
+        # saying the caster did it - found live: a Cleric's own Sanctuary was
+        # narrated as a different party member's incantation.
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="spell_cast",
+                payload={"spell": spell["name"], "targets": [t.id for t in targets]},
+            )
+        )
         for target in targets:
             # Protection from Poison: "if it is poisoned, you neutralize the
             # poison" - an immediate cure before the ongoing resistance.

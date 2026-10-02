@@ -1299,3 +1299,17 @@ def test_a_non_monster_attacker_is_unaffected_by_the_ward() -> None:
         )
         is False
     )
+
+
+def test_a_condition_spell_records_who_cast_it_before_the_per_target_effects() -> None:
+    # The condition_applied events have the TARGET as their actor, so without
+    # an explicit spell_cast the narrator had nothing saying the caster did it
+    # (found live: a Cleric's Sanctuary was narrated as someone else's cast).
+    state = _build_demo_state()
+    _prepare(state, "elrond", "sanctuary", 1)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "sanctuary", target="thorin")
+    kinds = [e.type for e in state.events if e.type in ("spell_cast", "condition_applied")]
+    assert kinds == ["spell_cast", "condition_applied"]
+    cast = next(e for e in state.events if e.type == "spell_cast")
+    assert (cast.actor, cast.payload) == ("elrond", {"spell": "Sanctuary", "targets": ["thorin"]})
