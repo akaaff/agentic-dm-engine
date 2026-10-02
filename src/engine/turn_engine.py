@@ -1064,6 +1064,33 @@ def _finalize_attack_result(
         result = replace(result, damage=(result.damage or 0) + smite_damage)
         state.events[-1].payload["divine_smite_damage"] = smite_damage
 
+    # Divine Favor (issue #58): "your weapon attacks deal an extra 1d4
+    # radiant damage on a hit" - banked on the caster (a condition, so the
+    # sheet badge and concentration-ending come for free), applying to every
+    # weapon hit with no target restriction. Folded into the weapon's own
+    # damage type like Sneak Attack and Divine Smite above (this engine
+    # resolves one damage type per hit), so a radiant-resistant target would
+    # halve the whole hit - the same documented simplification Smite already
+    # makes. Dice double on a crit, like theirs.
+    if result.hit and has_condition(actor, "divine_favor"):
+        favor_damage = roll(2 if result.critical else 1, 4, modifier=0, rng=rng).total
+        result = replace(result, damage=(result.damage or 0) + favor_damage)
+        state.events[-1].payload["divine_favor_damage"] = favor_damage
+
+    # Hunter's Mark (issue #58): "you deal an extra 1d6 damage to the target
+    # whenever you hit it with a weapon attack". The mark lives on the
+    # TARGET as a condition whose source is the marker, so the extra damage
+    # applies only for that caster (a different attacker gets nothing),
+    # shows as a badge on the marked creature, and goes away with it - or
+    # when the marker's concentration ends. Re-marking after the target dies
+    # without recasting is out of scope, as the issue says.
+    if result.hit and any(
+        c.name == "hunters_marked" and c.source == actor.id for c in target.conditions
+    ):
+        mark_damage = roll(2 if result.critical else 1, 6, modifier=0, rng=rng).total
+        result = replace(result, damage=(result.damage or 0) + mark_damage)
+        state.events[-1].payload["hunters_mark_damage"] = mark_damage
+
     if result.hit and result.damage is not None:
         _apply_damage_and_handle_downing(
             state, actor, target, result.damage, params.damage_type, rng, srd
@@ -3582,10 +3609,20 @@ def _resolve_cast_spell(
         # polarity check instead: a beneficial buff on an unwilling enemy
         # makes no real-world sense (real SRD's own "willing creature"
         # targeting), so same-side is required, not rejected.
-        if mechanic == "condition" and target.is_pc != actor.is_pc:
-            raise TurnEngineError(
-                f"{actor.id} cannot cast {spell['name']} on {target.id} - not an ally"
-            )
+        if mechanic == "condition":
+            target_side = condition_spell_spec(spell).target_side
+            if target_side == "ally" and target.is_pc != actor.is_pc:
+                raise TurnEngineError(
+                    f"{actor.id} cannot cast {spell['name']} on {target.id} - not an ally"
+                )
+            if target_side == "enemy" and target.is_pc == actor.is_pc:
+                raise TurnEngineError(
+                    f"{actor.id} cannot cast {spell['name']} on {target.id} - not an enemy"
+                )
+            if target_side == "enemy" and target.is_dead:
+                # Marking the dead would waste the slot and, worse, drop the
+                # caster's current concentration for nothing.
+                raise TurnEngineError(f"{target.id} is already dead")
         if mechanic not in ("heal", "condition"):
             _validate_attack_target(actor, target)
         targets.append(target)

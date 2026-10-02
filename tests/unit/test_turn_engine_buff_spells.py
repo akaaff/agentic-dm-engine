@@ -25,6 +25,7 @@ from src.engine.actions import ParsedAction
 from src.engine.character_creation import create_character
 from src.engine.conditions import apply_condition, has_condition, tick_conditions
 from src.engine.encounter import build_encounter_state
+from src.engine.position import Position
 from src.engine.state import Character, Condition, GameState
 from src.engine.turn_engine import TurnEngineError, resolve_action
 
@@ -798,3 +799,180 @@ def test_barkskin_expiring_by_time_restores_the_targets_real_ac() -> None:
     assert state.round == 2
     assert not has_condition(thorin, "barkskin")
     assert thorin.ac == 12
+
+
+# ------------------------------------- issue #58: Hunter's Mark / Divine Favor
+
+
+def _attack(state: GameState, actor_id: str, target_id: str, rng: list[int]) -> None:
+    resolve_action(
+        state,
+        ParsedAction(actor=actor_id, verb="attack", target=target_id, raw_text="attack"),
+        _FixedRandom(rng),  # type: ignore[arg-type]
+    )
+
+
+def test_hunters_mark_and_divine_favor_are_condition_spells() -> None:
+    from src.engine.rules import spell_mechanic
+    from src.engine.srd_loader import load_srd
+
+    srd = load_srd()
+    for index in ("hunters-mark", "divine-favor"):
+        assert spell_mechanic(srd.spells[index]) == "condition", index
+
+
+def test_divine_favor_is_a_self_cast_bonus_action_that_leaves_the_main_action() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "divine-favor", 1)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "divine-favor")  # Self range: no target named
+    assert has_condition(elrond, "divine_favor")
+    assert elrond.concentrating_on == "Divine Favor"
+    assert elrond.bonus_action_used is True
+    assert state.turn_order[state.current_turn] == "elrond", "a bonus action doesn't end the turn"
+    (condition,) = elrond.conditions
+    assert (condition.duration_rounds, condition.source) == (10, "elrond")
+
+
+def test_divine_favor_cannot_be_cast_on_someone_else() -> None:
+    state = _build_demo_state()
+    _prepare(state, "elrond", "divine-favor", 1)
+    _end_turn(state, "thorin")
+    with pytest.raises(TurnEngineError, match="only be cast on yourself"):
+        _cast(state, "elrond", "divine-favor", target="thorin")
+
+
+def test_divine_favor_adds_a_d4_of_extra_damage_on_a_weapon_hit() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    apply_condition(
+        elrond, Condition(name="divine_favor", duration_rounds=10, source="elrond", spell="DF")
+    )
+    _end_turn(state, "thorin")
+    goblin = state.characters["goblin_1"]
+    # Dagger: natural 18 hits (+5 vs AC 15); 1d4 weapon die 1 + DEX mod 3 =
+    # 4; then Divine Favor's own d4 -> 2. Total 6 of the goblin's 7 HP.
+    _attack(state, "elrond", "goblin_1", [18, 1, 2])
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert attack.payload["divine_favor_damage"] == 2
+    assert goblin.hp == 1
+
+
+def test_divine_favor_dice_double_on_a_critical_hit() -> None:
+    state = _build_demo_state()
+    elrond = state.characters["elrond"]
+    apply_condition(
+        elrond, Condition(name="divine_favor", duration_rounds=10, source="elrond", spell="DF")
+    )
+    _end_turn(state, "thorin")
+    # Natural 20: the dagger's own dice double (1, 1), and so do Divine
+    # Favor's (2d4 -> 2, 3) - extra damage on the same attack doubles like
+    # Sneak Attack's and Divine Smite's already do.
+    _attack(state, "elrond", "goblin_1", [20, 1, 1, 2, 3])
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert attack.payload["divine_favor_damage"] == 5
+
+
+def test_divine_favor_rolls_nothing_on_a_miss() -> None:
+    state = _build_demo_state()
+    apply_condition(
+        state.characters["elrond"],
+        Condition(name="divine_favor", duration_rounds=10, source="elrond", spell="DF"),
+    )
+    _end_turn(state, "thorin")
+    # A natural 2 misses (2 + 5 = 7 vs AC 15); the list holds only the d20, so
+    # a stray damage/bonus roll would raise IndexError.
+    _attack(state, "elrond", "goblin_1", [2])
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert attack.payload["hit"] is False
+    assert "divine_favor_damage" not in attack.payload
+
+
+def test_hunters_mark_marks_an_enemy_within_range_as_a_bonus_action() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "hunters-mark", 1)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "hunters-mark", target="goblin_1")
+    goblin = state.characters["goblin_1"]
+    assert has_condition(goblin, "hunters_marked")
+    (mark,) = goblin.conditions
+    assert (mark.source, mark.spell, mark.duration_rounds) == ("elrond", "Hunter's Mark", 600)
+    assert elrond.concentrating_on == "Hunter's Mark"
+    assert state.turn_order[state.current_turn] == "elrond", "bonus action: the turn continues"
+
+
+def test_hunters_mark_rejects_an_ally_as_its_target() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "hunters-mark", 1)
+    _end_turn(state, "thorin")
+    with pytest.raises(TurnEngineError, match="not an enemy"):
+        _cast(state, "elrond", "hunters-mark", target="thorin")
+    assert elrond.spell_slots[1] == 3, "a rejected cast must not burn the slot"
+    assert elrond.concentrating_on is None
+
+
+def test_the_marker_deals_an_extra_d6_when_they_hit_the_marked_creature() -> None:
+    state = _build_demo_state()
+    apply_condition(
+        state.characters["goblin_1"],
+        Condition(name="hunters_marked", duration_rounds=600, source="elrond", spell="HM"),
+    )
+    _end_turn(state, "thorin")
+    # Dagger: hit (natural 18), weapon die 1 + 3 = 4, then the mark's d6 -> 4.
+    _attack(state, "elrond", "goblin_1", [18, 1, 4])
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert attack.payload["hunters_mark_damage"] == 4
+    assert state.characters["goblin_1"].hp == 0  # 7 - (4 + 4), clamped
+
+
+def test_someone_else_hitting_the_marked_creature_gets_no_bonus() -> None:
+    state = _build_demo_state()
+    apply_condition(
+        state.characters["goblin_1"],
+        Condition(name="hunters_marked", duration_rounds=600, source="elrond", spell="HM"),
+    )
+    thorin = state.characters["thorin"]
+    thorin.position = Position(x=1, y=1)  # adjacent to goblin_1 at (2, 1)
+    # Longsword: hit, 1d8 die 2 + STR 3 = 5. The list has no d6 for a mark
+    # bonus - the mark belongs to Elrond, not Thorin.
+    _attack(state, "thorin", "goblin_1", [18, 2])
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert "hunters_mark_damage" not in attack.payload
+    assert state.characters["goblin_1"].hp == 2
+
+
+def test_the_marker_gets_no_bonus_against_an_unmarked_creature() -> None:
+    state = _build_demo_state()
+    apply_condition(
+        state.characters["goblin_1"],
+        Condition(name="hunters_marked", duration_rounds=600, source="elrond", spell="HM"),
+    )
+    _end_turn(state, "thorin")
+    _attack(state, "elrond", "goblin_2", [18, 1])  # goblin_2 isn't the marked one
+    attack = next(e for e in state.events if e.type == "attack_roll")
+    assert "hunters_mark_damage" not in attack.payload
+
+
+def test_losing_concentration_ends_the_mark() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "hunters-mark", 1)
+    _end_turn(state, "thorin")
+    _cast(state, "elrond", "hunters-mark", target="goblin_1")
+    assert has_condition(state.characters["goblin_1"], "hunters_marked")
+    # goblin_2 hits Elrond for 3; his CON save (natural 1) fails.
+    _goblin_attacks(state, "elrond", [15, 1, 1], goblin="goblin_2")
+    assert elrond.concentrating_on is None
+    assert not has_condition(state.characters["goblin_1"], "hunters_marked")
+
+
+def test_hunters_mark_rejects_a_dead_target_without_dropping_current_concentration() -> None:
+    state = _build_demo_state()
+    elrond = _prepare(state, "elrond", "hunters-mark", 1)
+    _sustain(state, "elrond", "Bless", on=["thorin"])
+    state.characters["goblin_1"].is_dead = True
+    _end_turn(state, "thorin")
+    with pytest.raises(TurnEngineError, match="already dead"):
+        _cast(state, "elrond", "hunters-mark", target="goblin_1")
+    assert elrond.spell_slots[1] == 3
+    assert elrond.concentrating_on == "Bless", "a rejected cast must not end the current one"
+    assert has_condition(state.characters["thorin"], "blessed")

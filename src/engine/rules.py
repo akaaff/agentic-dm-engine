@@ -359,6 +359,10 @@ _CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     "protection-from-poison": ConditionSpellSpec(
         condition="poison_protected", duration_rounds=600, cures="poisoned"
     ),
+    "divine-favor": ConditionSpellSpec(condition="divine_favor", duration_rounds=10),
+    "hunters-mark": ConditionSpellSpec(
+        condition="hunters_marked", duration_rounds=600, target_side="enemy"
+    ),
 }
 """Issue #55 spell audit (bucket 4's "general condition mechanic" - see
 #54): spells whose entire real effect is "apply this existing ConditionName
