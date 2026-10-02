@@ -308,6 +308,21 @@ function playSequentially(urls: (string | null)[]): void {
 // minimal gap for the audio-less fallback path, not a reading timer.
 const ENTRY_REVEAL_DELAY_MS = 1000
 
+// Live-session persistence: the server snapshots every live game to its DB,
+// so a backend restart (a deploy, a crash) is recoverable - this client just
+// has to come back. Retried with a capped exponential backoff rather than
+// left for the player to notice and refresh; the cap is generous on purpose
+// (a cold backend takes about a minute to load its TTS model before it
+// accepts anything), after which the player is told to refresh instead of the
+// tab retrying forever in the background.
+const RECONNECT_BASE_DELAY_MS = 500
+const RECONNECT_MAX_DELAY_MS = 8000
+const MAX_RECONNECT_ATTEMPTS = 30
+// Closes the server sends deliberately after reporting why (4401: a token that
+// matches no seat; 1011: the session itself couldn't be built) - retrying
+// can't change the answer, so these stay closed.
+const NO_RETRY_CLOSE_CODES = new Set([4401, 1011])
+
 export function useSessionSocket(sessionId: string) {
   const [gameState, setGameState] = useState<LiveGameState | null>(null)
   const [combatSummaries, setCombatSummaries] = useState<Record<string, CombatSummary>>({})
@@ -325,6 +340,7 @@ export function useSessionSocket(sessionId: string) {
   const [disconnectedActors, setDisconnectedActors] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
+  const [reconnecting, setReconnecting] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   // How many of game_state.events this client has already accounted for -
   // the next state_update's new events (a plain slice from this count) are
@@ -453,146 +469,205 @@ export function useSessionSocket(sessionId: string) {
       scheduleDrain()
     }
 
-    // Issue #42: a plain WebSocket can't carry a custom header, so the
-    // passphrase (when one is stored) rides along as a query param instead -
-    // see api/ws/session.py's session_websocket for the matching check.
-    // Issue #44/#45: same story for a lobby's personal player token, which
-    // identifies which character this connection controls in a session with
-    // 2+ human seats (a single-seat session needs neither the frontend nor
-    // the server to know about a token at all - see session_websocket's own
-    // single-seat exemption).
-    const params = new URLSearchParams()
-    const accessKey = getAccessKey()
-    if (accessKey) params.set('key', accessKey)
-    const lobbyToken = getLobbyToken(sessionId)
-    if (lobbyToken) params.set('token', lobbyToken)
-    const query = params.toString() ? `?${params.toString()}` : ''
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}${query}`)
-    wsRef.current = ws
+    let reconnectAttempt = 0
+    let reconnectTimer: number | null = null
+    let everConnected = false
 
-    ws.onopen = () => {
-      if (!cancelled) setConnected(true)
-    }
-    ws.onclose = () => {
-      if (!cancelled) setConnected(false)
-    }
-    ws.onerror = () => {
-      if (!cancelled) setError('Connection to the game server failed')
-    }
-
-    ws.onmessage = (event: MessageEvent<string>) => {
+    function scheduleReconnect() {
       if (cancelled) return
-      const message = JSON.parse(event.data) as ServerMessage
-      switch (message.type) {
-        case 'state_update': {
-          const newEvents = message.game_state.events.slice(lastEventCountRef.current)
-          lastEventCountRef.current = message.game_state.events.length
-          const pendingText = pendingNarrationRef.current
-          pendingNarrationRef.current = null
-          const pendingAudio = pendingNarrationAudioRef.current
-          pendingNarrationAudioRef.current = null
-          if (pendingText || newEvents.length > 0 || entryQueueRef.current.length > 0) {
-            // Held back until this entry is actually revealed (drainNext) -
-            // see NarrationEntry.gameStateSnapshot's docstring. The queue
-            // check matters even when THIS update has no text/events of its
-            // own: found live going straight from a campaign's pre-combat
-            // hook into its first fight - the connect flow's own trailing
-            // state_update (sent once encounter setup finishes) can be a
-            // genuine duplicate of one already broadcast moments earlier
-            // (same event count, no new narration), which used to qualify
-            // for the "nothing paces me" fast path below and apply
-            // immediately - flipping gameState (and so the combat-grid-vs-
-            // scene-image panel, which reads battle_map/status straight off
-            // it) to the fully-resolved combat state while the hook
-            // narration ahead of it in the queue was still being revealed
-            // one entry at a time. Whether THIS message needs pacing isn't
-            // the right question - whether anything else is already ahead
-            // of it in the queue is.
-            enqueueEntry({
-              text: pendingText ?? '',
-              kind: 'action',
-              events: newEvents,
-              gameStateSnapshot: message.game_state,
-              combatSummariesSnapshot: message.combat_summaries,
-              campaignCompleteSnapshot: message.campaign_complete,
-              audioUrl: pendingAudio,
-            })
-          } else {
-            // Nothing of its own to pace, and nothing already queued for it
-            // to jump ahead of - safe to apply right away.
-            setGameState(message.game_state)
-            setCombatSummaries(message.combat_summaries)
-            setCampaignComplete(message.campaign_complete)
-          }
-          break
-        }
-        case 'narration':
-          // Stashed, not pushed yet - the state_update broadcast that
-          // always immediately follows (see session.py) carries the
-          // mechanical events this same narration is about, and both land
-          // in the log as one combined entry.
-          pendingNarrationRef.current = message.text || null
-          pendingNarrationAudioRef.current = message.audio_url
-          break
-        case 'scene_narration':
-          if (message.text) {
-            enqueueEntry({ text: message.text, kind: 'scene', audioUrl: message.audio_url })
-          }
-          break
-        case 'scene_image':
-          setSceneImageUrl(message.url)
-          break
-        case 'awaiting_input':
-          setAwaitingActor(message.actor)
-          break
-        case 'error':
-          setError(message.detail)
-          break
-        case 'player_disconnected':
-          setDisconnectedActors((prev) =>
-            prev.includes(message.actor) ? prev : [...prev, message.actor]
-          )
-          break
-        case 'player_reconnected':
-          setDisconnectedActors((prev) => prev.filter((id) => id !== message.actor))
-          break
-        case 'bardic_inspiration_offer':
-          setBardicOffer(message)
-          break
-        case 'party_choice_offer':
-          setPartyChoice({
-            situation: message.situation,
-            companionResponses: message.companion_responses,
-            companionResponseAudio: message.companion_response_audio,
-            awaiting: message.awaiting,
-          })
-          // Unlike ordinary narration (paced one entry at a time via the
-          // reveal queue above), a party_choice offer's companion reactions
-          // all arrive and render at once - played back one after another
-          // instead, so two companions' voices don't overlap.
-          playSequentially(Object.values(message.companion_response_audio))
-          break
-        case 'party_choice_responded':
-          // Shrinks `awaiting` as each human answers; once nobody's left,
-          // the server resolves the choice and moves the chain on - clear
-          // the panel rather than leave it sitting empty until the next
-          // scene_narration supersedes it.
-          setPartyChoice((prev) => {
-            if (!prev) return prev
-            const awaiting = prev.awaiting.filter((id) => id !== message.actor)
-            return awaiting.length > 0 ? { ...prev, awaiting } : null
-          })
-          break
+      if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+        setReconnecting(false)
+        setError('Lost connection to the game server - refresh the page to try again')
+        return
       }
+      const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** reconnectAttempt, RECONNECT_MAX_DELAY_MS)
+      reconnectAttempt += 1
+      setReconnecting(true)
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null
+        connect(true)
+      }, delay)
     }
+
+    function connect(isReconnect: boolean) {
+      if (isReconnect) {
+        // A fresh connection starts blind to whatever happened while it was
+        // gone - the server re-sends a full state_update, and re-offers any
+        // still-pending choice and the current awaiting_input, so everything
+        // transient is cleared here rather than left to show stale. Unlike a
+        // first connect, lastEventCountRef is deliberately KEPT: the first
+        // state_update after a reconnect carries the whole event history, and
+        // resetting the count would replay every already-seen event into the
+        // log as one giant new entry. The reveal queue/timers are kept too - a
+        // log still draining should finish.
+        pendingNarrationRef.current = null
+        pendingNarrationAudioRef.current = null
+        setAwaitingActor(null)
+        setBardicOffer(null)
+        setPartyChoice(null)
+        setDisconnectedActors([])
+      }
+      // Issue #42: a plain WebSocket can't carry a custom header, so the
+      // passphrase (when one is stored) rides along as a query param instead -
+      // see api/ws/session.py's session_websocket for the matching check.
+      // Issue #44/#45: same story for a lobby's personal player token, which
+      // identifies which character this connection controls in a session with
+      // 2+ human seats (a single-seat session needs neither the frontend nor
+      // the server to know about a token at all - see session_websocket's own
+      // single-seat exemption).
+      const params = new URLSearchParams()
+      const accessKey = getAccessKey()
+      if (accessKey) params.set('key', accessKey)
+      const lobbyToken = getLobbyToken(sessionId)
+      if (lobbyToken) params.set('token', lobbyToken)
+      const query = params.toString() ? `?${params.toString()}` : ''
+      const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}${query}`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        if (cancelled) return
+        everConnected = true
+        reconnectAttempt = 0
+        setConnected(true)
+        setReconnecting(false)
+        setError(null)
+      }
+      ws.onclose = (event: CloseEvent) => {
+        // wsRef.current !== ws: a socket superseded by a newer connect() attempt
+        // closing late must not tear down the live one's state.
+        if (cancelled || wsRef.current !== ws) return
+        setConnected(false)
+        // Nothing can be submitted until the server (re-)announces whose turn it
+        // is on the next connection.
+        setAwaitingActor(null)
+        if (NO_RETRY_CLOSE_CODES.has(event.code)) return
+        scheduleReconnect()
+      }
+      ws.onerror = () => {
+        // Only the very first connection's failure is an "error" to show - once
+        // a session has been live, a failed attempt is just one more step of
+        // reconnecting (see `reconnecting`), not a new problem.
+        if (!cancelled && !everConnected) setError('Connection to the game server failed')
+      }
+
+      ws.onmessage = (event: MessageEvent<string>) => {
+        if (cancelled) return
+        const message = JSON.parse(event.data) as ServerMessage
+        switch (message.type) {
+          case 'state_update': {
+            const newEvents = message.game_state.events.slice(lastEventCountRef.current)
+            lastEventCountRef.current = message.game_state.events.length
+            const pendingText = pendingNarrationRef.current
+            pendingNarrationRef.current = null
+            const pendingAudio = pendingNarrationAudioRef.current
+            pendingNarrationAudioRef.current = null
+            if (pendingText || newEvents.length > 0 || entryQueueRef.current.length > 0) {
+              // Held back until this entry is actually revealed (drainNext) -
+              // see NarrationEntry.gameStateSnapshot's docstring. The queue
+              // check matters even when THIS update has no text/events of its
+              // own: found live going straight from a campaign's pre-combat
+              // hook into its first fight - the connect flow's own trailing
+              // state_update (sent once encounter setup finishes) can be a
+              // genuine duplicate of one already broadcast moments earlier
+              // (same event count, no new narration), which used to qualify
+              // for the "nothing paces me" fast path below and apply
+              // immediately - flipping gameState (and so the combat-grid-vs-
+              // scene-image panel, which reads battle_map/status straight off
+              // it) to the fully-resolved combat state while the hook
+              // narration ahead of it in the queue was still being revealed
+              // one entry at a time. Whether THIS message needs pacing isn't
+              // the right question - whether anything else is already ahead
+              // of it in the queue is.
+              enqueueEntry({
+                text: pendingText ?? '',
+                kind: 'action',
+                events: newEvents,
+                gameStateSnapshot: message.game_state,
+                combatSummariesSnapshot: message.combat_summaries,
+                campaignCompleteSnapshot: message.campaign_complete,
+                audioUrl: pendingAudio,
+              })
+            } else {
+              // Nothing of its own to pace, and nothing already queued for it
+              // to jump ahead of - safe to apply right away.
+              setGameState(message.game_state)
+              setCombatSummaries(message.combat_summaries)
+              setCampaignComplete(message.campaign_complete)
+            }
+            break
+          }
+          case 'narration':
+            // Stashed, not pushed yet - the state_update broadcast that
+            // always immediately follows (see session.py) carries the
+            // mechanical events this same narration is about, and both land
+            // in the log as one combined entry.
+            pendingNarrationRef.current = message.text || null
+            pendingNarrationAudioRef.current = message.audio_url
+            break
+          case 'scene_narration':
+            if (message.text) {
+              enqueueEntry({ text: message.text, kind: 'scene', audioUrl: message.audio_url })
+            }
+            break
+          case 'scene_image':
+            setSceneImageUrl(message.url)
+            break
+          case 'awaiting_input':
+            setAwaitingActor(message.actor)
+            break
+          case 'error':
+            setError(message.detail)
+            break
+          case 'player_disconnected':
+            setDisconnectedActors((prev) =>
+              prev.includes(message.actor) ? prev : [...prev, message.actor]
+            )
+            break
+          case 'player_reconnected':
+            setDisconnectedActors((prev) => prev.filter((id) => id !== message.actor))
+            break
+          case 'bardic_inspiration_offer':
+            setBardicOffer(message)
+            break
+          case 'party_choice_offer':
+            setPartyChoice({
+              situation: message.situation,
+              companionResponses: message.companion_responses,
+              companionResponseAudio: message.companion_response_audio,
+              awaiting: message.awaiting,
+            })
+            // Unlike ordinary narration (paced one entry at a time via the
+            // reveal queue above), a party_choice offer's companion reactions
+            // all arrive and render at once - played back one after another
+            // instead, so two companions' voices don't overlap.
+            playSequentially(Object.values(message.companion_response_audio))
+            break
+          case 'party_choice_responded':
+            // Shrinks `awaiting` as each human answers; once nobody's left,
+            // the server resolves the choice and moves the chain on - clear
+            // the panel rather than leave it sitting empty until the next
+            // scene_narration supersedes it.
+            setPartyChoice((prev) => {
+              if (!prev) return prev
+              const awaiting = prev.awaiting.filter((id) => id !== message.actor)
+              return awaiting.length > 0 ? { ...prev, awaiting } : null
+            })
+            break
+        }
+      }
+
+    }
+
+    connect(false)
 
     return () => {
       cancelled = true
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       if (drainTimerRef.current !== null) {
         window.clearTimeout(drainTimerRef.current)
         drainTimerRef.current = null
       }
-      ws.close()
+      wsRef.current?.close()
     }
   }, [sessionId])
 
@@ -658,6 +733,7 @@ export function useSessionSocket(sessionId: string) {
     campaignComplete,
     error,
     connected,
+    reconnecting,
     sendPlayerAction,
     sendPlayerMove,
     sendRest,

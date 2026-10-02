@@ -30,6 +30,7 @@ export default function LivePlay({
     campaignComplete,
     error,
     connected,
+    reconnecting,
     sendPlayerAction,
     sendPlayerMove,
     sendRest,
@@ -124,7 +125,11 @@ export default function LivePlay({
         </div>
       )
     }
-    return <div className="wizard">Connecting to the game server...</div>
+    return (
+      <div className="wizard">
+        {reconnecting ? 'Reconnecting to the game server...' : 'Connecting to the game server...'}
+      </div>
+    )
   }
 
   return (
@@ -148,6 +153,14 @@ export default function LivePlay({
             {gameState.status === 'victory' && 'Victory! The encounter is over.'}
             {gameState.status === 'defeat' && 'Defeat... the party has fallen.'}
             {gameState.status === 'aborted' && 'The encounter ended early.'}
+          </p>
+        )}
+        {reconnecting && gameState && (
+          // The game server dropped this connection (a restart or a network
+          // blip) - it keeps every live game in its database, so retrying
+          // picks the session back up exactly where it was.
+          <p className="wizard-error status-banner">
+            Connection to the game server was lost - reconnecting...
           </p>
         )}
         {disconnectedActors.length > 0 && gameState && (
