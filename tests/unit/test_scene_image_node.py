@@ -10,11 +10,20 @@ from typing import Any
 
 import pytest
 
+from src import config
 from src.engine.position import Position
 from src.engine.state import Character, GameState
 from src.graph.nodes import scene_image_node as scene_image_module
 from src.graph.nodes.scene_image_node import scene_image_node
 from src.graph.state_schema import GraphState
+
+
+@pytest.fixture(autouse=True)
+def _scene_images_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tests/unit/conftest.py turns scene images off for the whole directory
+    (so nothing else reaches the real pipeline); these tests are specifically
+    about the node's behavior with them on, and stub generate_scene_image."""
+    monkeypatch.setattr(config, "SCENE_IMAGES_ENABLED", True)
 
 
 def _make_character(char_id: str, *, is_pc: bool) -> Character:

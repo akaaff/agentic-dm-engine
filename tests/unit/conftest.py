@@ -52,3 +52,14 @@ def _disable_tts(monkeypatch: pytest.MonkeyPatch) -> None:
     directory - it's exercised by ordinary WS tests that would otherwise
     need this disabled one at a time)."""
     monkeypatch.setattr(config, "TTS_ENABLED", False)
+
+
+@pytest.fixture(autouse=True)
+def _disable_scene_images(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Narration illustration (src.graph.nodes.narration_illustration) is
+    called directly from api/ws/session.py when scene narration is broadcast,
+    outside the graph - so stubbing the graph's own scene_image_fn doesn't
+    shield it, same gap _disable_tts documents above. Left enabled it would
+    call a real Ollama and load the SD-Turbo pipeline from any test that walks
+    a campaign's narrative scenes."""
+    monkeypatch.setattr(config, "SCENE_IMAGES_ENABLED", False)

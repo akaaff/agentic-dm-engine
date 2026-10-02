@@ -204,7 +204,9 @@ type ServerMessage =
       campaign_complete: boolean
     }
   | { type: 'narration'; text: string; audio_url: string | null }
-  | { type: 'scene_narration'; text: string; audio_url: string | null }
+  // image_url: one picture illustrating a whole group of scene lines, attached
+  // to the group's first line only (absent when images are off or failed).
+  | { type: 'scene_narration'; text: string; audio_url: string | null; image_url?: string }
   | { type: 'scene_image'; url: string }
   | { type: 'awaiting_input'; actor: string }
   | { type: 'error'; detail: string }
@@ -276,6 +278,10 @@ export interface NarrationEntry {
    * hook as gameStateSnapshot's own lockstep-with-the-paced-log reasoning),
    * not when the WS message first arrives. */
   audioUrl?: string | null
+  /** A picture illustrating this entry (and the few scene lines after it),
+   * shown in the scene panel the moment this entry is revealed - the same
+   * lockstep-with-the-paced-log reasoning as the snapshots above. */
+  imageUrl?: string
 }
 
 /** Plays a list of narration-audio URLs one after another (skipping any
@@ -430,6 +436,7 @@ export function useSessionSocket(sessionId: string) {
           // keeps the sidebar/HP/banner in lockstep with the paced log.
           if (entry.gameStateSnapshot) setGameState(entry.gameStateSnapshot)
           if (entry.combatSummariesSnapshot) setCombatSummaries(entry.combatSummariesSnapshot)
+          if (entry.imageUrl) setSceneImageUrl(entry.imageUrl)
           if (entry.campaignCompleteSnapshot !== undefined) {
             setCampaignComplete(entry.campaignCompleteSnapshot)
           }
@@ -606,7 +613,12 @@ export function useSessionSocket(sessionId: string) {
             break
           case 'scene_narration':
             if (message.text) {
-              enqueueEntry({ text: message.text, kind: 'scene', audioUrl: message.audio_url })
+              enqueueEntry({
+                text: message.text,
+                kind: 'scene',
+                audioUrl: message.audio_url,
+                imageUrl: message.image_url,
+              })
             }
             break
           case 'scene_image':

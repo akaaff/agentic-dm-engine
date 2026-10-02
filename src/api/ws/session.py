@@ -63,6 +63,7 @@ from src.engine.turn_engine import (
 )
 from src.graph.graph_builder import build_graph
 from src.graph.nodes.intent_parser import parse_intent_sequence
+from src.graph.nodes.narration_illustration import illustrate_narration
 from src.graph.nodes.narrator import narrator_node
 from src.graph.nodes.party_choice import (
     generate_companion_party_choice_response,
@@ -495,7 +496,10 @@ async def _broadcast(session: Session, message: dict[str, object]) -> None:
 
 
 def _narration_message(
-    text: str, msg_type: str = "narration", voice: str = config.NARRATOR_VOICE
+    text: str,
+    msg_type: str = "narration",
+    voice: str = config.NARRATOR_VOICE,
+    image_url: str | None = None,
 ) -> dict[str, object]:
     """The one choke point that turns narration text into narration audio
     (src.audiogen.service.generate_narration_audio, itself backend-agnostic -
@@ -512,13 +516,38 @@ def _narration_message(
     simply doesn't play anything for a None."""
     audio_path = generate_narration_audio(text, voice) if config.TTS_ENABLED else None
     audio_url = f"{AUDIO_MEDIA_URL_PREFIX}/{audio_path.name}" if audio_path else None
-    return {"type": msg_type, "text": text, "audio_url": audio_url}
+    message: dict[str, object] = {"type": msg_type, "text": text, "audio_url": audio_url}
+    if image_url:
+        # Only present when there is one - the client shows it in the scene
+        # panel at the moment this line is revealed (see sessionClient.ts).
+        message["image_url"] = image_url
+    return message
 
 
 async def _broadcast_narration(
     session: Session, text: str, msg_type: str = "narration", voice: str = config.NARRATOR_VOICE
 ) -> None:
     await _broadcast(session, _narration_message(text, msg_type, voice))
+
+
+def _scene_narration_messages(lines: list[str]) -> list[dict[str, object]]:
+    """The scene_narration messages for one group of lines, with ONE picture
+    illustrating the whole group attached to the first line - so the scene
+    panel shows it while the group is being read, rather than after. The
+    picture is generated before any line is sent (a few seconds, the same
+    synchronous tradeoff narration audio already makes)."""
+    image_url = illustrate_narration(lines)
+    return [
+        _narration_message(
+            line, msg_type="scene_narration", image_url=image_url if i == 0 else None
+        )
+        for i, line in enumerate(lines)
+    ]
+
+
+async def _broadcast_scene_narration(session: Session, lines: list[str]) -> None:
+    for message in _scene_narration_messages(lines):
+        await _broadcast(session, message)
 
 
 async def _send_awaiting_input(session: Session) -> None:
@@ -926,8 +955,7 @@ async def _advance_chain_from(session: Session, start_scene: Scene) -> None:
     stop_scene, narration = advance_to_next_encounter(
         session.campaign, start_scene, session.party, session.srd, session.action_rng
     )
-    for line in narration:
-        await _broadcast_narration(session, line, msg_type="scene_narration")
+    await _broadcast_scene_narration(session, narration)
 
     if stop_scene is None:
         await _mark_campaign_complete(session)
@@ -1057,7 +1085,7 @@ async def _resolve_party_choice(session: Session) -> None:
     narration = synthesize_party_choice_narration(
         pending.situation, pending.responses, session.party
     )
-    await _broadcast_narration(session, narration, msg_type="scene_narration")
+    await _broadcast_scene_narration(session, [narration])
 
     scene = session.campaign.scene_by_id(pending.scene_id)
     next_scene = session.campaign.next_scene(scene)
@@ -1575,8 +1603,8 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
         # the fight, etc.) - collected once at session setup, sent to
         # whichever connection arrives first. See Session.pending_scene_
         # narration's docstring for why a second connection won't see it.
-        for line in session.pending_scene_narration:
-            await websocket.send_json(_narration_message(line, msg_type="scene_narration"))
+        for message in _scene_narration_messages(session.pending_scene_narration):
+            await websocket.send_json(message)
         session.pending_scene_narration = []
 
         # Resolve any monster/companion turns that come before the human's
