@@ -58,9 +58,10 @@ class RestoredSession:
     adaptive_generations_used: int
     pending_bardic_choice: PendingBardicChoice | None
     pending_party_choice: dict[str, Any] | None
-    hook_messages: list[dict[str, Any]]
-    hook_scene_id: str | None
     """{"scene_id", "situation", "responses"} - raw, see session.py."""
+    narration_history: list[dict[str, Any]]
+    narration_seq: int
+    narration_events_cursor: int
 
 
 def build_snapshot(
@@ -88,10 +89,12 @@ def build_snapshot(
             if session.pending_bardic_choice is not None
             else None
         ),
-        # Small, and its audio/image files are already on disk - kept so a
-        # page refresh right after a backend restart can still replay the hook.
-        "hook_messages": session.hook_messages,
-        "hook_scene_id": session.hook_scene_id,
+        # Capped text (no audio), so a page refresh right after a backend
+        # restart still gets the log back; the sequence counter must survive
+        # too, or new lines would reuse numbers a client has already seen.
+        "narration_history": session.narration_history,
+        "narration_seq": session.narration_seq,
+        "narration_events_cursor": session.narration_events_cursor,
         "pending_party_choice": (
             {
                 "scene_id": pending_party.scene_id,
@@ -149,6 +152,7 @@ def restore_snapshot(snapshot: dict[str, Any], party_character_ids: list[str]) -
         adaptive_generations_used=int(snapshot.get("adaptive_generations_used", 0)),
         pending_bardic_choice=bardic,
         pending_party_choice=snapshot.get("pending_party_choice"),
-        hook_messages=list(snapshot.get("hook_messages") or []),
-        hook_scene_id=snapshot.get("hook_scene_id"),
+        narration_history=list(snapshot.get("narration_history") or []),
+        narration_seq=int(snapshot.get("narration_seq", 0)),
+        narration_events_cursor=int(snapshot.get("narration_events_cursor", 0)),
     )
