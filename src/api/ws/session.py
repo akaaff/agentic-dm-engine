@@ -1277,7 +1277,20 @@ async def _handle_client_message(
                 {"type": "error", "detail": "You have no pending party choice to answer."}
             )
             return
-        character_id = next(iter(answerable))
+        # A player controlling several characters says which one is answering
+        # (character_id); the server still only accepts a seat this connection
+        # controls and that hasn't responded - the client's claim is checked,
+        # never trusted. Without one, the first such seat in a stable order.
+        requested = raw.get("character_id")
+        if requested is not None:
+            if requested not in answerable:
+                await websocket.send_json(
+                    {"type": "error", "detail": "You can't answer for that character right now."}
+                )
+                return
+            character_id = str(requested)
+        else:
+            character_id = sorted(answerable)[0]
         text = str(raw.get("text", "")).strip() or "(says nothing)"
         pending_choice.responses[character_id] = text
         await _broadcast(
@@ -1568,10 +1581,15 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
         # connects controls everyone.
         controlled = set(session.game_state.characters.keys())
     else:
-        token = websocket.query_params.get("token")
-        if token is not None and token in session.human_character_ids:
-            controlled = {session.human_character_ids[token]}
-        elif token is None and len(session.human_character_ids) == 1:
+        # A player can control several characters, each its own seat with its
+        # own token - the client sends every token it holds as a repeated
+        # ?token= param, and this connection controls the union. A stale or
+        # unknown token is ignored as long as at least one is valid.
+        tokens = websocket.query_params.getlist("token")
+        valid_tokens = [t for t in tokens if t in session.human_character_ids]
+        if valid_tokens:
+            controlled = {session.human_character_ids[t] for t in valid_tokens}
+        elif not tokens and len(session.human_character_ids) == 1:
             # Issue #44: a single human seat (the legacy single-shot POST
             # /sessions flow, or a lobby exactly one player ever joined)
             # doesn't need a token to disambiguate between players who

@@ -354,3 +354,59 @@ def test_get_lobby_status_reflects_join_and_start(client: TestClient) -> None:
 def test_get_lobby_status_rejects_unknown_session(client: TestClient) -> None:
     response = client.get("/sessions/does-not-exist")
     assert response.status_code == 404
+
+
+# Multi-character play: one player may claim several seats, so the cap that
+# matters is the whole party's (config.MAX_PARTY_SIZE - every authored
+# encounter only has that many spawn points), not "one character per player".
+def _create_extra_fighter(client: TestClient, character_id: str) -> None:
+    response = client.post(
+        "/characters",
+        json={**_VALID_FIGHTER_BODY, "character_id": character_id, "name": character_id},
+    )
+    assert response.status_code == 201
+
+
+def test_join_lobby_rejects_a_character_once_the_party_is_full(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src import config
+
+    monkeypatch.setattr(config, "MAX_PARTY_SIZE", 2)
+    for cid in ("aaa", "bbb", "ccc"):
+        _create_extra_fighter(client, cid)
+    session_id = _create_lobby(client)
+
+    first = client.post(f"/sessions/{session_id}/join", json={"character_id": "aaa"})
+    second = client.post(f"/sessions/{session_id}/join", json={"character_id": "bbb"})
+    third = client.post(f"/sessions/{session_id}/join", json={"character_id": "ccc"})
+
+    assert first.status_code == 200 and second.status_code == 200
+    assert third.status_code == 409
+    assert "party is full" in third.json()["detail"]
+    # A retried join for a seat that already exists is still answered when full.
+    retry = client.post(f"/sessions/{session_id}/join", json={"character_id": "aaa"})
+    assert retry.status_code == 200
+    assert retry.json()["token"] == first.json()["token"]
+
+
+def test_start_lobby_rejects_more_companions_than_there_are_seats_left(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src import config
+
+    monkeypatch.setattr(config, "MAX_PARTY_SIZE", 2)
+    _create_extra_fighter(client, "aaa")
+    session_id = _create_lobby(client)
+    client.post(f"/sessions/{session_id}/join", json={"character_id": "aaa"})
+
+    too_many = client.post(
+        f"/sessions/{session_id}/start",
+        json={"companion_ids": ["companion_grom", "companion_silvana"]},
+    )
+    assert too_many.status_code == 400
+    assert "at most 2" in too_many.json()["detail"]
+
+    fits = client.post(f"/sessions/{session_id}/start", json={"companion_ids": ["companion_grom"]})
+    assert fits.status_code == 200  # the rejected attempt left the lobby open
+    assert fits.json()["party_character_ids"] == ["aaa", "companion_grom"]

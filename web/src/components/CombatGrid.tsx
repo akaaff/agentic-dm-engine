@@ -64,7 +64,7 @@ export default function CombatGrid({
   battleMap,
   characters,
   currentActorId,
-  myCharacterId,
+  myCharacterIds,
   canMove,
   onMoveTo,
   actorColors,
@@ -72,7 +72,8 @@ export default function CombatGrid({
   battleMap: LiveBattleMap
   characters: Record<string, LiveCharacter>
   currentActorId: string
-  myCharacterId: string
+  /** Every character this player controls (one or several). */
+  myCharacterIds: string[]
   canMove: boolean
   onMoveTo: (to: { x: number; y: number }) => void
   actorColors: Record<string, string>
@@ -116,7 +117,7 @@ export default function CombatGrid({
         const cx = character.position.x * CELL_SIZE + CELL_SIZE / 2
         const cy = character.position.y * CELL_SIZE + CELL_SIZE / 2
         const isActing = character.id === currentActorId
-        const stroke = isActing ? '#ffd166' : character.id === myCharacterId ? '#ffffff' : 'none'
+        const stroke = isActing ? '#ffd166' : myCharacterIds.includes(character.id) ? '#ffffff' : 'none'
         const strokeWidth = isActing ? 3 : 2
         return (
           <g key={character.id} className="grid-token-group" transform={`translate(${cx},${cy})`}>

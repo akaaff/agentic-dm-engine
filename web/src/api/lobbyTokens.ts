@@ -1,20 +1,35 @@
 // Issue #45: personal per-lobby tokens (issue #44's backend concept),
 // keyed by session id rather than one global value like accessKey.ts's
 // passphrase - a player can join more than one lobby over time, each with
-// its own token identifying them within that specific session.
+// its own tokens identifying them within that specific session.
+//
+// A player may control several characters in one game, each its own lobby
+// seat with its own token, so a session holds a LIST of tokens (stored as a
+// JSON array under the same key; an older single-string value is read as a
+// one-element list). The WebSocket connect sends all of them.
 const STORAGE_PREFIX = 'dm-lobby-token:'
 
-export function getLobbyToken(sessionId: string): string | null {
+export function getLobbyTokens(sessionId: string): string[] {
   try {
-    return localStorage.getItem(STORAGE_PREFIX + sessionId)
+    const raw = localStorage.getItem(STORAGE_PREFIX + sessionId)
+    if (!raw) return []
+    if (raw.startsWith('[')) {
+      const parsed: unknown = JSON.parse(raw)
+      return Array.isArray(parsed)
+        ? parsed.filter((t): t is string => typeof t === 'string')
+        : []
+    }
+    return [raw]
   } catch {
-    return null
+    return []
   }
 }
 
-export function setLobbyToken(sessionId: string, token: string): void {
+export function addLobbyToken(sessionId: string, token: string): void {
   try {
-    localStorage.setItem(STORAGE_PREFIX + sessionId, token)
+    const tokens = getLobbyTokens(sessionId)
+    if (!tokens.includes(token)) tokens.push(token)
+    localStorage.setItem(STORAGE_PREFIX + sessionId, JSON.stringify(tokens))
   } catch {
     // Best-effort, same as accessKey.ts - a private window or blocked site
     // data just means this browser won't auto-resume next time.
@@ -26,7 +41,7 @@ export function setLobbyToken(sessionId: string, token: string): void {
 // App.tsx's own `flow` state starts fresh on every mount with nothing
 // telling it *which* session to resume. This is that pointer: the most
 // recently joined/resumed session id, updated alongside every
-// setLobbyToken call (a new join) and every successful manual resume via
+// addLobbyToken call (a new join) and every successful manual resume via
 // JoinByCode (an existing token, re-entered), so a later plain refresh
 // can look this up and attempt the exact same resume flow automatically
 // instead of only ever working when the player manually re-types the
@@ -56,7 +71,7 @@ export function setLastSessionId(sessionId: string): void {
 // on the very next reload, since the auto-resume effect above has no way
 // to tell "I got disconnected" apart from "I chose to leave." Deliberately
 // only clears the auto-resume pointer, not the lobby's own token
-// (setLobbyToken/getLobbyToken) - a player can still deliberately rejoin
+// (addLobbyToken/getLobbyTokens) - a player can still deliberately rejoin
 // the same game later via "Join with a Code" using the same code, which
 // looks up the still-present token to resume as the same character.
 export function clearLastSessionId(): void {

@@ -52,6 +52,14 @@ SHARED_ACCESS_PASSPHRASE = os.environ.get("SHARED_ACCESS_PASSPHRASE") or None
 # GPU contention - the issue itself flags that as worth confirming properly
 # once this is actually deployed multi-session, not before.
 MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "3"))
+
+# Most characters one game can hold, human-controlled and companions together.
+# Not an arbitrary cap: every authored encounter defines exactly this many
+# party spawn points (see data/campaigns/encounters/*.yaml, and the
+# GameStateBuildError a longer party used to crash a session with - issue #29),
+# so a party larger than this has nowhere to stand. One player may control
+# several of these seats - see api/routes/sessions.py's join_lobby.
+MAX_PARTY_SIZE = int(os.environ.get("MAX_PARTY_SIZE", "5"))
 ACTION_RATE_LIMIT_CAPACITY = float(os.environ.get("ACTION_RATE_LIMIT_CAPACITY", "10"))
 ACTION_RATE_LIMIT_PER_MINUTE = float(os.environ.get("ACTION_RATE_LIMIT_PER_MINUTE", "10"))
 
