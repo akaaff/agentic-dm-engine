@@ -203,10 +203,20 @@ type ServerMessage =
       // re-walking the same already-resolved chain.
       campaign_complete: boolean
     }
-  | { type: 'narration'; text: string; audio_url: string | null }
+  | { type: 'narration'; text: string; audio_url: string | null; seq?: number }
+  // Narration this connection missed (a page refresh, a second player, the
+  // dev build's discarded first socket, a gap in a dropped connection): sent
+  // once on connect, text + events only, no audio - shown instantly.
+  | { type: 'narration_history'; entries: NarrationHistoryEntry[] }
   // image_url: one picture illustrating a whole group of scene lines, attached
   // to the group's first line only (absent when images are off or failed).
-  | { type: 'scene_narration'; text: string; audio_url: string | null; image_url?: string }
+  | {
+      type: 'scene_narration'
+      text: string
+      audio_url: string | null
+      image_url?: string
+      seq?: number
+    }
   | { type: 'scene_image'; url: string }
   | { type: 'awaiting_input'; actor: string }
   | { type: 'error'; detail: string }
@@ -238,6 +248,16 @@ type ServerMessage =
       awaiting: string[]
     }
   | { type: 'party_choice_responded'; actor: string; text: string }
+
+export interface NarrationHistoryEntry {
+  seq: number
+  kind: 'scene' | 'action'
+  text: string
+  events: LiveEvent[]
+  /** Length of the encounter's event list once this entry's events were included. */
+  events_end: number
+  image_url?: string
+}
 
 export interface NarrationEntry {
   text: string
@@ -352,6 +372,9 @@ export function useSessionSocket(sessionId: string) {
   // the next state_update's new events (a plain slice from this count) are
   // the ones the most recently-received narration text is about.
   const lastEventCountRef = useRef(0)
+  // Highest narration sequence number this client has seen, live or from a
+  // backfill - sent as ?since_seq on reconnect and used to drop duplicates.
+  const lastSeqRef = useRef(0)
   const pendingNarrationRef = useRef<string | null>(null)
   // Same stash-until-the-following-state_update shape as pendingNarrationRef
   // above, just for this narration's audio_url (see DECISIONS.md #9).
@@ -376,6 +399,7 @@ export function useSessionSocket(sessionId: string) {
     // failed" even though the second, real socket connects fine right after.
     let cancelled = false
     lastEventCountRef.current = 0
+    lastSeqRef.current = 0
     pendingNarrationRef.current = null
     pendingNarrationAudioRef.current = null
     entryQueueRef.current = []
@@ -528,10 +552,10 @@ export function useSessionSocket(sessionId: string) {
       // One token per character this player controls - the server treats the
       // connection as controlling all of them.
       for (const lobbyToken of getLobbyTokens(sessionId)) params.append('token', lobbyToken)
-      // An auto-reconnect keeps this page's narration log, so the server must not
-      // replay the opening scene text into it a second time (see
-      // Session.hook_messages in api/ws/session.py).
-      if (isReconnect) params.set('resume', '1')
+      // An auto-reconnect keeps this page's narration log, so it only asks for
+      // what arrived after the last line it saw (see _narration_backfill in
+      // api/ws/session.py); a fresh page asks for everything.
+      if (isReconnect) params.set('since_seq', String(lastSeqRef.current))
       const query = params.toString() ? `?${params.toString()}` : ''
       const ws = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}${query}`)
       wsRef.current = ws
@@ -609,6 +633,9 @@ export function useSessionSocket(sessionId: string) {
             break
           }
           case 'narration':
+            // Already have it (it was in a backfill this connection got first).
+            if (message.seq !== undefined && message.seq <= lastSeqRef.current) break
+            if (message.seq !== undefined) lastSeqRef.current = message.seq
             // Stashed, not pushed yet - the state_update broadcast that
             // always immediately follows (see session.py) carries the
             // mechanical events this same narration is about, and both land
@@ -617,6 +644,8 @@ export function useSessionSocket(sessionId: string) {
             pendingNarrationAudioRef.current = message.audio_url
             break
           case 'scene_narration':
+            if (message.seq !== undefined && message.seq <= lastSeqRef.current) break
+            if (message.seq !== undefined) lastSeqRef.current = message.seq
             if (message.text) {
               enqueueEntry({
                 text: message.text,
@@ -626,6 +655,35 @@ export function useSessionSocket(sessionId: string) {
               })
             }
             break
+          case 'narration_history': {
+            const fresh = message.entries.filter((e) => e.seq > lastSeqRef.current)
+            if (fresh.length === 0) break
+            lastSeqRef.current = fresh[fresh.length - 1].seq
+            // Appended straight into the log - no reveal queue, no audio: these
+            // lines are old news, and pacing them behind the live board (each
+            // waiting out a clip) would hold the game hostage on every refresh.
+            setNarrationLog((prev) => [
+              ...prev,
+              ...fresh.map((e) => ({
+                text: e.text,
+                kind: e.kind,
+                events: e.kind === 'action' ? e.events : undefined,
+                imageUrl: e.image_url,
+              })),
+            ])
+            const lastAction = [...fresh].reverse().find((e) => e.kind === 'action')
+            if (lastAction) {
+              // The next state_update then only stitches in events nobody has
+              // narrated yet, instead of re-listing the whole fight.
+              lastEventCountRef.current = Math.max(
+                lastEventCountRef.current,
+                lastAction.events_end
+              )
+            }
+            const lastImage = [...fresh].reverse().find((e) => e.image_url)
+            if (lastImage?.image_url) setSceneImageUrl(lastImage.image_url)
+            break
+          }
           case 'scene_image':
             setSceneImageUrl(message.url)
             break
