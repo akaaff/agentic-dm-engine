@@ -142,22 +142,28 @@ class Session:
     pending_scene_narration: list[str] = field(default_factory=list)
     """Narrative-beat/skill-challenge text collected (via campaign_runner)
     before this session's *first* encounter. Turned into scene_narration
-    messages (hook_messages below) by the first connection and then cleared -
-    the replay for everyone who connects after that works from hook_messages."""
-    hook_messages: list[dict[str, object]] = field(default_factory=list)
-    """The pre-combat hook's scene_narration messages, built ONCE (each carries
-    its already-generated audio/image URLs, so a replay never re-runs TTS or
-    image generation) and kept so a client that arrives after the first
-    connection still gets the hook - a page refresh, a second player, or the
-    dev build's StrictMode double-socket, which used to deliver it to a socket
-    the browser had already discarded. Replayed only while the game is still
-    in round 1 of the encounter it leads into (hook_scene_id) - later, a fresh
-    page replaying the opening text and holding the board until it has been
-    read aloud would be worse than missing it - and never to a reconnecting
-    client (`?resume=1`), whose log still has it."""
-    hook_scene_id: str | None = None
-    """session.current_scene_id when hook_messages was built - what "still in
-    the encounter the hook leads into" is checked against."""
+    messages by the first connection (which records them in narration_history
+    like every other narration line) and then cleared."""
+    narration_history: list[dict[str, Any]] = field(default_factory=list)
+    """Every narration line this session has broadcast (scene text and per-action
+    narration), newest last, capped at NARRATION_HISTORY_LIMIT - each as
+    {seq, kind, text, events, events_end, image_url?}. The narration log lives
+    in the browser, and narration is broadcast ONCE to whoever is connected at
+    that instant - so a page refresh, a second player, a reconnect after a
+    dropped socket, or the dev build's StrictMode double-socket (whose first,
+    discarded socket receives everything produced during the opening autoplay)
+    would otherwise be missing lines for good, leaving only bare event badges.
+    A connecting client is sent whatever it hasn't seen (see
+    _narration_backfill). Text, events and an image URL only - no audio, so a
+    backfill is instant instead of being read aloud again."""
+    narration_seq: int = 0
+    """Last sequence number handed out to a narration message (monotonic for
+    the session's whole life, unlike an events count, which restarts with every
+    new encounter's GameState)."""
+    narration_events_cursor: int = 0
+    """How many of the current game_state's events earlier action narration has
+    already accounted for - the next action entry carries events[cursor:]. Reset
+    to 0 whenever a new encounter's GameState replaces the old one."""
     action_bucket: TokenBucket = field(
         default_factory=lambda: TokenBucket(
             capacity=config.ACTION_RATE_LIMIT_CAPACITY,
@@ -428,8 +434,9 @@ def _restore_session(session_id: str, progress: CampaignProgress) -> Session | N
     session.campaign_complete = restored.campaign_complete
     session.adaptive_generations_used = restored.adaptive_generations_used
     session.pending_bardic_choice = restored.pending_bardic_choice
-    session.hook_messages = restored.hook_messages
-    session.hook_scene_id = restored.hook_scene_id
+    session.narration_history = restored.narration_history
+    session.narration_seq = restored.narration_seq
+    session.narration_events_cursor = restored.narration_events_cursor
     if restored.pending_party_choice is not None:
         session.pending_party_choice = PendingPartyChoice(**restored.pending_party_choice)
     logger.info("Restored session %s from its persisted snapshot", session_id)
@@ -538,10 +545,55 @@ def _narration_message(
     return message
 
 
+NARRATION_HISTORY_LIMIT = 200
+
+
+def _record_narration(session: Session, message: dict[str, object]) -> None:
+    """Stamps a narration/scene_narration message with the session's next
+    sequence number and appends it to narration_history. Called for every
+    narration message just before it is sent, so the live message and the
+    history entry always agree - the client dedupes on `seq` (a line it already
+    got live is not added again from a backfill, and vice versa).
+
+    An action entry carries the game events that happened since the previous
+    action entry - the same pairing the live path makes client-side by stitching
+    a narration to its following state_update - so a backfilled entry still
+    shows its mechanical badges. A scene entry carries none."""
+    session.narration_seq += 1
+    message["seq"] = session.narration_seq
+    is_scene = message.get("type") == "scene_narration"
+    events = session.game_state.events
+    cursor = session.narration_events_cursor
+    if cursor > len(events):
+        cursor = 0  # a new encounter's event list restarted below the old cursor
+    entry: dict[str, Any] = {
+        "seq": session.narration_seq,
+        "kind": "scene" if is_scene else "action",
+        "text": message.get("text", ""),
+        "events": [] if is_scene else [e.model_dump(mode="json") for e in events[cursor:]],
+        "events_end": len(events),
+    }
+    if image_url := message.get("image_url"):
+        entry["image_url"] = image_url
+    if not is_scene:
+        session.narration_events_cursor = len(events)
+    session.narration_history.append(entry)
+    del session.narration_history[:-NARRATION_HISTORY_LIMIT]
+
+
+def _narration_backfill(session: Session, since_seq: int) -> list[dict[str, Any]]:
+    """The narration entries a client has not seen yet: everything on a fresh
+    page load (since_seq 0), or just what arrived after `since_seq` for a client
+    reconnecting with its log intact."""
+    return [dict(e) for e in session.narration_history if e["seq"] > since_seq]
+
+
 async def _broadcast_narration(
     session: Session, text: str, msg_type: str = "narration", voice: str = config.NARRATOR_VOICE
 ) -> None:
-    await _broadcast(session, _narration_message(text, msg_type, voice))
+    message = _narration_message(text, msg_type, voice)
+    _record_narration(session, message)
+    await _broadcast(session, message)
 
 
 def _scene_narration_messages(lines: list[str]) -> list[dict[str, object]]:
@@ -561,6 +613,7 @@ def _scene_narration_messages(lines: list[str]) -> list[dict[str, object]]:
 
 async def _broadcast_scene_narration(session: Session, lines: list[str]) -> None:
     for message in _scene_narration_messages(lines):
+        _record_narration(session, message)
         await _broadcast(session, message)
 
 
@@ -988,6 +1041,7 @@ async def _advance_chain_from(session: Session, start_scene: Scene) -> None:
         encounter, session.party, session.action_rng, srd=session.srd
     )
     session.current_scene_id = stop_scene.id
+    session.narration_events_cursor = 0  # the new GameState has its own event list
     await _broadcast(session, _state_update_message(session))
     # A new encounter can itself open on a non-human turn (e.g. a monster
     # winning initiative) - resolve those before anyone's told it's their
@@ -1596,42 +1650,46 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             return
     connection = SessionConnection(websocket=websocket, controlled_character_ids=controlled)
     session.connections.append(connection)
-
-    if session.human_character_ids:
-        # Issue #46: "reconnected" is only meaningful set against a real
-        # human seat that has genuinely dropped and come back, not this
-        # character's very first-ever connect (nothing to call a "re" on) -
-        # see Session.connected_/ever_connected_human_character_ids' own
-        # docstrings for why both sets exist.
-        human_ids = set(session.human_character_ids.values())
-        reconnected = (
-            controlled & human_ids & session.ever_connected_human_character_ids
-        ) - session.connected_human_character_ids
-        session.connected_human_character_ids |= controlled & human_ids
-        session.ever_connected_human_character_ids |= controlled & human_ids
-        for actor in reconnected:
-            await _broadcast(session, {"type": "player_reconnected", "actor": actor})
+    # Taken in the same synchronous step as joining session.connections: from
+    # here on this connection also receives every narration line live, so the
+    # backfill must be exactly "everything recorded before this instant" - a
+    # line recorded after it arrives live, and the client's seq dedupe covers
+    # any overlap. A client that already has a log (an auto-reconnect) says how
+    # far it got with ?since_seq=N; a fresh page asks for everything.
+    since_raw = websocket.query_params.get("since_seq", "")
+    backfill = _narration_backfill(session, int(since_raw) if since_raw.isdigit() else 0)
 
     try:
-        # The campaign's own scene-setting text (a narrative "hook" before
-        # the fight, etc.) - collected once at session setup and built into
-        # messages by whichever connection arrives first (generating its
-        # audio/image once), then replayed to every later connection that
-        # needs it - see Session.hook_messages for what "needs it" means.
+        # Sent before anything else so the missed lines land ahead of whatever
+        # live narration follows (the reconnect broadcast just below awaits).
+        if backfill:
+            await websocket.send_json({"type": "narration_history", "entries": backfill})
+
+        if session.human_character_ids:
+            # Issue #46: "reconnected" is only meaningful set against a real
+            # human seat that has genuinely dropped and come back, not this
+            # character's very first-ever connect (nothing to call a "re" on) -
+            # see Session.connected_/ever_connected_human_character_ids' own
+            # docstrings for why both sets exist.
+            human_ids = set(session.human_character_ids.values())
+            reconnected = (
+                controlled & human_ids & session.ever_connected_human_character_ids
+            ) - session.connected_human_character_ids
+            session.connected_human_character_ids |= controlled & human_ids
+            session.ever_connected_human_character_ids |= controlled & human_ids
+            for actor in reconnected:
+                await _broadcast(session, {"type": "player_reconnected", "actor": actor})
+
+        # The campaign's own scene-setting text (a narrative "hook" before the
+        # fight, etc.) - collected once at session setup and sent by whichever
+        # connection arrives first (generating its audio/image once). It is
+        # recorded in narration_history like every other line, so a connection
+        # arriving later gets it from the backfill above instead.
         if session.pending_scene_narration:
-            session.hook_messages = _scene_narration_messages(session.pending_scene_narration)
-            session.hook_scene_id = session.current_scene_id
+            hook_messages = _scene_narration_messages(session.pending_scene_narration)
             session.pending_scene_narration = []
-        # `resume=1` is sent by the client's own auto-reconnect: its narration
-        # log survived the drop, so replaying would duplicate the hook in it.
-        resuming = websocket.query_params.get("resume") == "1"
-        if (
-            session.hook_messages
-            and not resuming
-            and session.game_state.round == 1
-            and session.current_scene_id == session.hook_scene_id
-        ):
-            for message in session.hook_messages:
+            for message in hook_messages:
+                _record_narration(session, message)
                 await websocket.send_json(message)
 
         # Resolve any monster/companion turns that come before the human's
