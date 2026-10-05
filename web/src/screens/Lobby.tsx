@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../api/client'
+import { MAX_PARTY_SIZE } from '../utils/party'
 import PartySetup from './PartySetup'
 
 const POLL_INTERVAL_MS = 2500
@@ -79,7 +80,11 @@ export default function Lobby({
   if (pickingCompanions) {
     return (
       <div>
-        <PartySetup onBack={() => setPickingCompanions(false)} onNext={handleStart} />
+        <PartySetup
+          onBack={() => setPickingCompanions(false)}
+          onNext={handleStart}
+          maxCompanions={Math.max(0, MAX_PARTY_SIZE - partyCharacterIds.length)}
+        />
         {starting && <p>Starting the adventure...</p>}
         {startError && <p className="wizard-error">{startError}</p>}
       </div>
@@ -94,8 +99,8 @@ export default function Lobby({
         <strong className="lobby-code">{sessionId}</strong>
       </p>
       <p>
-        {partyCharacterIds.length} player{partyCharacterIds.length === 1 ? '' : 's'} joined so
-        far.
+        {partyCharacterIds.length} character{partyCharacterIds.length === 1 ? '' : 's'} joined
+        so far (a party holds up to {MAX_PARTY_SIZE}).
       </p>
       {loadError && <p className="wizard-error">Could not check lobby status: {loadError}</p>}
       <div className="wizard-nav">

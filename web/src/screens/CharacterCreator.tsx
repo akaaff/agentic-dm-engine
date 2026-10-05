@@ -14,6 +14,7 @@ import {
 import CharacterPreviewSheet from '../components/CharacterPreviewSheet'
 import InfoTip from '../components/InfoTip'
 import { equipmentDetail, equipmentHint } from '../utils/equipmentDetail'
+import { MAX_PARTY_SIZE } from '../utils/party'
 import { nameWithSpellDetail } from '../utils/spellDetail'
 import { isShield, weaponComboProblem } from '../utils/weaponCombo'
 
@@ -126,8 +127,16 @@ function skillLabel(skillIndex: string): string {
     .join(' ')
 }
 
-export default function CharacterCreator({ onCreated }: { onCreated: (character: Character) => void }) {
+export default function CharacterCreator({
+  onCreated,
+}: {
+  onCreated: (characters: Character[]) => void
+}) {
   const [step, setStep] = useState(0)
+  // Characters already finished for this game (via "Add another character") -
+  // all of them join the lobby on Continue, each its own seat, and this player
+  // controls every one.
+  const [readyCharacters, setReadyCharacters] = useState<Character[]>([])
 
   const [races, setRaces] = useState<RaceSummary[]>([])
   const [classes, setClasses] = useState<ClassSummary[]>([])
@@ -432,10 +441,22 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
           <p>Skills: {created.skill_proficiencies.map(skillLabel).join(', ') || 'none'}</p>
           <p>Inventory: {created.inventory.join(', ') || 'none'}</p>
         </div>
+        {readyCharacters.length > 0 && (
+          <p className="companion-meta">
+            Also in your party: {readyCharacters.map((c) => c.name).join(', ')}
+          </p>
+        )}
         <div className="wizard-nav">
           <button
             type="button"
+            disabled={readyCharacters.length + 1 >= MAX_PARTY_SIZE}
+            title={
+              readyCharacters.length + 1 >= MAX_PARTY_SIZE
+                ? `A party holds at most ${MAX_PARTY_SIZE} characters`
+                : undefined
+            }
             onClick={() => {
+              setReadyCharacters((prev) => [...prev, created])
               setCreated(null)
               setStep(0)
               setName('')
@@ -449,10 +470,12 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
               setChosenEquipment([])
             }}
           >
-            Create another character
+            Add another character to my party
           </button>
-          <button type="button" onClick={() => onCreated(created)}>
-            Continue
+          <button type="button" onClick={() => onCreated([...readyCharacters, created])}>
+            {readyCharacters.length > 0
+              ? `Continue with ${readyCharacters.length + 1} characters`
+              : 'Continue'}
           </button>
         </div>
       </div>
@@ -463,6 +486,11 @@ export default function CharacterCreator({ onCreated }: { onCreated: (character:
     <div className="character-creator-layout">
       <div className="wizard">
         <h1>Create a Character</h1>
+        {readyCharacters.length > 0 && (
+          <p className="companion-meta">
+            Already in your party: {readyCharacters.map((c) => c.name).join(', ')}
+          </p>
+        )}
         <ol className="steps">
           {['Basics', 'Class & Skills', 'Ability Scores', 'Equipment'].map(
             (label, i) => (

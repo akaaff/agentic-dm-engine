@@ -10,11 +10,12 @@ import { useSessionSocket } from '../ws/sessionClient'
 
 export default function LivePlay({
   sessionId,
-  myCharacterId,
+  myCharacterIds,
   onExit,
 }: {
   sessionId: string
-  myCharacterId: string
+  /** Every character this player controls - one, or several in multi-character play. */
+  myCharacterIds: string[]
   onExit: () => void
 }) {
   const {
@@ -40,6 +41,10 @@ export default function LivePlay({
   } = useSessionSocket(sessionId)
   const [draft, setDraft] = useState('')
   const [choiceDraft, setChoiceDraft] = useState('')
+  const mine = useMemo(() => new Set(myCharacterIds), [myCharacterIds])
+  // Which of my characters the sheet shows when none of them is up - clicking a
+  // tab changes it; while one of them is up, that one is shown (see activeId).
+  const [focusedId, setFocusedId] = useState(myCharacterIds[0] ?? '')
   // Issue #38: a per-viewer convenience toggle (localStorage, not shared
   // session state) - shows each attack/skill-check/saving-throw's full
   // modifier breakdown in the combat log, to catch a mechanic gap (a
@@ -69,8 +74,12 @@ export default function LivePlay({
   // finished revealing everything that led up to it (staggered on purpose -
   // see sessionClient.ts) - stay disabled until the reader's actually caught
   // up, not just when awaiting_input technically arrives.
-  const isMyTurn = awaitingActor === myCharacterId && logCaughtUp
-  const catchingUp = awaitingActor === myCharacterId && !logCaughtUp
+  const actingMine = awaitingActor !== null && mine.has(awaitingActor)
+  const isMyTurn = actingMine && logCaughtUp
+  const catchingUp = actingMine && !logCaughtUp
+  // The character the sheet and quick actions are about: whichever of mine is
+  // up, otherwise the one picked in the tabs.
+  const activeId = actingMine && awaitingActor ? awaitingActor : focusedId
   const actorColors = useMemo(
     () => (gameState ? buildActorColorMap(gameState.turn_order, gameState.characters) : {}),
     [gameState],
@@ -78,7 +87,7 @@ export default function LivePlay({
   // Issue #27: only meaningful on the player's own actual turn - a resource
   // usable "right now" means usable this turn, not just non-zero on the
   // sheet.
-  const me = gameState?.characters[myCharacterId]
+  const me = gameState?.characters[activeId]
   const characters = gameState?.characters
   // Live-reported layout issue: the grid and the scene image used to share
   // a row, capping the grid's width to make room for a placeholder that's
@@ -101,10 +110,14 @@ export default function LivePlay({
     setDraft('')
   }
 
+  // With several characters of mine still to answer a party choice, they answer
+  // one at a time, in order - this is whose turn to speak it is.
+  const choiceSpeaker = partyChoice?.awaiting.find((id) => mine.has(id))
+
   function handlePartyChoiceSubmit(e: FormEvent) {
     e.preventDefault()
     if (!choiceDraft.trim()) return
-    sendPartyChoiceResponse(choiceDraft.trim())
+    sendPartyChoiceResponse(choiceDraft.trim(), choiceSpeaker)
     setChoiceDraft('')
   }
 
@@ -222,7 +235,7 @@ export default function LivePlay({
               battleMap={gameState.battle_map}
               characters={gameState.characters}
               currentActorId={gameState.turn_order[gameState.current_turn]}
-              myCharacterId={myCharacterId}
+              myCharacterIds={myCharacterIds}
               canMove={isMyTurn}
               onMoveTo={sendPlayerMove}
               actorColors={actorColors}
@@ -237,7 +250,7 @@ export default function LivePlay({
           actorColors={actorColors}
           debugMode={debugMode}
         />
-        {bardicOffer && bardicOffer.holder === myCharacterId && (
+        {bardicOffer && mine.has(bardicOffer.holder) && (
           // Issue #53: the recipient's own choice - shown only to the
           // connection controlling the holder (the server broadcasts the
           // offer to everyone so the rest of the party sees why play is
@@ -259,7 +272,7 @@ export default function LivePlay({
             </div>
           </div>
         )}
-        {bardicOffer && bardicOffer.holder !== myCharacterId && (
+        {bardicOffer && !mine.has(bardicOffer.holder) && (
           <p className="companion-meta">
             {characters?.[bardicOffer.holder]?.name ?? bardicOffer.holder} is deciding whether to
             spend their Bardic Inspiration...
@@ -292,12 +305,16 @@ export default function LivePlay({
                 <strong>{characters?.[id]?.name ?? id}:</strong> {text}
               </p>
             ))}
-            {partyChoice.awaiting.includes(myCharacterId) ? (
+            {choiceSpeaker ? (
               <form className="action-form" onSubmit={handlePartyChoiceSubmit}>
                 <input
                   value={choiceDraft}
                   onChange={(e) => setChoiceDraft(e.target.value)}
-                  placeholder="What do you say or do?"
+                  placeholder={
+                    myCharacterIds.length > 1
+                      ? `What does ${characters?.[choiceSpeaker]?.name ?? choiceSpeaker} say or do?`
+                      : 'What do you say or do?'
+                  }
                 />
                 <button type="submit" disabled={!choiceDraft.trim()}>
                   Respond
@@ -319,7 +336,9 @@ export default function LivePlay({
               onChange={(e) => setDraft(e.target.value)}
               placeholder={
                 isMyTurn
-                  ? 'What do you do?'
+                  ? myCharacterIds.length > 1
+                    ? `What does ${me?.name ?? 'your character'} do?`
+                    : 'What do you do?'
                   : catchingUp
                     ? 'Catching up...'
                     : 'Waiting for other turns...'
@@ -343,18 +362,32 @@ export default function LivePlay({
                 key={id}
                 character={character}
                 isCurrentTurn={gameState.turn_order[gameState.current_turn] === id}
-                isYou={id === myCharacterId}
+                isYou={mine.has(id)}
                 color={actorColors[id]}
               />
             )
           })}
       </div>
-      {gameState?.characters[myCharacterId] && (
+      {me && (
         <div className="live-play-detail">
-          <CharacterDetailSheet
-            character={gameState.characters[myCharacterId]}
-            combatSummary={combatSummaries[myCharacterId]}
-          />
+          {myCharacterIds.length > 1 && (
+            <div className="my-characters-tabs">
+              {myCharacterIds.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={id === activeId ? 'active' : ''}
+                  disabled={actingMine}
+                  title={actingMine ? 'The sheet follows whichever of your characters is up' : undefined}
+                  onClick={() => setFocusedId(id)}
+                >
+                  {characters?.[id]?.name ?? id}
+                  {awaitingActor === id ? ' (up)' : ''}
+                </button>
+              ))}
+            </div>
+          )}
+          <CharacterDetailSheet character={me} combatSummary={combatSummaries[activeId]} />
         </div>
       )}
     </div>

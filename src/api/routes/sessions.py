@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from src import config
 from src.api.db.models import CampaignProgress, CharacterRecord
 from src.api.db.session import get_db
 from src.engine.campaign import load_campaign
@@ -187,6 +188,15 @@ def join_lobby(session_id: str, body: JoinLobbyRequest, db: DbSession) -> JoinLo
     if progress.status != "open":
         raise HTTPException(status_code=409, detail="This lobby has already started")
 
+    # A player may claim several seats (each its own character and token - see
+    # sessionClient.ts, which sends them all on connect), so the cap that
+    # matters is the whole party's, not "one per player".
+    if len(progress.party_character_ids) >= config.MAX_PARTY_SIZE:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The party is full ({config.MAX_PARTY_SIZE} characters at most)",
+        )
+
     if db.get(CharacterRecord, body.character_id) is None:
         raise HTTPException(status_code=404, detail=f"Character {body.character_id} not found")
 
@@ -223,6 +233,17 @@ def start_lobby(session_id: str, body: StartLobbyRequest, db: DbSession) -> Star
     unknown = set(body.companion_ids) - known_companion_ids
     if unknown:
         raise HTTPException(status_code=404, detail=f"Unknown companion id(s): {sorted(unknown)}")
+
+    total = len(progress.party_character_ids) + len(body.companion_ids)
+    if total > config.MAX_PARTY_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"A party holds at most {config.MAX_PARTY_SIZE} characters "
+                f"({len(progress.party_character_ids)} joined + "
+                f"{len(body.companion_ids)} companions chosen = {total})"
+            ),
+        )
 
     progress.party_character_ids = [*progress.party_character_ids, *body.companion_ids]
     progress.status = "in_progress"

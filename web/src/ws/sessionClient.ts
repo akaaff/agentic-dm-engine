@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getAccessKey } from '../api/accessKey'
 import { WS_BASE_URL } from '../api/baseUrl'
-import { getLobbyToken } from '../api/lobbyTokens'
+import { getLobbyTokens } from '../api/lobbyTokens'
 
 // Mirrors the JSON shape of src/engine/state.py's Character/GameState -
 // only the fields the UI actually renders, not a full 1:1 port of every
@@ -549,8 +549,9 @@ export function useSessionSocket(sessionId: string) {
       const params = new URLSearchParams()
       const accessKey = getAccessKey()
       if (accessKey) params.set('key', accessKey)
-      const lobbyToken = getLobbyToken(sessionId)
-      if (lobbyToken) params.set('token', lobbyToken)
+      // One token per character this player controls - the server treats the
+      // connection as controlling all of them.
+      for (const lobbyToken of getLobbyTokens(sessionId)) params.append('token', lobbyToken)
       // An auto-reconnect keeps this page's narration log, so it only asks for
       // what arrived after the last line it saw (see _narration_backfill in
       // api/ws/session.py); a fresh page asks for everything.
@@ -789,8 +790,12 @@ export function useSessionSocket(sessionId: string) {
   // one answers, so the panel's own awaiting list has to reflect what the
   // server actually knows - it updates on the party_choice_responded
   // broadcast that comes back, not before.
-  function sendPartyChoiceResponse(text: string) {
-    wsRef.current?.send(JSON.stringify({ type: 'party_choice_response', text }))
+  function sendPartyChoiceResponse(text: string, characterId?: string) {
+    // characterId says which of this player's characters is speaking when they
+    // control more than one; the server checks it and never takes it on trust.
+    wsRef.current?.send(
+      JSON.stringify({ type: 'party_choice_response', text, character_id: characterId })
+    )
     setError(null)
   }
 

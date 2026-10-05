@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react'
 import { api, type Character } from '../api/client'
 import { portraitUrl } from '../utils/portraits'
 
-const MAX_COMPANIONS = 4
-
 function initials(name: string): string {
   return name
     .split(/[\s_]+/)
@@ -36,9 +34,12 @@ function CompanionThumbnail({ companion }: { companion: Character }) {
 export default function PartySetup({
   onNext,
   onBack,
+  maxCompanions,
 }: {
   onNext: (companionIds: string[]) => void
   onBack: () => void
+  /** Seats left in the party once every joined character has one. */
+  maxCompanions: number
 }) {
   const [companions, setCompanions] = useState<Character[]>([])
   const [selected, setSelected] = useState<string[]>([])
@@ -54,7 +55,7 @@ export default function PartySetup({
   function toggle(id: string) {
     setSelected((prev) => {
       if (prev.includes(id)) return prev.filter((i) => i !== id)
-      if (prev.length >= MAX_COMPANIONS) return prev
+      if (prev.length >= maxCompanions) return prev
       return [...prev, id]
     })
   }
@@ -67,8 +68,8 @@ export default function PartySetup({
     <div className="wizard">
       <h1>Choose Your Party</h1>
       <p>
-        Pick up to {MAX_COMPANIONS} companions to adventure with ({selected.length}/
-        {MAX_COMPANIONS} selected). You can also go it alone.
+        Pick up to {maxCompanions} companions to adventure with ({selected.length}/
+        {maxCompanions} selected). You can also go it alone.
       </p>
       <div className="companion-grid">
         {companions.map((c) => (
