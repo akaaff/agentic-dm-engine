@@ -115,6 +115,7 @@ BUILDS: dict[str, dict[str, Any]] = {
         "scores": {"STR": 8, "DEX": 14, "CON": 13, "INT": 10, "WIS": 12, "CHA": 15},
         "skills": ["skill-arcana", "skill-intimidation"],
         "equipment": ["dagger"],
+        "spells": ["charm-person", "burning-hands"],
     },
     "wizard": {
         "name": "Elara",

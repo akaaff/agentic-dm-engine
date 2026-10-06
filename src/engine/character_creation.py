@@ -219,10 +219,11 @@ def arcane_recovery_slot_budget(level: int) -> int:
 SPELLS_KNOWN_BY_LEVEL: dict[str, dict[int, int]] = {
     "bard": {1: 4, 2: 5, 3: 6, 4: 7, 5: 8},
     "sorcerer": {1: 2, 2: 3, 3: 4, 4: 5, 5: 6},
+    "warlock": {1: 2, 2: 3, 3: 4, 4: 5, 5: 6},
 }
-"""Issue #30: the two SRD 5.1 "Spells Known" casters (as opposed to Cleric/
-Druid/Wizard/Paladin, who *prepare* from their whole class list instead -
-see PREPARED_CASTER_CLASSES/prepared_spell_count below). Not in the
+"""Issue #30 (Warlock added by issue #91): the three SRD 5.1 "Spells Known"
+casters (as opposed to Cleric/Druid/Wizard/Paladin, who *prepare* from their whole
+class list instead - see PREPARED_CASTER_CLASSES/prepared_spell_count below). Not in the
 vendored SRD JSON any more than LEVEL_1_SPELL_SLOTS/SPELL_SLOTS_BY_LEVEL are
 (level tables live behind a separate API endpoint) - hardcoded SRD 5.1
 facts, same precedent, same levels-1-5 scope. Counts cantrips-known
