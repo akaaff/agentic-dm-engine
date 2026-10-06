@@ -24,6 +24,7 @@ import random
 
 from src.engine.character_creation import (
     CLASS_RESOURCES_AT_LEVEL_1,
+    LAY_ON_HANDS_PER_LEVEL,
     SPELL_SLOTS_BY_LEVEL,
     arcane_recovery_slot_budget,
 )
@@ -54,6 +55,8 @@ def _max_class_resources(class_index: str | None, level: int) -> dict[str, int]:
         resources["ki"] = level
     if class_index == "druid" and level >= 2:
         resources["wild_shape"] = 2
+    if class_index == "paladin":
+        resources["lay_on_hands"] = LAY_ON_HANDS_PER_LEVEL * level  # a pool, not uses (#86)
     return resources
 
 

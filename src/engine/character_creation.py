@@ -188,10 +188,14 @@ ABILITY_SCORE_IMPROVEMENT_LEVELS = {4}
 pass is scoped to roughly levels 1-5 (see CLAUDE.md Phase 9J), so only level
 4 is modeled; the later levels are out of scope, not silently wrong."""
 
+LAY_ON_HANDS_PER_LEVEL = 5
+"""Paladin's Lay on Hands pool: 5 points x paladin level (SRD)."""
+
 CLASS_RESOURCES_AT_LEVEL_1: dict[str, dict[str, int]] = {
     "fighter": {"second_wind": 1},
     "barbarian": {"rage": 2},
     "wizard": {"arcane_recovery": 1},
+    "paladin": {"lay_on_hands": 5},
 }
 """Phase 9I, tier 1 - uses/day for the class features that need a limited
 resource (Second Wind, Rage, and issue #25's Arcane Recovery), at level 1.
@@ -767,6 +771,14 @@ def level_up(
     # (0, since Monks have no Ki at all yet), unusable for any leveled Monk.
     if character.class_index == "monk":
         character.class_resources["ki"] = character.level
+
+    # Lay on Hands (issue #86, Paladin): a pool of 5 healing points per paladin
+    # level - it grows by 5 with every level gained (spent points stay spent
+    # until a long rest, same as any other use).
+    if character.class_index == "paladin":
+        character.class_resources["lay_on_hands"] = (
+            character.class_resources.get("lay_on_hands", 0) + LAY_ON_HANDS_PER_LEVEL
+        )
 
     # Wild Shape uses (issue #24, Druid): fixed at 2 (unlike Ki, this
     # doesn't scale further within this project's level 1-5 range - only
