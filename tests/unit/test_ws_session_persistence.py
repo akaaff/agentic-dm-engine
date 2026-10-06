@@ -122,10 +122,14 @@ def _start_real_session(env: _Env) -> str:
 
 
 def _connect_and_drain(
-    env: _Env, session_id: str, until: str = "state_update"
+    env: _Env, session_id: str, until: str = "awaiting_input"
 ) -> list[dict[str, Any]]:
     """Connects, reads messages up to and including the first one of type
-    `until`, then disconnects. The in-memory Session outlives the socket."""
+    `until`, then disconnects. The in-memory Session outlives the socket. The
+    default waits for awaiting_input - the connect flow's own last step - not the
+    first state_update, which a mid-autoplay broadcast also sends: closing there
+    would cut the opening turns off now that the blocking work yields to the event
+    loop in worker threads (issue #105)."""
     seen: list[dict[str, Any]] = []
     with env.client.websocket_connect(f"/ws/session/{session_id}") as ws:
         while True:
@@ -200,7 +204,7 @@ def test_a_restart_restores_the_exact_live_state_instead_of_rebuilding(env: _Env
     assert restored.campaign_complete is True
     assert restored.adaptive_generations_used == 2
     # ...and the client's first state_update reflects it, not a fresh game.
-    state_update = seen[-1]
+    state_update = [m for m in seen if m["type"] == "state_update"][-1]
     assert state_update["game_state"]["characters"]["thorin"]["hp"] == 3
     assert state_update["campaign_complete"] is True
 
@@ -340,8 +344,9 @@ def test_an_unusable_snapshot_falls_back_to_a_fresh_session_and_logs_it(env: _En
     seen = _connect_and_drain(env, session_id)
 
     # Still a playable, from-scratch session...
-    assert seen[-1]["game_state"]["status"] == "in_progress"
-    assert set(seen[-1]["game_state"]["characters"]) >= {"thorin", "goblin_1"}
+    last_state = [m for m in seen if m["type"] == "state_update"][-1]
+    assert last_state["game_state"]["status"] == "in_progress"
+    assert set(last_state["game_state"]["characters"]) >= {"thorin", "goblin_1"}
     # ...and the bad snapshot was recorded, not silently swallowed.
     records = [json.loads(line) for line in log_event.EVENTS_LOG_PATH.read_text().splitlines()]
     assert any("snapshot restore failed" in r.get("message", "") for r in records)
@@ -439,8 +444,14 @@ def test_a_real_action_over_the_socket_is_persisted_and_survives_a_restart(
                 "action": {"actor": message["actor"], "verb": "end_turn", "raw_text": "pass"},
             }
         )
-        while ws.receive_json()["type"] != "awaiting_input":
-            pass
+        # The unseeded dice can end the fight (the human dies, or wins) before
+        # anyone is awaited again - stop on that too, or this waits forever.
+        while True:
+            reply = ws.receive_json()
+            if reply["type"] == "awaiting_input":
+                break
+            if reply["type"] == "state_update" and reply["game_state"]["status"] != "in_progress":
+                break
         after = ws_session_module._sessions[session_id].game_state
         events_after = len(after.events)
         round_after = after.round

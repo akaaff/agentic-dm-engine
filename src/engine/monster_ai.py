@@ -327,10 +327,24 @@ def _action_against(
         ally_squares,
     )
     if not path:
-        # Can't get any closer (blocked, or no speed left) - attack anyway.
-        # turn_engine's own range check gives an honest rejection rather
-        # than this heuristic silently doing nothing.
-        return attack, remaining_speed > 0
+        if remaining_speed <= 0:
+            # Issue #106: the monster already spent its movement (or can't move
+            # at all) and nothing is in reach. An attack here is certain to be
+            # rejected as out of range - three rejections in a row tripped the
+            # autoplay breaker and every approach turn was narrated as "hesitates,
+            # unable to settle on an action". Ending the turn is just what it did.
+            return (
+                ParsedAction(
+                    actor=actor.id,
+                    verb="end_turn",
+                    raw_text=f"{actor.name} has no movement left and nothing in reach.",
+                ),
+                False,
+            )
+        # Can't get any closer (blocked) - attack anyway: turn_engine's own
+        # range check gives an honest rejection rather than this heuristic
+        # silently doing nothing, and `blocked` lets the caller try someone else.
+        return attack, True
 
     return (
         ParsedAction(

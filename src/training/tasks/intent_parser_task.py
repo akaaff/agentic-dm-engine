@@ -339,7 +339,9 @@ def _generate_prompt(rng: random.Random) -> str:
         "narration": None,
         "scene_image_url": None,
     }
-    return build_intent_parser_prompt(state)
+    # Without the actor-options block (issue #98): the student is trained on the
+    # original prompt format.
+    return build_intent_parser_prompt(state, include_actor_options=False)
 
 
 def build_intent_parser_task(rng: random.Random | None = None) -> DistillationTask:

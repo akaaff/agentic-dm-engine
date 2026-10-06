@@ -30,7 +30,7 @@ Valid verbs and what they mean:
 
 Always set "raw_text" to the player's original text, verbatim.
 
-Current actor: {actor_id} at position ({actor_x}, {actor_y}), speed {actor_speed} ft.
+Current actor: {actor_id} at position ({actor_x}, {actor_y}), speed {actor_speed} ft.{actor_options}
 
 Visible characters:
 {characters_summary}

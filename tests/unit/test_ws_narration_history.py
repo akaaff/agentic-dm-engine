@@ -139,13 +139,16 @@ def _prepare_session_with_hook(env: _Env, monkeypatch: pytest.MonkeyPatch) -> tu
 
 
 def _connect(env: _Env, session_id: str, query: str = "") -> list[dict[str, Any]]:
-    """Messages up to and including the first state_update."""
+    """Messages up to and including the first awaiting_input - i.e. once the
+    connect flow has finished resolving the opening turns. (Stopping at the
+    first state_update would close the socket mid-autoplay now that the blocking
+    work runs in worker threads and yields to the event loop - issue #105.)"""
     seen: list[dict[str, Any]] = []
     with env.client.websocket_connect(f"/ws/session/{session_id}{query}") as ws:
         while True:
             message = ws.receive_json()
             seen.append(message)
-            if message["type"] == "state_update":
+            if message["type"] == "awaiting_input":
                 return seen
 
 
