@@ -34,6 +34,9 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
   unconscious:
     'Incapacitated, unaware of surroundings, drops what it’s holding and falls prone. Attacks against it have advantage and auto-crit within 5ft.',
   shielded: 'AC +5 from the Shield reaction, until the round ends.',
+  mocked: 'Disadvantage on its next attack roll (Vicious Mockery).',
+  chilled: 'Speed reduced by 10 feet (Ray of Frost).',
+  guided: 'The next attack roll against it has advantage (Guiding Bolt).',
   hidden:
     'Unseen. Attacks against it have disadvantage, and its next attack has advantage (and can Sneak Attack) - but attacking gives its position away and ends this.',
   blessed: "A d4 bonus die added to this creature's attack rolls and saving throws, until the spell ends.",
@@ -72,6 +75,9 @@ const CONDITION_DISPLAY_NAMES: Record<string, string> = {
   mirror_image: 'Mirror Image',
   protected_from_evil: 'Protection from Evil and Good',
   shielded: 'Shield',
+  mocked: 'Vicious Mockery',
+  chilled: 'Ray of Frost',
+  guided: 'Guiding Bolt',
   outlined: 'Outlined (Faerie Fire)',
 }
 
@@ -93,6 +99,9 @@ const SPELL_EFFECT_CONDITIONS = new Set([
   'protected_from_evil',
   'shielded',
   'outlined',
+  'mocked',
+  'chilled',
+  'guided',
 ])
 
 export function conditionDisplayName(name: string): string {

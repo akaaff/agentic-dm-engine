@@ -451,6 +451,9 @@ _FAILED_SAVE_CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     # turn (approach / drop / flee / grovel / halt); modeled as losing that
     # turn, which is what every one of them amounts to for a combatant.
     "command": ConditionSpellSpec(condition="incapacitated", duration_rounds=1),
+    # Issue #97: the cantrip's defining rider - disadvantage on the target's next
+    # attack roll (consumed by that attack; see condition_attack_disadvantage).
+    "vicious-mockery": ConditionSpellSpec(condition="mocked", duration_rounds=1),
 }
 """Issue #68: save-based spells whose real effect is an ongoing condition on
 every target that FAILS the save (the "save" mechanic otherwise resolves only
@@ -463,6 +466,30 @@ not an entry there (an entry would make spell_mechanic classify it as the
 no-save "condition" mechanic). Hold Person's paralysis is the same documented
 gap (SaveSpellParams.damage_type's docstring) and would be one more row here,
 but isn't part of this issue."""
+
+
+_ATTACK_HIT_RIDERS: dict[str, tuple[ConditionName, int]] = {
+    "ray-of-frost": ("chilled", 1),
+    "guiding-bolt": ("guided", 1),
+}
+"""Issue #97: attack-roll spells whose defining secondary effect lands when
+they HIT - Ray of Frost cuts the target's speed by 10 ft (see effective_speed),
+Guiding Bolt gives the next attack roll against the target advantage (consumed
+by it; see condition_attack_advantage). Spell index -> (condition, rounds)."""
+
+_PUSH_SPELLS: dict[str, int] = {"thunderwave": 10}
+"""Issue #97: save spells that shove a target that FAILS the save, in feet,
+directly away from the caster (turn_engine._push_target)."""
+
+
+def attack_hit_rider(spell_name: str) -> tuple[ConditionName, int] | None:
+    """The (condition, rounds) a hitting attack spell applies to its target."""
+    return _ATTACK_HIT_RIDERS.get(normalize_spell_name(spell_name))
+
+
+def spell_push_feet(spell_name: str) -> int:
+    """How far a failed save pushes the target (0 for most spells)."""
+    return _PUSH_SPELLS.get(normalize_spell_name(spell_name), 0)
 
 
 def failed_save_condition(spell: SrdEntry) -> ConditionSpellSpec | None:
@@ -1280,6 +1307,7 @@ def condition_attack_advantage(actor: Character, target: Character, distance_fee
         or has_condition(target, "restrained")
         or has_condition(target, "stunned")
         or has_condition(target, "unconscious")
+        or has_condition(target, "guided")  # Guiding Bolt (issue #97)
         # Faerie Fire (issue #96): outlined in light - attackers who can see it
         # have advantage.
         or has_condition(target, "outlined")
@@ -1300,6 +1328,7 @@ def condition_attack_disadvantage(actor: Character, target: Character, distance_
         or has_condition(actor, "restrained")
         or has_condition(actor, "prone")
         or has_condition(actor, "frightened")
+        or has_condition(actor, "mocked")
         or actor.exhaustion_level >= 3
         or has_condition(target, "invisible")
         or has_condition(target, "hidden")
@@ -1333,6 +1362,8 @@ def effective_speed(character: Character) -> int:
     if has_condition(character, "grappled") or character.exhaustion_level >= 5:
         return 0
     speed = character.speed + (10 if has_condition(character, "longstrider") else 0)
+    if has_condition(character, "chilled"):
+        speed = max(0, speed - 10)  # Ray of Frost (issue #97)
     if character.exhaustion_level >= 2:
         return speed // 2
     return speed

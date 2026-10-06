@@ -143,6 +143,7 @@ from src.engine.rules import (
     ac_floor_for,
     apply_damage,
     armor_ac,
+    attack_hit_rider,
     baned_penalty,
     bardic_inspiration_die_sides,
     blessed_bonus,
@@ -186,6 +187,7 @@ from src.engine.rules import (
     spell_damage_resistance,
     spell_dc_info,
     spell_mechanic,
+    spell_push_feet,
     spell_range_feet,
     weapon_combo_is_legal,
     weapon_range_feet,
@@ -881,6 +883,59 @@ def _bless_and_bane(character: Character, rng: random.Random) -> tuple[int, list
     return bless - bane, entries
 
 
+def _consume_spell_riders(attacker: Character, target: Character) -> None:
+    """Issue #97: Vicious Mockery's disadvantage lasts for the target's NEXT attack
+    roll and Guiding Bolt's advantage for the next attack roll AGAINST its
+    target - each is spent by the attack that has just had it counted."""
+    remove_condition(attacker, "mocked")
+    remove_condition(target, "guided")
+
+
+def _push_target(
+    state: GameState, caster: Character, target: Character, feet: int, spell: str
+) -> None:
+    """Thunderwave (issue #97): shoves `target` up to `feet` straight away from
+    `caster`, a square (5 ft) at a time, stopping at a wall, the map's edge or
+    another creature. Emits a `move` event so the log and grid show it."""
+    battle_map = state.battle_map
+    dx = (target.position.x > caster.position.x) - (target.position.x < caster.position.x)
+    dy = (target.position.y > caster.position.y) - (target.position.y < caster.position.y)
+    if battle_map is None or (dx == 0 and dy == 0):
+        return
+    origin = target.position
+    position = origin
+    for _ in range(feet // 5):
+        nx, ny = position.x + dx, position.y + dy
+        if not (0 <= nx < battle_map.width and 0 <= ny < battle_map.height):
+            break
+        if battle_map.terrain[ny][nx] == "wall":
+            break
+        if any(
+            c.position.x == nx and c.position.y == ny and not c.is_dead and c.id != target.id
+            for c in state.characters.values()
+        ):
+            break
+        position = Position(x=nx, y=ny)
+    if position == origin:
+        return
+    target.position = position
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=target.id,
+            type="move",
+            payload={
+                "from": {"x": origin.x, "y": origin.y},
+                "to": {"x": position.x, "y": position.y},
+                "dashed": False,
+                "pushed_by": caster.id,
+                "spell": spell,
+            },
+        )
+    )
+
+
 def _reveal(state: GameState, actor: Character, reason: str = "attacked") -> None:
     """Hide (issue #84): a hidden creature is found out the moment it attacks
     or casts a hostile spell, win or lose - called after an attack roll has
@@ -1280,6 +1335,7 @@ def _resolve_single_attack(
         or protected_from_evil_disadvantage(actor, target, srd)
         or protection is True
     )
+    _consume_spell_riders(actor, target)
 
     # Mirror Image (issue #61): may redirect this attack to a duplicate,
     # resolving it entirely - after every attack-roll modifier is known (the
@@ -3400,6 +3456,7 @@ def _cast_attack_spell_at_target(
         # Eldritch Blast rolled straight).
         or (ranged and _has_adjacent_hostile(state, actor))
     )
+    _consume_spell_riders(actor, target)
     # Mirror Image (issue #61) - see _resolve_single_attack's identical handling.
     if _try_mirror_image(state, actor, target, params.attack_bonus, advantage, disadvantage, rng):
         return
@@ -3443,6 +3500,30 @@ def _cast_attack_spell_at_target(
     if result.hit and result.damage is not None:
         _apply_damage_and_handle_downing(
             state, actor, target, result.damage, params.damage_type, rng, srd
+        )
+
+    # Issue #97: Ray of Frost's slow / Guiding Bolt's next-attack advantage land on a
+    # hit (a target the damage just killed has nothing left to apply them to).
+    rider = attack_hit_rider(params.source_name)
+    if result.hit and rider is not None and not target.is_dead:
+        condition, rounds = rider
+        apply_condition(
+            target,
+            Condition(
+                name=condition,
+                duration_rounds=rounds,
+                source=actor.id,
+                spell=params.source_name,
+            ),
+        )
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=target.id,
+                type="condition_applied",
+                payload={"condition": condition, "source": params.source_name},
+            )
         )
 
     if result.hit and already_unconscious and target.is_pc and not target.is_dead:
@@ -3601,6 +3682,11 @@ def _cast_save_spell_at_target(
                     payload={"condition": condition_name, "source": params.source_name},
                 )
             )
+
+    # Issue #97: Thunderwave pushes a target that failed its save 10 ft away.
+    push = spell_push_feet(params.source_name)
+    if not success and push:
+        _push_target(state, actor, target, push, params.source_name)
 
     if params.damage_type is None:
         return  # no-damage control spell - nothing further to resolve

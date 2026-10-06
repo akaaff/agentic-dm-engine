@@ -44,6 +44,12 @@ ConditionName = Literal[
     "shielded",
     "hidden",
     "outlined",
+    "mocked",
+    "chilled",
+    "guided",
+    "mocked",
+    "chilled",
+    "guided",
 ]
 """Exhaustion isn't in this list - SRD exhaustion is a leveled (0-6) effect
 with per-level rules, not an on/off tag like these - see
