@@ -50,6 +50,7 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
     'Any creature that attacks it must first succeed on a Wisdom saving throw, or lose that attack. The ward ends if it attacks.',
   protected_from_evil:
     'Aberrations, celestials, elementals, fey, fiends, and undead have disadvantage on attack rolls against it.',
+  outlined: 'Outlined in shimmering light: attack rolls against it have advantage.',
 }
 
 // Names that aren't a plain capitalized form of the condition id - the spell
@@ -67,6 +68,7 @@ const CONDITION_DISPLAY_NAMES: Record<string, string> = {
   warded: 'Sanctuary',
   mirror_image: 'Mirror Image',
   protected_from_evil: 'Protection from Evil and Good',
+  outlined: 'Outlined (Faerie Fire)',
 }
 
 // A spell's ongoing effect, as opposed to one of the SRD's 15 real
@@ -85,6 +87,7 @@ const SPELL_EFFECT_CONDITIONS = new Set([
   'warded',
   'mirror_image',
   'protected_from_evil',
+  'outlined',
 ])
 
 export function conditionDisplayName(name: string): string {

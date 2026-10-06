@@ -29,6 +29,22 @@ def _event_line(event: Event) -> str:
             f"{event.payload.get('amount')} {event.payload.get('damage_type')} damage "
             "(environmental/terrain damage - not caused by any other character)"
         )
+    # A spell's saving throw is rolled by the *target* against the caster's
+    # spell, so `success` means the target resisted - success=false means the
+    # spell took hold. The model read "success: false" as the SPELL failing
+    # (live: a failed Entangle save narrated as the tendrils failing to
+    # ensnare the creature) - issue #96. Spelled out the way hazard_damage is.
+    if event.type == "saving_throw" and event.payload.get("kind") == "spell_save":
+        p = event.payload
+        outcome = (
+            "RESISTS the spell (passed the save - it has no effect on them)"
+            if p.get("success")
+            else "FAILS the save - the spell takes full hold of them"
+        )
+        return (
+            f"- {p.get('target')} makes a {p.get('ability')} saving throw against "
+            f"{event.actor}'s {p.get('spell')} and {outcome}"
+        )
     return f"- actor={event.actor} type={event.type} payload={event.payload}"
 
 

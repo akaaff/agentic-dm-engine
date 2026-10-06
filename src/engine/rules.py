@@ -342,6 +342,12 @@ class ConditionSpellSpec:
     cures: ConditionName | None = None
     """An existing condition the cast removes from each target first
     (Protection from Poison cures `poisoned`)."""
+    extra_conditions: tuple[ConditionName, ...] = ()
+    """More conditions applied alongside `condition` (Hideous Laughter: prone
+    AND incapacitated)."""
+    only_monster_types: frozenset[str] | None = None
+    """If set, only a monster whose SRD `type` is in the set is affected (Animal
+    Friendship: beasts). Anyone else just shrugs the spell off."""
 
 
 _CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
@@ -395,6 +401,25 @@ disadvantage flag)."""
 
 _FAILED_SAVE_CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     "bane": ConditionSpellSpec(condition="baned", duration_rounds=10),
+    # Issue #96 (class playtest): these cast "successfully" - a save event and a
+    # spent slot - and then did nothing to a target that failed. Durations are
+    # the SRD's; the repeat saves they allow (Entangle's Strength check to
+    # break free, Hideous Laughter's save at the end of each turn) aren't
+    # modeled, so they simply run their course or until concentration ends.
+    "charm-person": ConditionSpellSpec(condition="charmed", duration_rounds=600),
+    "animal-friendship": ConditionSpellSpec(
+        condition="charmed", duration_rounds=14400, only_monster_types=frozenset({"beast"})
+    ),
+    "hideous-laughter": ConditionSpellSpec(
+        condition="incapacitated", duration_rounds=10, extra_conditions=("prone",)
+    ),
+    "entangle": ConditionSpellSpec(condition="restrained", duration_rounds=10),
+    "faerie-fire": ConditionSpellSpec(condition="outlined", duration_rounds=10),
+    "grease": ConditionSpellSpec(condition="prone", duration_rounds=None),
+    # Command's real effect is one of several one-word orders for a single
+    # turn (approach / drop / flee / grovel / halt); modeled as losing that
+    # turn, which is what every one of them amounts to for a combatant.
+    "command": ConditionSpellSpec(condition="incapacitated", duration_rounds=1),
 }
 """Issue #68: save-based spells whose real effect is an ongoing condition on
 every target that FAILS the save (the "save" mechanic otherwise resolves only
@@ -1191,6 +1216,9 @@ def condition_attack_advantage(actor: Character, target: Character, distance_fee
         or has_condition(target, "restrained")
         or has_condition(target, "stunned")
         or has_condition(target, "unconscious")
+        # Faerie Fire (issue #96): outlined in light - attackers who can see it
+        # have advantage.
+        or has_condition(target, "outlined")
         or (has_condition(target, "prone") and distance_feet <= 5)
     )
 
