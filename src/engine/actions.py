@@ -25,6 +25,7 @@ ActionVerb = Literal[
     "grapple",
     "shove",
     "second_wind",
+    "lay_on_hands",
     "rage",
     "equip",
     "offhand_attack",
@@ -88,7 +89,10 @@ class ParsedAction(BaseModel):
     `wild_shape` (Druid, issue #24) carries `params["beast_index"] = str`
     (an SRD monster index, e.g. "wolf") - no target, it transforms the
     actor. `revert_wild_shape` needs nothing at all - it only makes sense
-    while already transformed. `bardic_inspiration` (Bard, issue #25)
+    while already transformed. `lay_on_hands` (Paladin, issue #86) needs
+    `target` (defaults to the caster) and optionally `params["amount"]` = how
+    many pool points to spend (default: as many as the target is missing, up
+    to the pool). `bardic_inspiration` (Bard, issue #25)
     needs only `target` (like `attack`/`help`) - the ally who receives the
     banked die, no `item_or_spell`."""
     raw_text: str
