@@ -64,7 +64,10 @@ def build_intent_parser_prompt(state: GraphState) -> str:
     teacher it's distilled from once swapped in (Day 27)."""
     game_state = state["game_state"]
     actor = game_state.characters[game_state.turn_order[game_state.current_turn]]
-    others = [c for c in game_state.characters.values() if c.id != actor.id]
+    # Dead creatures are not candidates (issue #75): listed, a corpse still
+    # ranks "2nd closest", so "the nearest goblin" resolved to it. A downed
+    # but living PC stays listed - heal/stabilize/Spare the Dying target them.
+    others = [c for c in game_state.characters.values() if c.id != actor.id and not c.is_dead]
     # Sorted by distance (found live: "the closest enemy"/"the enemy to my
     # left" were unresolvable from raw coordinates alone) - rank is this
     # sorted position, not list order, so "closest" always means closest
@@ -532,6 +535,66 @@ def _expand_area_spell_targets(
     return out
 
 
+_BONUS_ACTION_VERBS = frozenset(
+    {
+        "second_wind",
+        "rage",
+        "bardic_inspiration",
+        "martial_arts_strike",
+        "flurry_of_blows",
+        "offhand_attack",
+        "revert_wild_shape",
+        "cunning_action",
+    }
+)
+"""Verbs that are always a bonus action. (A cast_spell is one only when the SRD
+spell's casting_time says so - checked separately. `equip` is a free object
+interaction and is deliberately NOT moved: "attack with the dagger, then draw
+the sword" must keep its order.)"""
+
+# Verbs that neither end the turn nor are bonus actions: they can stay where the
+# player put them.
+_TURN_PRESERVING_VERBS = frozenset({"move", "equip"})
+
+
+def _is_bonus_action(action: ParsedAction) -> bool:
+    if action.verb in _BONUS_ACTION_VERBS:
+        return True
+    if action.verb == "cast_spell" and action.item_or_spell:
+        spell = load_srd().spells.get(normalize_spell_name(action.item_or_spell))
+        return spell is not None and str(spell.get("casting_time", "")) == "1 bonus action"
+    return False
+
+
+def _bonus_actions_first(actions: list[ParsedAction]) -> list[ParsedAction]:
+    """Issue #76: players name the main action first and the bonus action
+    second ("I attack the goblin and then use second wind", "...and then cast
+    healing word on Buddy", "I punch it and kick it as a bonus action"). The
+    main action ends the turn, so the sequencing loop in api/ws/session.py
+    stopped before the bonus action ever ran and it was silently dropped. The
+    engine doesn't enforce "after the Attack action" for any bonus action (the
+    same documented simplification Flurry/Martial Arts already make), so the
+    order is free: every bonus action that follows the first turn-ending
+    action is moved to just before it, keeping the relative order of
+    everything else (the dual-wield split already does this for the off-hand
+    swing)."""
+    first_main = next(
+        (
+            i
+            for i, a in enumerate(actions)
+            if a.verb not in _TURN_PRESERVING_VERBS and not _is_bonus_action(a)
+        ),
+        None,
+    )
+    if first_main is None:
+        return actions
+    late_bonus = [a for a in actions[first_main + 1 :] if _is_bonus_action(a)]
+    if not late_bonus:
+        return actions
+    rest = [a for a in actions[first_main + 1 :] if not _is_bonus_action(a)]
+    return [*actions[:first_main], *late_bonus, actions[first_main], *rest]
+
+
 def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
     """Issue #47: like intent_parser_node, but can return more than one
     ParsedAction for a single utterance describing multiple distinct
@@ -570,6 +633,7 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
     actions = [_postprocess_action(a, expected_actor_id, game_state) for a in sequence.actions]
     actions = _split_dual_wield_attacks(actions, game_state, expected_actor_id)
     actions = _expand_area_spell_targets(actions, game_state, expected_actor_id, state["raw_text"])
+    actions = _bonus_actions_first(actions)
     if not actions:
         actions = [_invalid_action(state)]
     for action in actions:

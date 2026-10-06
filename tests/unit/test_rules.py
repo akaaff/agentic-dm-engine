@@ -966,3 +966,23 @@ def test_weapon_combo_is_legal_two_handed_weapon_plus_a_shield_is_illegal() -> N
 def test_weapon_combo_is_legal_no_weapons_plus_a_shield_is_legal() -> None:
     srd = load_srd()
     assert weapon_combo_is_legal([], srd.equipment, shield_equipped=True) is True
+
+
+def test_spell_range_feet_uses_the_area_size_for_a_self_spell_with_an_area() -> None:
+    # Issue #79: Burning Hands/Thunderwave have range "Self" and a 15ft
+    # cone/cube in area_of_effect - they used to fall back to 5ft and could
+    # only reach adjacent creatures.
+    spells = load_srd().spells
+    assert spell_range_feet(spells["burning-hands"]) == 15
+    assert spell_range_feet(spells["thunderwave"]) == 15
+    assert spell_range_feet(spells["color-spray"]) == 15
+    assert spell_range_feet(spells["cone-of-cold"]) == 60
+
+
+def test_spell_range_feet_leaves_other_self_and_touch_spells_at_5ft() -> None:
+    spells = load_srd().spells
+    assert spell_range_feet(spells["shield"]) == 5  # Self, no area
+    assert spell_range_feet(spells["mage-armor"]) == 5  # Touch
+    # A ranged spell with an area is still measured by its range, not its area.
+    assert spell_range_feet(spells["sleep"]) == 90
+    assert spell_range_feet(spells["entangle"]) == 90

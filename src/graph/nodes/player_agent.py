@@ -129,7 +129,8 @@ def _actor_options_summary(actor: Character, srd: SrdIndex) -> str:
 
 
 def _build_prompt(game_state: GameState, actor: Character, srd: SrdIndex) -> str:
-    others = [c for c in game_state.characters.values() if c.id != actor.id]
+    # Dead creatures aren't candidates (issue #75) - see intent_parser.
+    others = [c for c in game_state.characters.values() if c.id != actor.id and not c.is_dead]
     others.sort(key=lambda c: distance_feet(actor.position, c.position))
     characters_summary = "\n".join(
         _character_summary_line(c, actor, rank) for rank, c in enumerate(others, start=1)
