@@ -303,6 +303,7 @@ class PendingBardicChoice:
     is_finesse_or_ranged: bool
     had_advantage: bool
     smite_slot_level: int | None = None
+    damage_reroll_at_or_below: int = 0
 
 
 class BardicChoicePending(Exception):  # noqa: N818 - a control-flow signal, not an error
@@ -344,6 +345,9 @@ class AttackParams:
     rules.weapon_range_feet/monster_action_range_feet."""
     thrown_range_normal_feet: int | None = None
     thrown_range_long_feet: int | None = None
+    damage_reroll_at_or_below: int = 0
+    """Great Weapon Fighting (issue #92): 2 when this attack rerolls damage dice
+    showing 1 or 2; 0 otherwise."""
     """Live-reported bug fix: only ever set from _pc_attack_params, when
     the equipped weapon has the SRD "thrown" property (dagger/handaxe/
     javelin/light-hammer/spear/trident) - the real throw range from
@@ -539,6 +543,17 @@ def _pc_attack_params(
     properties = {p["index"] for p in (weapon.get("properties") or [])}
     is_finesse = "finesse" in properties
     is_ranged = weapon.get("weapon_range") == "Ranged"
+    # Great Weapon Fighting (issue #92): reroll 1s and 2s on the damage dice of a
+    # melee weapon wielded in two hands - a two-handed weapon, or a versatile
+    # one with nothing in the other hand (no shield, no second weapon).
+    two_handed = "two-handed" in properties or (
+        "versatile" in properties
+        and actor.equipped_shield is None
+        and len(actor.equipped_weapons) <= 1
+    )
+    gwf_reroll = (
+        2 if actor.fighting_style == "great-weapon-fighting" and not is_ranged and two_handed else 0
+    )
     if smite_slot_level is not None and is_ranged:
         raise TurnEngineError("Divine Smite requires a melee weapon attack")
     # Martial Arts (issue #24, Monk): DEX is usable for a monk weapon's
@@ -608,6 +623,7 @@ def _pc_attack_params(
         range_long_feet=range_long_feet,
         thrown_range_normal_feet=throw_range[0] if throw_range else None,
         thrown_range_long_feet=throw_range[1] if throw_range else None,
+        damage_reroll_at_or_below=gwf_reroll,
         is_finesse_or_ranged=is_finesse or is_ranged,
         is_melee_str_weapon=is_melee_str_weapon,
         smite_slot_level=smite_slot_level,
@@ -652,7 +668,10 @@ def current_attack_summaries(actor: Character, srd: SrdIndex) -> list[AttackSumm
     summaries = [_attack_summary_from_params(_pc_attack_params(actor, None, srd))]
     if len(actor.equipped_weapons) == 2:
         off_params = _pc_attack_params(
-            actor, actor.equipped_weapons[1], srd, include_ability_damage_bonus=False
+            actor,
+            actor.equipped_weapons[1],
+            srd,
+            include_ability_damage_bonus=actor.fighting_style == "two-weapon-fighting",
         )
         summaries.append(_attack_summary_from_params(off_params, name_suffix=" (off-hand)"))
     return summaries
@@ -1114,6 +1133,7 @@ def _resolve_single_attack(
             disadvantage=disadvantage,
             force_critical=already_unconscious,
             lucky=has_lucky_trait(actor),
+            damage_reroll_at_or_below=params.damage_reroll_at_or_below,
         )
         natural = probe.attack_roll.kept[0]
         if not probe.hit and natural != 1:
@@ -1139,6 +1159,7 @@ def _resolve_single_attack(
                     is_finesse_or_ranged=params.is_finesse_or_ranged,
                     had_advantage=advantage,
                     smite_slot_level=params.smite_slot_level,
+                    damage_reroll_at_or_below=params.damage_reroll_at_or_below,
                 )
             )
         # Already a hit, or a natural 1 the die couldn't have fixed anyway -
@@ -1162,6 +1183,7 @@ def _resolve_single_attack(
         force_critical=already_unconscious,
         lucky=has_lucky_trait(actor),
         bardic_die_sides=bardic_die_sides,
+        damage_reroll_at_or_below=params.damage_reroll_at_or_below,
     )
     if bardic_die_sides:
         actor.bardic_inspiration_die = None
@@ -1380,7 +1402,11 @@ def resolve_pending_bardic_choice(
             critical = choice.force_critical
             dice_count = choice.damage_dice_count * 2 if critical else choice.damage_dice_count
             damage_roll = roll(
-                dice_count, choice.damage_dice_sides, modifier=choice.damage_bonus, rng=rng
+                dice_count,
+                choice.damage_dice_sides,
+                modifier=choice.damage_bonus,
+                rng=rng,
+                reroll_at_or_below=choice.damage_reroll_at_or_below,
             )
             result = AttackResult(
                 attack_roll=roll_result,
@@ -1556,7 +1582,10 @@ def _resolve_offhand_attack(
     _validate_attack_target(actor, target)
 
     params = _pc_attack_params(
-        actor, actor.equipped_weapons[1], srd, include_ability_damage_bonus=False
+        actor,
+        actor.equipped_weapons[1],
+        srd,
+        include_ability_damage_bonus=actor.fighting_style == "two-weapon-fighting",
     )
     _resolve_single_attack(state, actor, target, params, rng, srd)
     actor.bonus_action_used = True

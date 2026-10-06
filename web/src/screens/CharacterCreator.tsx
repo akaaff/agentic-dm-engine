@@ -34,6 +34,16 @@ const FIGHTING_STYLES: { value: string; label: string; hint: string }[] = [
     label: 'Dueling',
     hint: '+2 damage with a one-handed melee weapon and no other weapon equipped.',
   },
+  {
+    value: 'great-weapon-fighting',
+    label: 'Great Weapon Fighting',
+    hint: 'Reroll 1s and 2s on the damage dice of a two-handed melee weapon (or a versatile one wielded in two hands).',
+  },
+  {
+    value: 'two-weapon-fighting',
+    label: 'Two-Weapon Fighting',
+    hint: 'Add your ability modifier to the damage of your off-hand attack.',
+  },
 ]
 
 const ABILITIES: AbilityScore[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']

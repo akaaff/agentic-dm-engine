@@ -41,6 +41,7 @@ def resolve_attack(
     force_critical: bool = False,
     lucky: bool = False,
     bardic_die_sides: int | None = None,
+    damage_reroll_at_or_below: int = 0,
 ) -> AttackResult:
     """A natural 1 always misses, a natural 20 always hits and doubles the
     damage dice (not the flat bonus), per SRD rules.
@@ -91,7 +92,13 @@ def resolve_attack(
 
     critical = natural_twenty or force_critical
     dice_count = damage_dice_count * 2 if critical else damage_dice_count
-    damage_roll = roll(dice_count, damage_dice_sides, modifier=damage_bonus, rng=rng)
+    damage_roll = roll(
+        dice_count,
+        damage_dice_sides,
+        modifier=damage_bonus,
+        rng=rng,
+        reroll_at_or_below=damage_reroll_at_or_below,
+    )
     damage = max(0, damage_roll.total)
     return AttackResult(
         attack_roll, hit=True, critical=critical, damage=damage, damage_type=damage_type

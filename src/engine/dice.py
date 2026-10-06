@@ -21,9 +21,20 @@ class RollResult:
     total: int
 
 
-def roll(n: int, sides: int, modifier: int = 0, rng: random.Random | None = None) -> RollResult:
+def roll(
+    n: int,
+    sides: int,
+    modifier: int = 0,
+    rng: random.Random | None = None,
+    reroll_at_or_below: int = 0,
+) -> RollResult:
+    """`reroll_at_or_below` (Great Weapon Fighting, issue #92): each die that
+    shows this value or less is rerolled once and the new roll is kept, even if
+    it is low again. 0 (the default) rerolls nothing and draws no extra dice."""
     rng = rng or random.Random()
     dice = [rng.randint(1, sides) for _ in range(n)]
+    if reroll_at_or_below:
+        dice = [rng.randint(1, sides) if d <= reroll_at_or_below else d for d in dice]
     return RollResult(dice=dice, kept=dice, modifier=modifier, total=sum(dice) + modifier)
 
 
