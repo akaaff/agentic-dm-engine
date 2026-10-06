@@ -177,6 +177,7 @@ from src.engine.rules import (
     resolve_skill_check,
     saving_throw_bonus,
     skill_ability,
+    spell_attack_is_ranged,
     spell_damage_notation,
     spell_damage_resistance,
     spell_dc_info,
@@ -2889,6 +2890,8 @@ def _cast_attack_spell_at_target(
     spell_level: int,
     rng: random.Random,
     srd: SrdIndex,
+    *,
+    ranged: bool = False,
 ) -> None:
     """One target's independent attack roll (Phase 9D multi-target: called
     once per id in action.targets, or once for the single legacy `target`).
@@ -2931,6 +2934,11 @@ def _cast_attack_spell_at_target(
         target.is_dodging
         or condition_attack_disadvantage(actor, target, distance)
         or protected_from_evil_disadvantage(actor, target, srd)
+        # Issue #80: a ranged *spell* attack is a ranged attack too - same
+        # "hostile within 5ft" disadvantage _resolve_single_attack applies to
+        # weapons (it was missing here, so every cornered caster's Fire Bolt /
+        # Eldritch Blast rolled straight).
+        or (ranged and _has_adjacent_hostile(state, actor))
     )
     # Mirror Image (issue #61) - see _resolve_single_attack's identical handling.
     if _try_mirror_image(state, actor, target, params.attack_bonus, advantage, disadvantage, rng):
@@ -3667,7 +3675,16 @@ def _resolve_monster_innate_spell(
     spell_level = spell_ref["level"]
     if mechanic == "attack":
         attack_params = _monster_innate_attack_params(innate, spell, spell_level, range_normal_feet)
-        _cast_attack_spell_at_target(state, actor, target, attack_params, spell_level, rng, srd)
+        _cast_attack_spell_at_target(
+            state,
+            actor,
+            target,
+            attack_params,
+            spell_level,
+            rng,
+            srd,
+            ranged=spell_attack_is_ranged(spell),
+        )
     else:
         save_params = _monster_innate_save_params(innate, spell, spell_level)
         _cast_save_spell_at_target(state, actor, target, save_params, rng, srd)
@@ -3895,7 +3912,16 @@ def _resolve_cast_spell(
     if mechanic == "attack":
         attack_params = _spell_attack_params(actor, spell, spell_level, srd)
         for target in targets:
-            _cast_attack_spell_at_target(state, actor, target, attack_params, spell_level, rng, srd)
+            _cast_attack_spell_at_target(
+                state,
+                actor,
+                target,
+                attack_params,
+                spell_level,
+                rng,
+                srd,
+                ranged=spell_attack_is_ranged(spell),
+            )
     elif mechanic == "save":
         save_params = _spell_save_params(actor, spell, spell_level, srd)
         for target in targets:
