@@ -44,6 +44,20 @@ export function computeResourceQuickActions(
     })
   }
 
+  if (remaining('lay_on_hands') > 0) {
+    const hurt = Object.values(characters).find(
+      (c) => c.is_pc && !c.is_dead && c.hp < c.max_hp,
+    )
+    if (hurt) {
+      actions.push({
+        key: 'lay_on_hands',
+        label: 'Lay on Hands',
+        remaining: remaining('lay_on_hands'),
+        suggestedText: `I lay hands on ${hurt.id === me.id ? 'myself' : hurt.name}`,
+      })
+    }
+  }
+
   if (remaining('ki') > 0 && !me.bonus_action_used) {
     const enemy = Object.values(characters).find((c) => !c.is_pc && !c.is_dead)
     if (enemy) {

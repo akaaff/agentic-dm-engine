@@ -11,6 +11,7 @@ Valid verbs and what they mean:
 - "help": the player takes the Help action to assist another character. Set "target" to who they're helping if named.
 - "stabilize": the player tends to a dying (unconscious) ally to stop their death saves, e.g. "I try to stabilize him" / "I stop the bleeding". Set "target" to the ally being stabilized.
 - "death_save": the player is making their own death saving throw while unconscious/dying, e.g. "I try to hold on" / "I roll my death save". No target needed.
+- "lay_on_hands": the player (a Paladin) heals a creature by touch, spending points from their Lay on Hands pool, e.g. "I lay hands on Buddy" / "I heal Brannock with my touch" / "I use lay on hands on myself". Set "target" to the creature (omit it for the player themselves); if the player names a number of points set params {{"amount": N}}, otherwise omit params.
 - "grapple": the player tries to grab and restrain another character, e.g. "I grapple the goblin" / "I try to hold it down". Set "target" to who they're grappling.
 - "shove": the player tries to shove another character prone or away, e.g. "I shove the goblin" / "I try to knock it down". Set "target" to who they're shoving.
 - "second_wind": the player (a Fighter) uses their Second Wind to heal themselves, e.g. "I use my second wind" / "I catch my breath and push through the pain". No target needed.

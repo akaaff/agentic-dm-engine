@@ -71,6 +71,8 @@ function resourceLabel(key: string): string {
 // keys this engine currently implements.
 const RESOURCE_HINTS: Record<string, string> = {
   second_wind: 'Bonus action: heal 1d10 + your level, once per short or long rest.',
+  lay_on_hands:
+    'A pool of healing points (5 per paladin level, refilled on a long rest). As an action, touch a creature and spend any number of points to heal that many hit points.',
   rage: 'Bonus action: resistance to bludgeoning/piercing/slashing damage and bonus melee damage, until a rest.',
   ki: 'Fuels Flurry of Blows and other Monk features - regained on a short or long rest.',
   wild_shape: "Action: transform into a beast you've seen, regained on a short or long rest.",
@@ -395,6 +397,9 @@ export default function CharacterDetailSheet({
               Martial Arts Strike (free bonus-action unarmed strike, no ki)
               {character.bonus_action_used && ' - bonus action already used this turn'}
             </li>
+          )}
+          {character.class_index === 'paladin' && (
+            <li>Lay on Hands (touch: spend pool points to heal)</li>
           )}
           {cantrips.length > 0 && (
             <li>

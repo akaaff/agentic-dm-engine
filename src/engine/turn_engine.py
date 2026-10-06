@@ -158,6 +158,7 @@ from src.engine.rules import (
     has_relentless_endurance,
     is_class_proficient_with,
     is_monk_weapon,
+    is_unarmed_phrase,
     magic_missile_dart_count,
     max_wild_shape_cr,
     monk_martial_arts_die_sides,
@@ -437,6 +438,11 @@ def _pc_attack_params(
     lookup entirely, even if the actor has one or two weapons equipped -
     Flurry is always two *unarmed* strikes specifically, unlike a plain
     `attack` (which falls back to unarmed only when nothing is equipped)."""
+    if weapon_index and is_unarmed_phrase(weapon_index):
+        # Issue #77: "punch"/"kick"/"unarmed strike" mean the body, not
+        # whatever weapon happens to be equipped.
+        force_unarmed = True
+        weapon_index = None
     if smite_slot_level is not None:
         if actor.class_index != "paladin":
             raise TurnEngineError(f"{actor.id} is not a Paladin and cannot use Divine Smite")
@@ -2463,6 +2469,55 @@ def _use_class_resource(actor: Character, resource: str) -> None:
     actor.class_resources[resource] = remaining - 1
 
 
+def _resolve_lay_on_hands(state: GameState, actor: Character, action: ParsedAction) -> None:
+    """Paladin's Lay on Hands (issue #86): a pool of 5 x level healing points
+    (class_resources["lay_on_hands"]); as an action, touch a creature and spend
+    any number of points to restore that many HP. Unlike the uses-based
+    resources (Second Wind, Rage) it's a *pool*, so it can't go through
+    _use_class_resource. Heals an ally or the paladin themself, never
+    past max HP, and - like any healing - brings a downed ally back up
+    (_revive_if_healed). The disease/poison cure option isn't modeled."""
+    pool = actor.class_resources.get("lay_on_hands")
+    if pool is None:
+        raise TurnEngineError(f"{actor.id} has no Lay on Hands")
+    if pool <= 0:
+        raise TurnEngineError(f"{actor.id} has no Lay on Hands points left")
+    target = state.characters.get(action.target or actor.id)
+    if target is None:
+        raise TurnEngineError(f"Unknown Lay on Hands target: {action.target}")
+    if target.is_dead:
+        raise TurnEngineError(f"{target.id} is already dead")
+    if target.is_pc != actor.is_pc:
+        raise TurnEngineError("Lay on Hands can only heal an ally or yourself")
+    if distance_feet(actor.position, target.position) > 5:
+        raise TurnEngineError(f"{actor.id} must be within 5ft of {target.id} to lay hands on them")
+    missing = target.max_hp - target.hp
+    if missing <= 0:
+        raise TurnEngineError(f"{target.id} is already at full hit points")
+    requested = action.params.get("amount")
+    amount = min(pool, missing) if requested is None else min(int(requested), pool, missing)
+    if amount <= 0:
+        raise TurnEngineError("Lay on Hands needs a positive number of points to spend")
+    actor.class_resources["lay_on_hands"] = pool - amount
+    target.hp += amount
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="hp_change",
+            payload={
+                "amount": amount,
+                "source": "Lay on Hands",
+                "target": target.id,
+                "hp_remaining": target.hp,
+                "pool_remaining": actor.class_resources["lay_on_hands"],
+            },
+        )
+    )
+    _revive_if_healed(state, actor, target)
+
+
 def _resolve_second_wind(state: GameState, actor: Character, rng: random.Random) -> bool:
     """Phase 9I (Fighter): a bonus-action self-heal, 1d10 + level, per SRD.
     Returns False (doesn't end the turn) like a bonus-action spell -
@@ -3246,6 +3301,32 @@ def _spell_heal_params(
     )
 
 
+def _revive_if_healed(state: GameState, healer: Character, target: Character) -> None:
+    """Issue #119: healing a creature that dropped to 0 HP ends the unconscious
+    condition and resets its death saves (5e: any healing that restores at
+    least 1 HP). Only the "0 HP" kind - a Sleep-induced unconsciousness
+    (source "sleep") is not undone by healing, and a dead creature stays dead.
+    Every heal path calls this: previously Cure Wounds / Healing Word raised a
+    downed ally's HP but left them unconscious and still rolling death saves."""
+    if target.hp <= 0 or target.is_dead:
+        return
+    if not any(c.name == "unconscious" and c.source == "0 HP" for c in target.conditions):
+        return
+    remove_condition(target, "unconscious")
+    target.death_save_successes = 0
+    target.death_save_failures = 0
+    target.is_stable = False
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=target.id,
+            type="condition_removed",
+            payload={"condition": "unconscious", "reason": "healed", "healer": healer.id},
+        )
+    )
+
+
 def _cast_heal_spell_at_target(
     state: GameState,
     actor: Character,
@@ -3275,6 +3356,7 @@ def _cast_heal_spell_at_target(
             },
         )
     )
+    _revive_if_healed(state, actor, target)
 
 
 _SPECIAL_CAST_SPELLS = {"spare-the-dying", "sleep", "true-strike", "mage-armor", "shield-of-faith"}
@@ -4528,6 +4610,8 @@ def resolve_action(
         ends_turn = _resolve_cast_spell(state, actor, action, rng, srd)
     elif action.verb == "second_wind":
         ends_turn = _resolve_second_wind(state, actor, rng)
+    elif action.verb == "lay_on_hands":
+        _resolve_lay_on_hands(state, actor, action)
     elif action.verb == "rage":
         ends_turn = _resolve_rage(state, actor, rng)
     elif action.verb == "equip":

@@ -512,6 +512,37 @@ def normalize_spell_name(raw: str) -> str:
     return raw.strip().lower().replace(" ", "-")
 
 
+_UNARMED_WORDS = frozenset(
+    {
+        "unarmed",
+        "punch",
+        "punches",
+        "punching",
+        "kick",
+        "kicks",
+        "kicking",
+        "fist",
+        "fists",
+        "barehanded",
+        "headbutt",
+    }
+)
+
+
+def is_unarmed_phrase(text: str | None) -> bool:
+    """Whether free text means "hit with my body, not a weapon" (issue #77:
+    "I punch the goblin", "unarmed strike", "kick it", "with my fists"). None
+    of these is an SRD item, so a plain `attack` used to fall into the
+    sole-equipped-weapon fallback - a Monk's "punch" resolved as the Dart
+    they happened to be carrying."""
+    if not text:
+        return False
+    words = set(text.lower().replace("-", "").replace(",", " ").replace(".", " ").split())
+    if "bare" in words and ("hands" in words or "handed" in words):
+        return True
+    return bool(words & _UNARMED_WORDS)
+
+
 def spell_attack_is_ranged(spell: SrdEntry) -> bool:
     """Whether an attack-roll spell is a *ranged* spell attack (issue #80) -
     the SRD's own `attack_type`, plus Scorching Ray whose vendored entry omits
