@@ -38,7 +38,13 @@ from src.engine.position import (
     distance_feet,
     rank_label,
 )
-from src.engine.rules import effective_speed, is_unarmed_phrase, normalize_spell_name
+from src.engine.rules import (
+    effective_speed,
+    is_unarmed_phrase,
+    normalize_spell_name,
+    spell_mechanic,
+    spell_range_feet,
+)
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
 from src.graph.state_schema import GraphState
@@ -462,6 +468,102 @@ def _split_dual_wield_attacks(
     return actions
 
 
+_ALL_WORDS = frozenset({"all", "every", "each", "everyone", "everything", "everybody"})
+
+
+def _plural_forms(stem: str) -> set[str]:
+    forms = {f"{stem}s", f"{stem}es"}
+    if stem.endswith("f"):
+        forms.add(f"{stem[:-1]}ves")  # wolf -> wolves
+    if stem.endswith("fe"):
+        forms.add(f"{stem[:-2]}ves")
+    return forms
+
+
+def _is_area_hostile_spell(action: ParsedAction) -> bool:
+    """A spell that can catch several creatures and has an enemy-side effect
+    the engine resolves per target: an SRD area_of_effect plus a save mechanic
+    (Burning Hands, Thunderwave, Entangle, Faerie Fire, Grease...) or Sleep.
+    Deliberately excludes Magic Missile (`targets` means darts, not creatures),
+    allies-only spells like Bless, and single-target spells."""
+    if action.verb != "cast_spell" or not action.item_or_spell:
+        return False
+    spell = load_srd().spells.get(normalize_spell_name(action.item_or_spell))
+    if spell is None or not spell.get("area_of_effect"):
+        return False
+    return spell_mechanic(spell) == "save" or spell.get("index") == "sleep"
+
+
+def _expand_area_spell_targets(
+    actions: list[ParsedAction], game_state: GameState, actor_id: str, utterance: str
+) -> list[ParsedAction]:
+    """Issue #78: "I cast sleep on the goblins" came back as a single
+    `target`, so one goblin of three fell asleep; "burning hands on the
+    goblins" sometimes came back as three separate casts (the first ends the
+    turn, so the other two never resolved - and each would have cost a slot).
+    Two deterministic fixes for an area spell (see _is_area_hostile_spell):
+    consecutive casts of the same spell collapse into one `targets` list, and
+    when the player's words are plural ("the goblins", "all of them") the
+    list expands to every living hostile of that kind within the spell's
+    reach - the engine already treats `targets` as 'creatures in the area'."""
+    actor = game_state.characters.get(actor_id)
+    if actor is None:
+        return actions
+
+    merged: list[ParsedAction] = []
+    for action in actions:
+        previous = merged[-1] if merged else None
+        if (
+            previous is not None
+            and _is_area_hostile_spell(action)
+            and previous.verb == "cast_spell"
+            and normalize_spell_name(previous.item_or_spell or "")
+            == normalize_spell_name(action.item_or_spell or "")
+        ):
+            ids = list(
+                dict.fromkeys(
+                    [
+                        *(previous.targets or ([previous.target] if previous.target else [])),
+                        *(action.targets or ([action.target] if action.target else [])),
+                    ]
+                )
+            )
+            merged[-1] = previous.model_copy(update={"target": ids[0], "targets": ids})
+        else:
+            merged.append(action)
+
+    words = set(utterance.lower().replace(",", " ").replace(".", " ").split())
+    out: list[ParsedAction] = []
+    for action in merged:
+        if not _is_area_hostile_spell(action):
+            out.append(action)
+            continue
+        spell = load_srd().spells[normalize_spell_name(action.item_or_spell or "")]
+        reach = spell_range_feet(spell)
+        hostiles = [
+            c
+            for c in game_state.characters.values()
+            if not c.is_dead
+            and c.is_pc != actor.is_pc
+            and distance_feet(actor.position, c.position) <= reach
+        ]
+        by_kind = [
+            c
+            for c in hostiles
+            if words & _plural_forms(c.name.split()[0].lower())
+            or words & _plural_forms(c.id.rsplit("_", 1)[0].replace("_", " ").lower())
+        ]
+        chosen = hostiles if words & _ALL_WORDS else by_kind
+        if len(chosen) < 2:
+            out.append(action)
+            continue
+        ids = [c.id for c in chosen]
+        existing = action.targets or ([action.target] if action.target else [])
+        ids = list(dict.fromkeys([*[t for t in existing if t in ids], *ids]))
+        out.append(action.model_copy(update={"target": ids[0], "targets": ids}))
+    return out
+
+
 _BONUS_ACTION_VERBS = frozenset(
     {
         "second_wind",
@@ -562,6 +664,7 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
         for a in sequence.actions
     ]
     actions = _split_dual_wield_attacks(actions, game_state, expected_actor_id)
+    actions = _expand_area_spell_targets(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _bonus_actions_first(actions)
     if not actions:
         actions = [_invalid_action(state)]
