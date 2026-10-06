@@ -3,6 +3,7 @@ as the rest of this engine's deterministic pieces (see CLAUDE.md)."""
 
 from __future__ import annotations
 
+from src.engine.character_creation import SPELL_SLOTS_BY_LEVEL
 from src.engine.position import Position
 from src.engine.resting import apply_long_rest, apply_short_rest
 from src.engine.state import Character
@@ -259,3 +260,34 @@ def test_apply_long_rest_floors_exhaustion_at_zero() -> None:
     apply_long_rest([character])
 
     assert character.exhaustion_level == 0
+
+
+def test_short_rest_restores_a_warlocks_pact_magic_slots() -> None:
+    # Issue #90: Pact Magic slots return on a SHORT rest. hit_dice_remaining=0
+    # shows the slot refresh doesn't depend on having a hit die to spend.
+    warlock = _character(
+        class_index="warlock", spell_slots={1: 0}, hit_dice_remaining=0, hit_die_sides=8
+    )
+
+    apply_short_rest([warlock], _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert warlock.spell_slots == SPELL_SLOTS_BY_LEVEL["warlock"][1]
+
+
+def test_short_rest_restores_pact_slots_at_the_warlocks_real_level() -> None:
+    warlock = _character(
+        class_index="warlock", level=5, spell_slots={}, hit_dice_remaining=0, hit_die_sides=8
+    )
+
+    apply_short_rest([warlock], _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert warlock.spell_slots == SPELL_SLOTS_BY_LEVEL["warlock"][5]
+    assert warlock.spell_slots != SPELL_SLOTS_BY_LEVEL["warlock"][1]
+
+
+def test_short_rest_does_not_refill_other_casters_slots() -> None:
+    cleric = _character(class_index="cleric", spell_slots={1: 0}, hit_dice_remaining=0)
+
+    apply_short_rest([cleric], _FixedRandom([]))  # type: ignore[arg-type]
+
+    assert cleric.spell_slots == {1: 0}

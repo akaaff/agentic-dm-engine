@@ -197,6 +197,9 @@ export function formatEvent(
       if (p.reason === 'healed') {
         return { key: event.id, color, label: `${target} regains consciousness` }
       }
+      if (p.reason === 'stood up') {
+        return { key: event.id, color, label: `${target} stands up` }
+      }
       return { key: event.id, color, label: `${spell} ends on ${target}${reason}` }
     }
     case 'saving_throw': {

@@ -256,7 +256,7 @@ def test_prompt_lists_known_spells_slots_and_cantrips_with_real_srd_ranges(
     prompt = captured["prompt"]
     assert "Cantrips you know" in prompt
     assert "Healing Word (60ft)" in prompt
-    assert "Thunderwave (5ft)" in prompt  # SRD range is "Self (15-foot cube)" - falls back to 5ft
+    assert "Thunderwave (15ft)" in prompt  # range "Self" + a 15ft cube: reaches its area (#79)
     assert "Spell slots: level 1: 2 remaining" in prompt
     assert "Class resources: bardic inspiration: 2 remaining" in prompt
 

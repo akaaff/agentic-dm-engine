@@ -251,13 +251,20 @@ def prepared_spell_count(class_index: str, level: int, ability_mod: int) -> int:
     return max(1, ability_mod + level)
 
 
-VALID_FIGHTING_STYLES = {"archery", "defense", "dueling"}
-"""Phase 9I only implements the mechanical effect of these three SRD
-fighting styles (Character.fighting_style, applied in turn_engine.
-_pc_attack_params for Archery/Dueling and in _compute_ac below for
-Defense) - Great Weapon Fighting/Protection/Two-Weapon Fighting exist in
-the SRD but aren't modeled, so they're deliberately not accepted here
-rather than silently accepted and then doing nothing."""
+VALID_FIGHTING_STYLES = {
+    "archery",
+    "defense",
+    "dueling",
+    "great-weapon-fighting",
+    "two-weapon-fighting",
+}
+"""The SRD fighting styles whose mechanical effect is modeled
+(Character.fighting_style, applied in turn_engine._pc_attack_params for
+Archery/Dueling/Great Weapon Fighting, in _resolve_offhand_attack for
+Two-Weapon Fighting, and in _compute_ac below for Defense). Protection is a
+real SRD style too but needs a reaction to impose disadvantage on an attack
+against an adjacent ally - not modeled yet (issue #92), so it's deliberately
+not accepted here rather than silently accepted and then doing nothing."""
 
 FIGHTING_STYLE_CLASSES = {"fighter", "ranger", "paladin"}
 """The three base SRD classes that choose a Fighting Style at level 1."""
