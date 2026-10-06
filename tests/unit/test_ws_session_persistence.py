@@ -439,8 +439,14 @@ def test_a_real_action_over_the_socket_is_persisted_and_survives_a_restart(
                 "action": {"actor": message["actor"], "verb": "end_turn", "raw_text": "pass"},
             }
         )
-        while ws.receive_json()["type"] != "awaiting_input":
-            pass
+        # The unseeded dice can end the fight (the human dies, or wins) before
+        # anyone is awaited again - stop on that too, or this waits forever.
+        while True:
+            reply = ws.receive_json()
+            if reply["type"] == "awaiting_input":
+                break
+            if reply["type"] == "state_update" and reply["game_state"]["status"] != "in_progress":
+                break
         after = ws_session_module._sessions[session_id].game_state
         events_after = len(after.events)
         round_after = after.round
