@@ -1003,10 +1003,7 @@ def build_plays() -> list[Play]:
             [
                 need(
                     "no hidden state applied",
-                    lambda c: (
-                        c.has_cond("ranger", "invisible")
-                        or bool(c.ev("skill_check", skill="stealth"))
-                    ),
+                    lambda c: c.has_cond("ranger", "hidden"),
                 )
             ],
             why="Hide, then shoot from hiding: the canonical ranger/rogue opener.",
@@ -1060,7 +1057,7 @@ def build_plays() -> list[Play]:
             "hide",
             "I slip into the shadows and hide",
             [MID],
-            [need("no hidden state applied", lambda c: c.has_cond("rogue", "invisible"))],
+            [need("no hidden state applied", lambda c: c.has_cond("rogue", "hidden"))],
             why="Hide for advantage (and thus guaranteed sneak attack) - core rogue play.",
         ),
         P(

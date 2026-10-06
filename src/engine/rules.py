@@ -165,6 +165,22 @@ def shield_spell_bonus(character: Character) -> int:
     return 5 if has_condition(character, "shielded") else 0
 
 
+def passive_perception(character: Character, srd: SrdIndex) -> int:
+    """10 + Wisdom modifier (+ proficiency with Perception) for a PC; a
+    monster's own stat-block figure (a monster has no skill list here, its
+    SRD `senses.passive_perception` already includes everything). What a Hide
+    check (issue #84) has to beat."""
+    if character.monster_index is not None:
+        senses = srd.monsters.get(character.monster_index, {}).get("senses", {})
+        value = senses.get("passive_perception")
+        if isinstance(value, int):
+            return value
+    bonus = (
+        character.proficiency_bonus if "skill-perception" in character.skill_proficiencies else 0
+    )
+    return 10 + ability_modifier(character.stats["WIS"]) + bonus
+
+
 def ability_check_modifier(
     character: Character, ability: AbilityScore, proficient: bool = False
 ) -> int:
@@ -518,6 +534,37 @@ def normalize_spell_name(raw: str) -> str:
     monster_innate_spellcasting's own spell-name lookups use the identical
     rule rather than a second, potentially drifting copy."""
     return raw.strip().lower().replace(" ", "-")
+
+
+_UNARMED_WORDS = frozenset(
+    {
+        "unarmed",
+        "punch",
+        "punches",
+        "punching",
+        "kick",
+        "kicks",
+        "kicking",
+        "fist",
+        "fists",
+        "barehanded",
+        "headbutt",
+    }
+)
+
+
+def is_unarmed_phrase(text: str | None) -> bool:
+    """Whether free text means "hit with my body, not a weapon" (issue #77:
+    "I punch the goblin", "unarmed strike", "kick it", "with my fists"). None
+    of these is an SRD item, so a plain `attack` used to fall into the
+    sole-equipped-weapon fallback - a Monk's "punch" resolved as the Dart
+    they happened to be carrying."""
+    if not text:
+        return False
+    words = set(text.lower().replace("-", "").replace(",", " ").replace(".", " ").split())
+    if "bare" in words and ("hands" in words or "handed" in words):
+        return True
+    return bool(words & _UNARMED_WORDS)
 
 
 def spell_attack_is_ranged(spell: SrdEntry) -> bool:
@@ -1222,9 +1269,11 @@ def condition_attack_advantage(actor: Character, target: Character, distance_fee
     unconscious targets are always easier to hit; a prone target is easier
     to hit only from melee range (SRD: ranged attacks against a prone target
     have disadvantage instead - see condition_attack_disadvantage). An
-    invisible actor also gets advantage on their own attacks."""
+    invisible or hidden actor (issue #84 - an unseen attacker, until the
+    attack gives their position away) also gets advantage on their own attacks."""
     return (
         has_condition(actor, "invisible")
+        or has_condition(actor, "hidden")
         or has_condition(target, "blinded")
         or has_condition(target, "paralyzed")
         or has_condition(target, "petrified")
@@ -1253,6 +1302,7 @@ def condition_attack_disadvantage(actor: Character, target: Character, distance_
         or has_condition(actor, "frightened")
         or actor.exhaustion_level >= 3
         or has_condition(target, "invisible")
+        or has_condition(target, "hidden")
         or has_condition(target, "blurred")
         or (has_condition(target, "prone") and distance_feet > 5)
     )

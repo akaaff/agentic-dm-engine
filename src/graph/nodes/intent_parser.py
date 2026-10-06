@@ -38,7 +38,13 @@ from src.engine.position import (
     distance_feet,
     rank_label,
 )
-from src.engine.rules import effective_speed, normalize_spell_name
+from src.engine.rules import (
+    effective_speed,
+    is_unarmed_phrase,
+    normalize_spell_name,
+    spell_mechanic,
+    spell_range_feet,
+)
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
 from src.graph.state_schema import GraphState
@@ -316,8 +322,45 @@ def _strip_invalid_smite(action: ParsedAction, game_state: GameState) -> ParsedA
     return action.model_copy(update={"params": new_params})
 
 
+def _hide_as_cunning_action(action: ParsedAction, game_state: GameState) -> ParsedAction:
+    """A Rogue of level 2+ with their bonus action free who says "I hide"
+    (issue #84) gets Cunning Action's bonus-action Hide: it costs them
+    nothing extra and keeps their main action for the attack the hiding is
+    for, so there is no reading of the sentence where the full-action Hide is
+    what a player wants - and a 7B parser reliably drops "as a bonus action"
+    into plain `hide` anyway, which would end the turn before the shot."""
+    if action.verb != "hide":
+        return action
+    actor = game_state.characters.get(action.actor)
+    if actor is None or actor.class_index != "rogue" or actor.level < 2 or actor.bonus_action_used:
+        return action
+    return action.model_copy(update={"verb": "cunning_action", "params": {"action": "hide"}})
+
+
+def _normalize_unarmed_attack(
+    action: ParsedAction, game_state: GameState, utterance: str | None = None
+) -> ParsedAction:
+    """Issue #77: "I punch the ogre" comes back as `attack` with no weapon (or
+    a made-up one), and a character with any weapon equipped then swings that
+    weapon - a Monk's punch resolved as their Dart. When the player's own
+    words say punch/kick/unarmed/fists and they didn't name a weapon they
+    actually hold, make the intent explicit for the engine."""
+    # The player's actual words, not the model's paraphrase in action.raw_text.
+    if action.verb != "attack" or not is_unarmed_phrase(utterance or action.raw_text):
+        return action
+    actor = game_state.characters.get(action.actor)
+    if actor is not None and action.item_or_spell:
+        named = action.item_or_spell.lower().replace("-", " ")
+        if any(w.replace("-", " ") in named for w in actor.equipped_weapons):
+            return action  # "kick it with my dagger"-style: a held weapon was named
+    return action.model_copy(update={"item_or_spell": "unarmed strike"})
+
+
 def _postprocess_action(
-    action: ParsedAction, expected_actor_id: str, game_state: GameState
+    action: ParsedAction,
+    expected_actor_id: str,
+    game_state: GameState,
+    utterance: str | None = None,
 ) -> ParsedAction:
     """The full pipeline every parsed action goes through, regardless of
     which backend produced it - forcing the real actor, fixing a
@@ -329,6 +372,8 @@ def _postprocess_action(
     action = _promote_stray_target(action)
     action = _promote_stray_item_or_spell(action)
     action = _resolve_move_target(action, game_state)
+    action = _hide_as_cunning_action(action, game_state)
+    action = _normalize_unarmed_attack(action, game_state, utterance)
     return _strip_invalid_smite(action, game_state)
 
 
@@ -368,7 +413,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         final_action = (
             _invalid_action(state)
             if action is None
-            else _postprocess_action(action, expected_actor_id, game_state)
+            else _postprocess_action(action, expected_actor_id, game_state, state["raw_text"])
         )
     elif backend == "finetuned_ollama":
         action = chat_structured_best_effort(
@@ -380,7 +425,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         final_action = (
             _invalid_action(state)
             if action is None
-            else _postprocess_action(action, expected_actor_id, game_state)
+            else _postprocess_action(action, expected_actor_id, game_state, state["raw_text"])
         )
     else:
         action = chat_structured(
@@ -388,7 +433,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
             schema=ParsedAction,
             temperature=0.2,
         )
-        final_action = _postprocess_action(action, expected_actor_id, game_state)
+        final_action = _postprocess_action(action, expected_actor_id, game_state, state["raw_text"])
 
     _log_if_unparseable(final_action, state, prompt)
     return {"parsed_action": final_action}
@@ -437,6 +482,102 @@ def _split_dual_wield_attacks(
         offhand = off_attack.model_copy(update={"verb": "offhand_attack", "item_or_spell": None})
         return [*actions[:i], offhand, main_attack, *actions[i + 2 :]]
     return actions
+
+
+_ALL_WORDS = frozenset({"all", "every", "each", "everyone", "everything", "everybody"})
+
+
+def _plural_forms(stem: str) -> set[str]:
+    forms = {f"{stem}s", f"{stem}es"}
+    if stem.endswith("f"):
+        forms.add(f"{stem[:-1]}ves")  # wolf -> wolves
+    if stem.endswith("fe"):
+        forms.add(f"{stem[:-2]}ves")
+    return forms
+
+
+def _is_area_hostile_spell(action: ParsedAction) -> bool:
+    """A spell that can catch several creatures and has an enemy-side effect
+    the engine resolves per target: an SRD area_of_effect plus a save mechanic
+    (Burning Hands, Thunderwave, Entangle, Faerie Fire, Grease...) or Sleep.
+    Deliberately excludes Magic Missile (`targets` means darts, not creatures),
+    allies-only spells like Bless, and single-target spells."""
+    if action.verb != "cast_spell" or not action.item_or_spell:
+        return False
+    spell = load_srd().spells.get(normalize_spell_name(action.item_or_spell))
+    if spell is None or not spell.get("area_of_effect"):
+        return False
+    return spell_mechanic(spell) == "save" or spell.get("index") == "sleep"
+
+
+def _expand_area_spell_targets(
+    actions: list[ParsedAction], game_state: GameState, actor_id: str, utterance: str
+) -> list[ParsedAction]:
+    """Issue #78: "I cast sleep on the goblins" came back as a single
+    `target`, so one goblin of three fell asleep; "burning hands on the
+    goblins" sometimes came back as three separate casts (the first ends the
+    turn, so the other two never resolved - and each would have cost a slot).
+    Two deterministic fixes for an area spell (see _is_area_hostile_spell):
+    consecutive casts of the same spell collapse into one `targets` list, and
+    when the player's words are plural ("the goblins", "all of them") the
+    list expands to every living hostile of that kind within the spell's
+    reach - the engine already treats `targets` as 'creatures in the area'."""
+    actor = game_state.characters.get(actor_id)
+    if actor is None:
+        return actions
+
+    merged: list[ParsedAction] = []
+    for action in actions:
+        previous = merged[-1] if merged else None
+        if (
+            previous is not None
+            and _is_area_hostile_spell(action)
+            and previous.verb == "cast_spell"
+            and normalize_spell_name(previous.item_or_spell or "")
+            == normalize_spell_name(action.item_or_spell or "")
+        ):
+            ids = list(
+                dict.fromkeys(
+                    [
+                        *(previous.targets or ([previous.target] if previous.target else [])),
+                        *(action.targets or ([action.target] if action.target else [])),
+                    ]
+                )
+            )
+            merged[-1] = previous.model_copy(update={"target": ids[0], "targets": ids})
+        else:
+            merged.append(action)
+
+    words = set(utterance.lower().replace(",", " ").replace(".", " ").split())
+    out: list[ParsedAction] = []
+    for action in merged:
+        if not _is_area_hostile_spell(action):
+            out.append(action)
+            continue
+        spell = load_srd().spells[normalize_spell_name(action.item_or_spell or "")]
+        reach = spell_range_feet(spell)
+        hostiles = [
+            c
+            for c in game_state.characters.values()
+            if not c.is_dead
+            and c.is_pc != actor.is_pc
+            and distance_feet(actor.position, c.position) <= reach
+        ]
+        by_kind = [
+            c
+            for c in hostiles
+            if words & _plural_forms(c.name.split()[0].lower())
+            or words & _plural_forms(c.id.rsplit("_", 1)[0].replace("_", " ").lower())
+        ]
+        chosen = hostiles if words & _ALL_WORDS else by_kind
+        if len(chosen) < 2:
+            out.append(action)
+            continue
+        ids = [c.id for c in chosen]
+        existing = action.targets or ([action.target] if action.target else [])
+        ids = list(dict.fromkeys([*[t for t in existing if t in ids], *ids]))
+        out.append(action.model_copy(update={"target": ids[0], "targets": ids}))
+    return out
 
 
 _BONUS_ACTION_VERBS = frozenset(
@@ -534,8 +675,12 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
         schema=ParsedActionSequence,
         temperature=0.2,
     )
-    actions = [_postprocess_action(a, expected_actor_id, game_state) for a in sequence.actions]
+    actions = [
+        _postprocess_action(a, expected_actor_id, game_state, state["raw_text"])
+        for a in sequence.actions
+    ]
     actions = _split_dual_wield_attacks(actions, game_state, expected_actor_id)
+    actions = _expand_area_spell_targets(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _bonus_actions_first(actions)
     if not actions:
         actions = [_invalid_action(state)]
