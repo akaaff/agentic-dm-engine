@@ -480,6 +480,16 @@ def normalize_spell_name(raw: str) -> str:
     return raw.strip().lower().replace(" ", "-")
 
 
+def spell_attack_is_ranged(spell: SrdEntry) -> bool:
+    """Whether an attack-roll spell is a *ranged* spell attack (issue #80) -
+    the SRD's own `attack_type`, plus Scorching Ray whose vendored entry omits
+    it (see _ATTACK_TYPE_OVERRIDES; its text says "ranged spell attack").
+    Ranged spell attacks, like ranged weapon attacks, have disadvantage while a
+    hostile creature is within 5 feet; melee ones (Shocking Grasp, Inflict
+    Wounds, Flame Blade) don't."""
+    return spell.get("attack_type") == "ranged" or spell.get("index") == "scorching-ray"
+
+
 def class_spell_indices(class_index: str, srd: SrdIndex, level: int | None = None) -> set[str]:
     """Issue #30: every real SRD spell that `class_index` can access, per the
     SRD's own per-spell `classes` list - the same filter api/routes/

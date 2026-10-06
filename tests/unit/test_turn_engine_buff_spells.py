@@ -1199,6 +1199,9 @@ def test_a_spell_attack_aimed_at_the_image_owner_can_hit_a_duplicate_too() -> No
     goblin = state.characters["goblin_1"]
     _images(state, "goblin_1", 3)
     _end_turn(state, "thorin")
+    # Out of melee: a ranged spell attack with a hostile within 5ft has
+    # disadvantage (issue #80), which isn't what this test is about.
+    state.characters["elrond"].position = Position(x=0, y=0)
     # Fire Bolt: redirect natural 6; the duplicate's AC is 10 + the goblin's
     # DEX mod (14 -> +2) = 12; Elrond's natural 8 + 4 (INT +2, proficiency +2) =
     # 12 >= 12 hits it.

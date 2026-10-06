@@ -63,7 +63,10 @@ def build_intent_parser_prompt(state: GraphState) -> str:
     teacher it's distilled from once swapped in (Day 27)."""
     game_state = state["game_state"]
     actor = game_state.characters[game_state.turn_order[game_state.current_turn]]
-    others = [c for c in game_state.characters.values() if c.id != actor.id]
+    # Dead creatures are not candidates (issue #75): listed, a corpse still
+    # ranks "2nd closest", so "the nearest goblin" resolved to it. A downed
+    # but living PC stays listed - heal/stabilize/Spare the Dying target them.
+    others = [c for c in game_state.characters.values() if c.id != actor.id and not c.is_dead]
     # Sorted by distance (found live: "the closest enemy"/"the enemy to my
     # left" were unresolvable from raw coordinates alone) - rank is this
     # sorted position, not list order, so "closest" always means closest
