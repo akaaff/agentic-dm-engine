@@ -716,19 +716,17 @@ def test_cunning_action_rejected_if_bonus_action_already_used() -> None:
 
 
 def test_cunning_action_rejects_an_unknown_sub_action() -> None:
-    # Hide isn't offered (see _resolve_cunning_action's docstring - this
-    # engine has no stealth/hidden-state mechanic at all yet), so it's
-    # rejected the same as any other unrecognized params["action"].
+    # Anything but dash/disengage/hide is rejected.
     fenwick = _rogue()
     fenwick.level = 2
     state = _make_state(fenwick, _goblin("goblin_1", Position(x=9, y=9)))
     action = ParsedAction(
         actor="fenwick",
         verb="cunning_action",
-        params={"action": "hide"},
-        raw_text="I try to hide",
+        params={"action": "fly"},
+        raw_text="I try to fly",
     )
-    with pytest.raises(TurnEngineError, match="'dash' or 'disengage'"):
+    with pytest.raises(TurnEngineError, match="'dash', 'disengage' or 'hide'"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
 

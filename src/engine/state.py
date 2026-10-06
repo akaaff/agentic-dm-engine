@@ -41,6 +41,7 @@ ConditionName = Literal[
     "warded",
     "mirror_image",
     "protected_from_evil",
+    "hidden",
 ]
 """Exhaustion isn't in this list - SRD exhaustion is a leveled (0-6) effect
 with per-level rules, not an on/off tag like these - see
@@ -50,8 +51,9 @@ Everything after "unconscious" isn't one of the SRD's 15 real conditions -
 each is a spell's own ongoing effect (Bless #57, then Bane/Blur/Longstrider/
 Death Ward/Barkskin/Stoneskin/Protection from Energy/Protection from Poison/
 Divine Favor/Hunter's Mark/Sanctuary/Mirror Image/Protection from Evil and
-Good, issues #58-#61/#68), added here to reuse this exact apply/tick/remove-
-on-expiry machinery (and the condition badges the UI already renders from
+Good, issues #58-#61/#68), plus "hidden" (the Hide action's Stealth result,
+issue #84), added here to reuse this exact apply/tick/remove-on-expiry
+machinery (and the condition badges the UI already renders from
 Character.conditions) rather than building a parallel one per spell. Each
 name is read by exactly one mechanic - see the rules.py/turn_engine.py
 function that checks it. Condition.spell/Condition.source tie one back to

@@ -171,6 +171,7 @@ from src.engine.rules import (
     multiattack_sub_actions,
     normalize_skill_name,
     normalize_spell_name,
+    passive_perception,
     protected_from_evil_disadvantage,
     resolve_attack,
     resolve_saving_throw,
@@ -734,12 +735,35 @@ def _bless_and_bane(character: Character, rng: random.Random) -> tuple[int, list
     return bless - bane, entries
 
 
-def _end_own_sanctuary(state: GameState, actor: Character) -> None:
+def _reveal(state: GameState, actor: Character, reason: str = "attacked") -> None:
+    """Hide (issue #84): a hidden creature is found out the moment it attacks
+    or casts a hostile spell, win or lose - called after an attack roll has
+    already taken its advantage (see _resolve_single_attack), or from
+    _end_own_sanctuary for the hostile actions that roll no attack."""
+    if remove_condition(actor, "hidden"):
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="condition_removed",
+                payload={"condition": "hidden", "reason": reason},
+            )
+        )
+
+
+def _end_own_sanctuary(state: GameState, actor: Character, *, keep_hidden: bool = False) -> None:
     """Sanctuary (issue #61): "the spell ends if the warded creature attacks or
     casts a spell that affects an enemy creature" - called at the top of every
     hostile resolver (weapon attack, attack-roll spell, a save spell, Magic
     Missile's darts, Sleep) so a ward is dropped the moment its holder acts
-    against someone, whether or not the attack then hits."""
+    against someone, whether or not the attack then hits. Hiding (issue #84)
+    ends on exactly the same triggers, so it rides along - except that an
+    attack roll still gets the hidden attacker's advantage, so those two
+    resolvers pass keep_hidden=True and call _reveal themselves once the
+    advantage is in."""
+    if not keep_hidden:
+        _reveal(state, actor)
     if remove_condition(actor, "warded"):
         state.events.append(
             Event(
@@ -1005,8 +1029,9 @@ def _resolve_single_attack(
     # Sanctuary (issue #61): after the range check (a rejected attack changes
     # nothing), before any roll - the attacker's own ward ends, then the
     # target's ward makes them save or lose the attack.
-    _end_own_sanctuary(state, actor)
+    _end_own_sanctuary(state, actor, keep_hidden=True)
     if _sanctuary_blocks(state, actor, target, rng, srd):
+        _reveal(state, actor)
         return
     # Phase 9F: a ranged attack (anything with a "long" range tier - melee
     # weapons/actions have none, see weapon_range_feet/monster_action_range_
@@ -1041,6 +1066,7 @@ def _resolve_single_attack(
     )
     actor.has_help_advantage = False
     actor.true_strike_advantage = False
+    _reveal(state, actor)  # hidden (issue #84): advantage taken above, now found out
 
     # Phase 9C: per SRD, any hit against an unconscious creature is a
     # critical hit - checked before resolve_attack runs (not after) since it
@@ -1559,9 +1585,7 @@ def _resolve_cunning_action(
     """Rogue's Cunning Action (issue #21): Dash or Disengage as a bonus
     action instead of a full action, gated the same way Second Wind/Rage/the
     off-hand attack are (bonus_action_used), plus SRD's own level-2+ Rogue
-    gate. Hide is deliberately not offered here - this engine has no
-    stealth/hidden-state mechanic at all yet, a separate, bigger feature
-    that issue #21's cheap-add scope explicitly didn't take on. Delegates to
+    gate. Hide (issue #84) is the third option. Delegates to
     the exact same resolvers a full-action `dash`/`disengage` already use
     (a synthetic verb="dash" copy so _resolve_move's speed-doubling check
     fires, or _resolve_disengage directly) rather than duplicating either's
@@ -1578,9 +1602,11 @@ def _resolve_cunning_action(
         _resolve_move(state, actor, action.model_copy(update={"verb": "dash"}), rng, srd)
     elif sub_action == "disengage":
         _resolve_disengage(state, actor)
+    elif sub_action == "hide":
+        _attempt_hide(state, actor, rng, srd)
     else:
         raise TurnEngineError(
-            "cunning_action requires params['action'] to be 'dash' or 'disengage'"
+            "cunning_action requires params['action'] to be 'dash', 'disengage' or 'hide'"
         )
     actor.bonus_action_used = True
     return False
@@ -2396,6 +2422,83 @@ def _resolve_skill_check(
     )
 
 
+def _attempt_hide(state: GameState, actor: Character, rng: random.Random, srd: SrdIndex) -> None:
+    """Hide (issue #84): a Stealth check against the best passive Perception
+    among the creatures that could notice the actor. Success makes the actor
+    "hidden" (indefinite) - attacks against it have disadvantage, its own next
+    attack has advantage (which also triggers Sneak Attack) and then gives it
+    away (_reveal). Shared by the full-action `hide` verb and the Rogue's
+    bonus-action Cunning Action.
+
+    Simplifications, since this engine has no cover/obscurement/line-of-sight:
+    nothing can be hidden from a hostile within 5ft (it would simply see
+    you), and a hostile that is unconscious or blinded can't notice. The
+    check is made once and never re-contested (no "search" action), so a
+    hidden character stays hidden until it attacks or is dropped."""
+    watchers = [
+        c
+        for c in state.characters.values()
+        if c.is_pc != actor.is_pc
+        and not c.is_dead
+        and not has_condition(c, "unconscious")
+        and not has_condition(c, "blinded")
+    ]
+    for watcher in watchers:
+        if distance_feet(actor.position, watcher.position) <= 5:
+            raise TurnEngineError(
+                f"{actor.id} can't hide - {watcher.id} is right next to them and would see them"
+            )
+    dc = max((passive_perception(w, srd) for w in watchers), default=0)
+
+    proficient = "skill-stealth" in actor.skill_proficiencies
+    modifier = ability_check_modifier(actor, "DEX", proficient=proficient)
+    advantage = actor.has_help_advantage
+    actor.has_help_advantage = False
+    armor = srd.equipment.get(actor.equipped_armor) if actor.equipped_armor else None
+    disadvantage = (
+        has_non_proficient_armor(actor, srd)
+        or bool(armor and armor.get("stealth_disadvantage"))
+        or condition_check_disadvantage(actor)
+    )
+    result, success = resolve_skill_check(
+        modifier=modifier,
+        dc=dc,
+        rng=rng,
+        advantage=advantage,
+        disadvantage=disadvantage,
+        lucky=has_lucky_trait(actor),
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="skill_check",
+            payload={
+                "skill": "stealth",
+                "ability": "DEX",
+                "dc": dc,
+                "roll_total": result.total,
+                "natural": result.kept[0],
+                "success": success,
+                "hide": True,
+                "modifier_breakdown": _ability_check_breakdown(actor, "DEX", proficient),
+            },
+        )
+    )
+    if success:
+        apply_condition(actor, Condition(name="hidden", source="hide"))
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="condition_applied",
+                payload={"condition": "hidden", "source": "Hide"},
+            )
+        )
+
+
 def _resolve_dodge(state: GameState, actor: Character) -> None:
     actor.is_dodging = True
     state.events.append(
@@ -2900,8 +3003,9 @@ def _cast_attack_spell_at_target(
     melee/ranged weapon attack does."""
     distance = distance_feet(actor.position, target.position)
     # Sanctuary (issue #61) - see _resolve_single_attack's identical handling.
-    _end_own_sanctuary(state, actor)
+    _end_own_sanctuary(state, actor, keep_hidden=True)
     if _sanctuary_blocks(state, actor, target, rng, srd):
+        _reveal(state, actor)
         return
     advantage = (
         actor.has_help_advantage
@@ -2910,6 +3014,7 @@ def _cast_attack_spell_at_target(
     )
     actor.has_help_advantage = False
     actor.true_strike_advantage = False
+    _reveal(state, actor)  # hidden (issue #84) - see _resolve_single_attack
 
     already_unconscious = has_condition(target, "unconscious")
 
@@ -4423,6 +4528,8 @@ def resolve_action(
         ends_turn = _resolve_equip(state, actor, action, srd)
     elif action.verb == "offhand_attack":
         ends_turn = _resolve_offhand_attack(state, actor, action, rng, srd)
+    elif action.verb == "hide":
+        _attempt_hide(state, actor, rng, srd)
     elif action.verb == "cunning_action":
         ends_turn = _resolve_cunning_action(state, actor, action, rng, srd)
     elif action.verb == "flurry_of_blows":

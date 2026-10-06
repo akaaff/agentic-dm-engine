@@ -377,6 +377,7 @@ export default function CharacterDetailSheet({
           <li>Attack</li>
           <li>Move / Dash</li>
           <li>Dodge</li>
+          <li>Hide (Stealth vs. the best passive Perception - not while an enemy is adjacent)</li>
           <li>Disengage{character.disengaged_this_turn && ' (already used this turn)'}</li>
           <li>Help</li>
           <li>Grapple / Shove</li>
