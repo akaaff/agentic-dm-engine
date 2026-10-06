@@ -4289,6 +4289,12 @@ def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -
             _handle_expired_conditions(state, expired, srd)
         state.current_turn = next_index
         state.round = next_round
+        # Sneak Attack is once per *turn* (issue #81) - and a turn is anyone's,
+        # so an opportunity attack on another creature's turn is its own
+        # chance. Every new turn therefore clears everyone's flag, not just
+        # the incoming actor's.
+        for character in state.characters.values():
+            character.sneak_attack_used_this_turn = False
         next_actor = state.characters[state.turn_order[state.current_turn]]
         if not _skip_this_turn(next_actor):
             # Phase 9H: bonus_action_used resets here, when a turn actually
@@ -4355,13 +4361,12 @@ def resolve_action(
     # why this generic per-call reset would break it) - is_dodging being
     # cleared an extra time when a bonus-action spell precedes this actor's
     # own main action in the same turn is harmless, since it wasn't going
-    # to read True again this turn anyway. sneak_attack_used_this_turn
-    # (Phase 9I) resets the same safe way - a Rogue's plain `attack` never
-    # produces more than one resolve_action call per real turn under this
-    # engine (no Extra Attack, no two-weapon-fighting bonus-action offhand
-    # attack), so there's no equivalent risk to bonus_action_used's.
+    # to read True again this turn anyway. (sneak_attack_used_this_turn used
+    # to reset here too, on the assumption a Rogue never makes two
+    # resolve_action calls in one turn - false once offhand_attack + attack
+    # became two calls, so dual-wielding got Sneak Attack twice (issue #81).
+    # It now resets in _advance_turn_skipping_dead, once per turn.)
     actor.is_dodging = False
-    actor.sneak_attack_used_this_turn = False
 
     if action.verb == "invalid":
         # The DM didn't understand the action - not a system error. No
