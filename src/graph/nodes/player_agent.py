@@ -27,14 +27,10 @@ from typing import Any
 
 from src.engine.actions import ParsedAction
 from src.engine.position import direction_label, distance_feet, rank_label
-from src.engine.rules import (
-    class_spell_indices,
-    effective_speed,
-    spell_range_feet,
-    weapon_range_feet,
-)
+from src.engine.rules import effective_speed
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
+from src.graph.nodes.actor_options import actor_options_summary
 from src.graph.personas import persona_block
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_english_only, load_prompt
@@ -65,69 +61,6 @@ def _recent_events_summary(game_state: GameState, limit: int = 5) -> str:
     return "\n".join(f"- actor={e.actor} type={e.type} payload={e.payload}" for e in recent)
 
 
-def _spell_option_line(spell_index: str, srd: SrdIndex) -> str:
-    spell = srd.spells.get(spell_index)
-    if spell is None:
-        return spell_index
-    return f"{spell['name']} ({spell_range_feet(spell)}ft)"
-
-
-def _actor_options_summary(actor: Character, srd: SrdIndex) -> str:
-    """Live-found, same report as _character_summary_line above: the prompt
-    never told the model what the actor actually has available (equipped
-    weapon, known spells, remaining slots/class resources) - it had to
-    improvise entirely blind, which is a big part of why a spellcasting
-    companion with no melee weapon dashed toward melee range instead of
-    casting a spell it already knew was in range. Every line here reads
-    straight off the real Character/SRD data (the same ground-truth
-    reasoning as every other "give the model the fact" fix in this
-    project), not invented or guessed."""
-    lines = []
-
-    if actor.equipped_weapons:
-        weapon_bits = []
-        for index in actor.equipped_weapons:
-            weapon = srd.equipment.get(index)
-            if weapon is None:
-                weapon_bits.append(index)
-                continue
-            normal, _long = weapon_range_feet(weapon)
-            weapon_bits.append(f"{weapon['name']} ({normal}ft)")
-        lines.append(f"Equipped weapon(s): {', '.join(weapon_bits)}")
-    else:
-        lines.append("Equipped weapon(s): none - no melee weapon to attack with")
-
-    if actor.class_index:
-        cantrip_ids = sorted(
-            class_spell_indices(actor.class_index, srd, level=0),
-            key=lambda idx: srd.spells[idx]["name"],
-        )
-        if cantrip_ids:
-            cantrip_bits = [_spell_option_line(idx, srd) for idx in cantrip_ids]
-            lines.append(f"Cantrips you know (unlimited, no slot cost): {', '.join(cantrip_bits)}")
-
-    known = actor.known_spells + actor.prepared_spells
-    if known:
-        spell_bits = [_spell_option_line(idx, srd) for idx in sorted(set(known))]
-        lines.append(f"Spells you know/have prepared: {', '.join(spell_bits)}")
-
-    slots = {level: count for level, count in actor.spell_slots.items() if count > 0}
-    if slots:
-        slot_bits = [f"level {level}: {count} remaining" for level, count in sorted(slots.items())]
-        lines.append(f"Spell slots: {', '.join(slot_bits)}")
-
-    if actor.class_resources:
-        resource_bits = [
-            f"{name.replace('_', ' ')}: {count} remaining"
-            for name, count in sorted(actor.class_resources.items())
-            if count > 0
-        ]
-        if resource_bits:
-            lines.append(f"Class resources: {', '.join(resource_bits)}")
-
-    return "\n".join(lines)
-
-
 def _build_prompt(game_state: GameState, actor: Character, srd: SrdIndex) -> str:
     # Dead creatures aren't candidates (issue #75) - see intent_parser.
     others = [c for c in game_state.characters.values() if c.id != actor.id and not c.is_dead]
@@ -144,7 +77,7 @@ def _build_prompt(game_state: GameState, actor: Character, srd: SrdIndex) -> str
         actor_hp=actor.hp,
         actor_max_hp=actor.max_hp,
         actor_speed=effective_speed(actor),
-        actor_options_summary=_actor_options_summary(actor, srd),
+        actor_options_summary=actor_options_summary(actor, srd),
         characters_summary=characters_summary,
         recent_events_summary=_recent_events_summary(game_state),
     )
