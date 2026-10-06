@@ -15,6 +15,7 @@ ActionVerb = Literal[
     "move",
     "dash",
     "dodge",
+    "hide",
     "disengage",
     "use_item",
     "skill_check",

@@ -322,6 +322,21 @@ def _strip_invalid_smite(action: ParsedAction, game_state: GameState) -> ParsedA
     return action.model_copy(update={"params": new_params})
 
 
+def _hide_as_cunning_action(action: ParsedAction, game_state: GameState) -> ParsedAction:
+    """A Rogue of level 2+ with their bonus action free who says "I hide"
+    (issue #84) gets Cunning Action's bonus-action Hide: it costs them
+    nothing extra and keeps their main action for the attack the hiding is
+    for, so there is no reading of the sentence where the full-action Hide is
+    what a player wants - and a 7B parser reliably drops "as a bonus action"
+    into plain `hide` anyway, which would end the turn before the shot."""
+    if action.verb != "hide":
+        return action
+    actor = game_state.characters.get(action.actor)
+    if actor is None or actor.class_index != "rogue" or actor.level < 2 or actor.bonus_action_used:
+        return action
+    return action.model_copy(update={"verb": "cunning_action", "params": {"action": "hide"}})
+
+
 def _normalize_unarmed_attack(
     action: ParsedAction, game_state: GameState, utterance: str | None = None
 ) -> ParsedAction:
@@ -357,6 +372,7 @@ def _postprocess_action(
     action = _promote_stray_target(action)
     action = _promote_stray_item_or_spell(action)
     action = _resolve_move_target(action, game_state)
+    action = _hide_as_cunning_action(action, game_state)
     action = _normalize_unarmed_attack(action, game_state, utterance)
     return _strip_invalid_smite(action, game_state)
 

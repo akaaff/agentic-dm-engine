@@ -33,6 +33,8 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
   stunned: "Incapacitated, can't move, speaks only falteringly, auto-fails STR/DEX saves. Attacks against it have advantage.",
   unconscious:
     'Incapacitated, unaware of surroundings, drops what it’s holding and falls prone. Attacks against it have advantage and auto-crit within 5ft.',
+  hidden:
+    'Unseen. Attacks against it have disadvantage, and its next attack has advantage (and can Sneak Attack) - but attacking gives its position away and ends this.',
   blessed: "A d4 bonus die added to this creature's attack rolls and saving throws, until the spell ends.",
   baned:
     "A d4 is subtracted from every attack roll and saving throw it makes (death saves excepted), until the spell ends.",
