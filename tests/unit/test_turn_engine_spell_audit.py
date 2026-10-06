@@ -85,6 +85,9 @@ def test_scorching_ray_now_resolves_as_a_real_attack_roll_spell() -> None:
     # already uses for Hold Person).
     state.characters["elrond"].prepared_spells.append("scorching-ray")
     _end_turn(state, "thorin")
+    # Out of melee: a ranged spell attack with a hostile within 5ft has
+    # disadvantage (issue #80), which isn't what this test is about.
+    state.characters["elrond"].position = Position(x=0, y=0)
     action = ParsedAction(
         actor="elrond",
         verb="cast_spell",
