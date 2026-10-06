@@ -188,6 +188,7 @@ class CreateCharacterRequest(BaseModel):
     request model never exposed it - a pre-existing gap, closed here while
     the wizard is being touched anyway for the portrait-selection fields."""
     chosen_racial_skills: list[str] | None = None
+    chosen_expertise: list[str] | None = None
     """Only meaningful (and required) for a Half-Elf - Skill Versatility
     (issue #23), 2 skills of the player's choice. create_character itself
     rejects it for any other race."""
@@ -431,6 +432,7 @@ def create_character_endpoint(body: CreateCharacterRequest, db: DbSession) -> Ch
             fighting_style=body.fighting_style,
             chosen_racial_skills=body.chosen_racial_skills,
             chosen_spells=body.chosen_spells,
+            chosen_expertise=body.chosen_expertise,
             chosen_prepared_spells=body.chosen_prepared_spells,
         )
     except CharacterCreationError as exc:
@@ -468,6 +470,7 @@ def _character_to_record(character: Character) -> CharacterRecord:
         stats=dict(character.stats),
         inventory=list(character.inventory),
         skill_proficiencies=list(character.skill_proficiencies),
+        expertise=list(character.expertise),
         spell_slots={str(level): count for level, count in character.spell_slots.items()},
         conditions=[c.model_dump() for c in character.conditions],
         race_index=character.race_index,
@@ -514,6 +517,7 @@ def _record_to_character(record: CharacterRecord) -> Character:
         stats=record.stats,  # type: ignore[arg-type]
         inventory=record.inventory,
         skill_proficiencies=record.skill_proficiencies,
+        expertise=record.expertise,
         spell_slots={int(level): count for level, count in record.spell_slots.items()},
         conditions=[Condition.model_validate(c) for c in record.conditions],
         race_index=record.race_index,

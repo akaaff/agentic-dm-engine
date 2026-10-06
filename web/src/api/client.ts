@@ -144,6 +144,7 @@ export interface CreateCharacterRequest {
   gender?: string
   fighting_style?: string
   chosen_racial_skills?: string[]
+  chosen_expertise?: string[]
   chosen_spells?: string[]
   chosen_prepared_spells?: string[]
 }
@@ -163,6 +164,7 @@ export interface Character {
   stats: Record<AbilityScore, number>
   inventory: string[]
   skill_proficiencies: string[]
+  expertise: string[]
   saving_throw_proficiencies: string[]
   known_spells: string[]
   prepared_spells: string[]

@@ -2664,7 +2664,7 @@ def _resolve_move(
 
 
 def _ability_check_breakdown(
-    actor: Character, ability: AbilityScore, proficient: bool
+    actor: Character, ability: AbilityScore, proficient: bool, expert: bool = False
 ) -> list[tuple[str, int]]:
     """Debug-mode UI aid (issue #38), mirrors AttackParams.attack_bonus_
     breakdown's own reasoning - the named components ability_check_modifier
@@ -2675,7 +2675,11 @@ def _ability_check_breakdown(
     mod = ability_modifier(actor.stats[ability])
     return [
         (f"{ability} mod", mod),
-        ("proficiency", actor.proficiency_bonus) if proficient else ("proficiency (none)", 0),
+        ("expertise", 2 * actor.proficiency_bonus)
+        if expert
+        else ("proficiency", actor.proficiency_bonus)
+        if proficient
+        else ("proficiency (none)", 0),
     ]
 
 
@@ -2690,8 +2694,10 @@ def _resolve_skill_check(
         ability = skill_ability(skill, srd)
     except ValueError as exc:
         raise TurnEngineError(str(exc)) from exc
-    proficient = f"skill-{normalize_skill_name(skill)}" in actor.skill_proficiencies
-    modifier = ability_check_modifier(actor, ability, proficient=proficient)
+    skill_key = f"skill-{normalize_skill_name(skill)}"
+    proficient = skill_key in actor.skill_proficiencies
+    expert = skill_key in actor.expertise
+    modifier = ability_check_modifier(actor, ability, proficient=proficient, expert=expert)
 
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
@@ -2723,7 +2729,7 @@ def _resolve_skill_check(
                 "roll_total": result.total,
                 "natural": result.kept[0],
                 "success": success,
-                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient),
+                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient, expert),
             },
         )
     )
@@ -2758,7 +2764,8 @@ def _attempt_hide(state: GameState, actor: Character, rng: random.Random, srd: S
     dc = max((passive_perception(w, srd) for w in watchers), default=0)
 
     proficient = "skill-stealth" in actor.skill_proficiencies
-    modifier = ability_check_modifier(actor, "DEX", proficient=proficient)
+    expert = "skill-stealth" in actor.expertise
+    modifier = ability_check_modifier(actor, "DEX", proficient=proficient, expert=expert)
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
     armor = srd.equipment.get(actor.equipped_armor) if actor.equipped_armor else None
@@ -2789,7 +2796,7 @@ def _attempt_hide(state: GameState, actor: Character, rng: random.Random, srd: S
                 "natural": result.kept[0],
                 "success": success,
                 "hide": True,
-                "modifier_breakdown": _ability_check_breakdown(actor, "DEX", proficient),
+                "modifier_breakdown": _ability_check_breakdown(actor, "DEX", proficient, expert),
             },
         )
     )
@@ -3167,19 +3174,28 @@ def _grapple_shove_contest(
     consume an extra, conditional d20, breaking this function's own fixed
     "always exactly 3 d20s" contract that callers/tests rely on."""
     actor_modifier = ability_check_modifier(
-        actor, "STR", proficient="skill-athletics" in actor.skill_proficiencies
+        actor,
+        "STR",
+        proficient="skill-athletics" in actor.skill_proficiencies,
+        expert="skill-athletics" in actor.expertise,
     )
     actor_result, _ = resolve_skill_check(modifier=actor_modifier, dc=0, rng=rng)
 
     target_athletics_modifier = ability_check_modifier(
-        target, "STR", proficient="skill-athletics" in target.skill_proficiencies
+        target,
+        "STR",
+        proficient="skill-athletics" in target.skill_proficiencies,
+        expert="skill-athletics" in target.expertise,
     )
     target_athletics_result, _ = resolve_skill_check(
         modifier=target_athletics_modifier, dc=0, rng=rng
     )
 
     target_acrobatics_modifier = ability_check_modifier(
-        target, "DEX", proficient="skill-acrobatics" in target.skill_proficiencies
+        target,
+        "DEX",
+        proficient="skill-acrobatics" in target.skill_proficiencies,
+        expert="skill-acrobatics" in target.expertise,
     )
     target_acrobatics_result, _ = resolve_skill_check(
         modifier=target_acrobatics_modifier, dc=0, rng=rng
@@ -4668,8 +4684,10 @@ def _resolve_stabilize(
 
     skill = "medicine"
     ability = skill_ability(skill, srd)  # WIS, per SRD
-    proficient = f"skill-{normalize_skill_name(skill)}" in actor.skill_proficiencies
-    modifier = ability_check_modifier(actor, ability, proficient=proficient)
+    skill_key = f"skill-{normalize_skill_name(skill)}"
+    proficient = skill_key in actor.skill_proficiencies
+    expert = skill_key in actor.expertise
+    modifier = ability_check_modifier(actor, ability, proficient=proficient, expert=expert)
 
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
@@ -4697,7 +4715,7 @@ def _resolve_stabilize(
                 "natural": result.kept[0],
                 "success": success,
                 "target": target.id,
-                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient),
+                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient, expert),
             },
         )
     )

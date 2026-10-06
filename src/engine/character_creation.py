@@ -255,6 +255,9 @@ def prepared_spell_count(class_index: str, level: int, ability_mod: int) -> int:
     return max(1, ability_mod + level)
 
 
+EXPERTISE_CHOICES = 2
+"""Rogue's level-1 Expertise: how many skills get a doubled bonus."""
+
 VALID_FIGHTING_STYLES = {
     "archery",
     "defense",
@@ -321,6 +324,7 @@ def create_character(
     chosen_racial_skills: list[str] | None = None,
     chosen_spells: list[str] | None = None,
     chosen_prepared_spells: list[str] | None = None,
+    chosen_expertise: list[str] | None = None,
 ) -> Character:
     srd = srd or load_srd()
     chosen_equipment = chosen_equipment or []
@@ -567,6 +571,24 @@ def create_character(
         )
     )
 
+    # Rogue Expertise (issue #85): two of the rogue's skill proficiencies get
+    # a doubled proficiency bonus. (SRD also allows one skill plus thieves'
+    # tools - tool proficiencies aren't modeled anywhere in this project.)
+    expertise: list[str] = []
+    if class_index == "rogue":
+        expertise = [f"skill-{normalize_skill_name(s)}" for s in (chosen_expertise or [])]
+        if len(expertise) != EXPERTISE_CHOICES or len(set(expertise)) != EXPERTISE_CHOICES:
+            raise CharacterCreationError(
+                f"A rogue chooses exactly {EXPERTISE_CHOICES} different skills for Expertise"
+            )
+        for skill in expertise:
+            if skill not in skill_proficiencies:
+                raise CharacterCreationError(
+                    f"Expertise needs a skill the rogue is proficient in: {skill!r}"
+                )
+    elif chosen_expertise:
+        raise CharacterCreationError(f"{class_index} doesn't have Expertise")
+
     saving_throw_proficiencies: list[AbilityScore] = [
         s["index"].upper() for s in cls.get("saving_throws", [])
     ]
@@ -602,6 +624,7 @@ def create_character(
         class_=cls["name"],
         background=background["name"],
         skill_proficiencies=skill_proficiencies,
+        expertise=expertise,
         saving_throw_proficiencies=saving_throw_proficiencies,
         class_index=class_index,
         race_index=race_index,

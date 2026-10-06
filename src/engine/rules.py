@@ -182,9 +182,17 @@ def passive_perception(character: Character, srd: SrdIndex) -> int:
 
 
 def ability_check_modifier(
-    character: Character, ability: AbilityScore, proficient: bool = False
+    character: Character,
+    ability: AbilityScore,
+    proficient: bool = False,
+    expert: bool = False,
 ) -> int:
+    """Ability modifier plus proficiency - doubled with Expertise (issue #85,
+    `expert` implies proficient: a skill you're expert in is one you're
+    proficient in)."""
     mod = ability_modifier(character.stats[ability])
+    if expert:
+        return mod + 2 * character.proficiency_bonus
     return mod + character.proficiency_bonus if proficient else mod
 
 

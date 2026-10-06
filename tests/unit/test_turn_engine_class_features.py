@@ -314,6 +314,7 @@ def _rogue(position: Position | None = None) -> Character:
             "skill-acrobatics",
             "skill-deception",
         ],
+        chosen_expertise=["skill-acrobatics", "skill-deception"],
         chosen_equipment=["shortsword"],
         position=position,
     )

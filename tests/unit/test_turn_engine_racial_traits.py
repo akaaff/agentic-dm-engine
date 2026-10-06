@@ -37,6 +37,7 @@ def _halfling_rogue() -> Character:
             "skill-acrobatics",
             "skill-deception",
         ],
+        chosen_expertise=["skill-acrobatics", "skill-deception"],
         chosen_equipment=["shortsword"],
         position=Position(x=0, y=0),
     )

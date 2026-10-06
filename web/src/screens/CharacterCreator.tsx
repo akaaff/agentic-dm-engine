@@ -171,6 +171,11 @@ export default function CharacterCreator({
   // choice, any skill - unlike chosenSkills, not gated by the class's own
   // skill_options.
   const [chosenRacialSkills, setChosenRacialSkills] = useState<string[]>([])
+  // Rogue Expertise (issue #85): 2 of the rogue's chosen skills get a doubled
+  // proficiency bonus. Filtered against chosenSkills wherever it is read, so
+  // un-ticking a skill silently drops it from here too.
+  const [chosenExpertise, setChosenExpertise] = useState<string[]>([])
+  const expertise = chosenExpertise.filter((s) => chosenSkills.includes(s))
   // "Spells Known" caster's level-1 spell choice (issue #30) - Bard/
   // Sorcerer only, gated by classDetail.spells_known the same way
   // chosenSkills is gated by skill_choose.
@@ -348,6 +353,7 @@ export default function CharacterCreator({
     classIndex !== '' &&
     classDetail !== null &&
     chosenSkills.length === classDetail.skill_choose &&
+    (classIndex !== 'rogue' || expertise.length === 2) &&
     (classDetail.spells_known === 0 || chosenSpells.length === classDetail.spells_known)
   // Prepared caster's required count (issue #30's follow-up phase) depends
   // on the spellcasting ability's modifier - unlike classDetail.spells_known,
@@ -388,6 +394,7 @@ export default function CharacterCreator({
         gender: gender || undefined,
         fighting_style: fightingStyle || undefined,
         chosen_racial_skills: raceIndex === 'half-elf' ? chosenRacialSkills : undefined,
+        chosen_expertise: classIndex === 'rogue' ? expertise : undefined,
         chosen_spells: classDetail?.spells_known ? chosenSpells : undefined,
         chosen_prepared_spells: classDetail?.spellcasting_ability
           ? chosenPreparedSpells
@@ -453,7 +460,12 @@ export default function CharacterCreator({
               </div>
             </>
           )}
-          <p>Skills: {created.skill_proficiencies.map(skillLabel).join(', ') || 'none'}</p>
+          <p>
+            Skills:{' '}
+            {created.skill_proficiencies
+              .map((s) => skillLabel(s) + (created.expertise?.includes(s) ? ' (expertise)' : ''))
+              .join(', ') || 'none'}
+          </p>
           <p>Inventory: {created.inventory.join(', ') || 'none'}</p>
         </div>
         {readyCharacters.length > 0 && (
@@ -648,6 +660,30 @@ export default function CharacterCreator({
                     />
                     {skillLabel(skill)}
                     {skillDesc.has(skill) && <InfoTip text={skillDesc.get(skill) as string} />}
+                  </label>
+                ))}
+              </fieldset>
+            )}
+            {classIndex === 'rogue' && chosenSkills.length > 0 && (
+              // Rogue Expertise (issue #85): double the proficiency bonus on two of
+              // the skills just chosen.
+              <fieldset>
+                <legend>Expertise - choose 2 of your skills ({expertise.length}/2 selected)</legend>
+                {chosenSkills.map((skill) => (
+                  <label key={skill} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={expertise.includes(skill)}
+                      disabled={!expertise.includes(skill) && expertise.length >= 2}
+                      onChange={() =>
+                        setChosenExpertise(
+                          expertise.includes(skill)
+                            ? expertise.filter((s) => s !== skill)
+                            : [...expertise, skill],
+                        )
+                      }
+                    />
+                    {skillLabel(skill)}
                   </label>
                 ))}
               </fieldset>
