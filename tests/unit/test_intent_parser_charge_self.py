@@ -121,3 +121,59 @@ def test_no_self_default_without_the_words_or_when_a_target_is_named() -> None:
     assert _default_self_target(_cast(None), state, "I cast cure wounds").target is None
     assert _default_self_target(_cast(None), state, "let me cast sleep").target is None
     assert _default_self_target(_cast("goblin_3"), state, "on myself").target == "goblin_3"
+
+
+def test_an_attack_with_no_target_defaults_to_the_nearest_enemy() -> None:
+    from src.graph.nodes.intent_parser import _default_attack_target
+
+    state = _state(_barbarian())
+    bare = ParsedAction(actor="qaf", verb="attack", item_or_spell="greataxe", raw_text="x")
+    assert _default_attack_target(bare, state).target == "goblin_3"
+    named = _attack()
+    assert _default_attack_target(named, state) == named  # a named target is untouched
+
+
+def test_no_default_attack_target_when_there_is_no_enemy() -> None:
+    from src.graph.nodes.intent_parser import _default_attack_target
+
+    barb = _barbarian()
+    lone = GameState(
+        encounter_id="lone",
+        characters={barb.id: barb},
+        turn_order=[barb.id],
+        current_turn=0,
+        round=1,
+    )
+    bare = ParsedAction(actor="qaf", verb="attack", raw_text="x")
+    assert _default_attack_target(bare, lone).target is None
+
+
+def _rage_only() -> list[ParsedAction]:
+    return [_rage()]
+
+
+def test_a_follow_up_attack_the_parser_dropped_is_appended() -> None:
+    from src.graph.nodes.intent_parser import _append_dropped_attack
+
+    state = _state(_barbarian())
+    out = _append_dropped_attack(_rage_only(), state, "qaf", "I rage and bash the goblin")
+    assert [a.verb for a in out] == ["rage", "attack"]
+    assert out[1].target == "goblin_3"
+    out = _append_dropped_attack(_rage_only(), state, "qaf", "I rage, then I smash it")
+    assert [a.verb for a in out] == ["rage", "attack"]
+
+
+def test_no_attack_is_appended_without_the_first_person_follow_up() -> None:
+    from src.graph.nodes.intent_parser import _append_dropped_attack
+
+    state = _state(_barbarian())
+    for text in ["I rage", "I rage so my friend can hit it", "I rage and cheer loudly"]:
+        assert _append_dropped_attack(_rage_only(), state, "qaf", text) == _rage_only()
+
+
+def test_no_attack_is_appended_when_the_sequence_already_uses_the_action() -> None:
+    from src.graph.nodes.intent_parser import _append_dropped_attack
+
+    state = _state(_barbarian())
+    actions = [_rage(), _attack()]
+    assert _append_dropped_attack(actions, state, "qaf", "I rage and bash the goblin") == actions

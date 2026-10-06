@@ -688,7 +688,11 @@ def _pc_attack_params(
     # class-specific option, not a property of the weapon alone, so it's
     # checked here rather than folded into is_finesse itself.
     is_monk_weapon_for_actor = actor.class_index == "monk" and is_monk_weapon(weapon)
-    if is_finesse or is_monk_weapon_for_actor:
+    shillelagh_up = not is_ranged and shillelagh_weapon(actor) == weapon["index"]
+    if shillelagh_up:
+        # Shillelagh (issue #95): the spellcasting ability replaces Strength.
+        ability_label, ability_mod = _spellcasting_ability_mod(actor, srd)
+    elif is_finesse or is_monk_weapon_for_actor:
         ability_mod = max(str_mod, dex_mod)
         ability_label = "DEX" if dex_mod > str_mod else "STR"
     elif is_ranged:
@@ -736,6 +740,8 @@ def _pc_attack_params(
         # two_handed_damage, so there's no second die-count case to weigh
         # here).
         dice_sides = max(dice_sides, monk_martial_arts_die_sides(actor.level))
+    if shillelagh_up:
+        dice_sides = max(dice_sides, 8)  # "the weapon's damage die becomes a d8"
     return AttackParams(
         attack_bonus=ability_mod + prof_bonus + archery_bonus,
         damage_dice_count=dice_count,
@@ -3065,6 +3071,9 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
     if resolved_armor is not None or resolved_shield is not None:
         _recompute_ac(actor, srd)
 
+    held_for_shillelagh = shillelagh_weapon(actor)
+    if held_for_shillelagh is not None and held_for_shillelagh not in actor.equipped_weapons:
+        remove_condition(actor, "shillelagh")  # "the spell ends if you let go of the weapon"
     actor.equip_used_this_turn = True
     state.events.append(
         Event(
@@ -3726,7 +3735,14 @@ def _cast_heal_spell_at_target(
     _revive_if_healed(state, actor, target)
 
 
-_SPECIAL_CAST_SPELLS = {"spare-the-dying", "sleep", "true-strike", "mage-armor", "shield-of-faith"}
+_SPECIAL_CAST_SPELLS = {
+    "spare-the-dying",
+    "sleep",
+    "true-strike",
+    "mage-armor",
+    "shield-of-faith",
+    "shillelagh",
+}
 """Issue #55 spell audit: spells whose real mechanic doesn't fit any of the
 generic attack/save/heal/auto_hit/condition buckets `spell_mechanic`
 classifies (an HP-pool targeting rule, a banked-advantage buff, a flat AC
@@ -3880,6 +3896,57 @@ def _resolve_sleep_spell(
                 payload={"condition": "unconscious", "source": "sleep"},
             )
         )
+
+
+_SHILLELAGH_WEAPONS = ("club", "quarterstaff")
+
+
+def shillelagh_weapon(actor: Character) -> str | None:
+    """The weapon index Shillelagh (issue #95) currently empowers, if the spell
+    is up (a condition whose `detail` names the weapon)."""
+    for condition in actor.conditions:
+        if condition.name == "shillelagh":
+            return condition.detail
+    return None
+
+
+def _resolve_shillelagh(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry
+) -> None:
+    """Shillelagh (issue #95): a bonus action that imbues the club or
+    quarterstaff the caster is HOLDING for a minute - melee attacks with it use
+    the spellcasting ability for attack and damage and the weapon's die becomes
+    a d8 (read in _pc_attack_params). Stored as a `shillelagh` condition whose
+    `detail` is the weapon index, so it ticks down with the other timed effects,
+    is replaced if cast again (as the spell says) and shows as a badge; letting
+    go of the weapon ends it (_resolve_equip). "Becomes magical" has no
+    mechanical effect in this engine."""
+    named = (action.params.get("weapon") or action.item_or_spell or "").lower()
+    held = [w for w in actor.equipped_weapons if w in _SHILLELAGH_WEAPONS]
+    weapon = next((w for w in held if w in named), held[0] if held else None)
+    if weapon is None:
+        raise TurnEngineError(
+            f"{actor.id} must be holding a club or a quarterstaff to cast {spell['name']}"
+        )
+    apply_condition(
+        actor,
+        Condition(
+            name="shillelagh",
+            duration_rounds=10,
+            source=actor.id,
+            spell=spell["name"],
+            detail=weapon,
+        ),
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "weapon": weapon},
+        )
+    )
 
 
 def _resolve_true_strike(state: GameState, actor: Character, spell: SrdEntry) -> None:
@@ -4294,6 +4361,8 @@ def _resolve_cast_spell(
                     _resolve_sleep_spell(state, actor, action, spell, spell_level, rng, srd)
                 elif normalized == "true-strike":
                     _resolve_true_strike(state, actor, spell)
+                elif normalized == "shillelagh":
+                    _resolve_shillelagh(state, actor, action, spell)
                 else:  # mage-armor, shield-of-faith
                     _resolve_ac_buff_spell(state, actor, action, spell, srd)
             except TurnEngineError:
