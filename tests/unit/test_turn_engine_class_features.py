@@ -342,7 +342,6 @@ def test_sneak_attack_adds_1d6_when_the_attack_has_advantage() -> None:
     assert attack_event.payload.get("sneak_attack_damage") == 5
     damage_event = next(e for e in state.events if e.type == "damage_dealt")
     assert damage_event.payload["amount"] == 12  # 4 + 3(DEX) + 5(sneak attack)
-    assert fenwick.sneak_attack_used_this_turn is True
 
 
 def test_sneak_attack_triggers_via_an_adjacent_ally_without_advantage() -> None:
@@ -393,15 +392,9 @@ def test_sneak_attack_does_not_trigger_without_a_finesse_or_ranged_weapon() -> N
 
 
 def test_sneak_attack_does_not_trigger_twice_in_one_turn() -> None:
-    # resolve_action's own top-of-function reset clears
-    # sneak_attack_used_this_turn on every call (safe today - see its
-    # docstring - since nothing lets a Rogue's plain attack produce more
-    # than one resolve_action call per real turn), so this guard can only
-    # be exercised by calling the internal per-roll resolver directly, the
-    # way Two-Weapon Fighting or a future Rogue Extra-Attack-like feature
-    # would (multiple _resolve_single_attack calls within one
-    # resolve_action call, same pattern Multiattack/Extra Attack already
-    # use for other classes).
+    # Calls the per-roll resolver directly with the flag pre-set (the flag
+    # now resets when the turn advances, not per resolve_action call - see
+    # the dual-wield test below for the end-to-end version).
     from src.engine.turn_engine import _pc_attack_params, _resolve_single_attack
 
     fenwick = _rogue()
@@ -1271,3 +1264,62 @@ def test_bard_cantrip_unaffected_by_known_spell_restriction() -> None:
     # it resolves at all rather than raising "doesn't know".
     resolve_action(state, action, _FixedRandom([10, 4]))  # type: ignore[arg-type]
     assert any(e.type == "spell_cast" for e in state.events)
+
+
+def test_dual_wielding_rogue_gets_sneak_attack_only_once_per_turn() -> None:
+    # Issue #81: offhand_attack + attack are two resolve_action calls in one
+    # turn; the flag used to reset on every call, so both swings sneak-attacked.
+    # Dice: offhand [d20 15, d4 3, sneak d6 4], then main hand [d20 15, d6 4] -
+    # if the second swing also tried a sneak die the fixed rng would run dry.
+    fenwick = _rogue(Position(x=0, y=0))
+    assert fenwick.equipped_weapons == ["shortsword", "dagger"]
+    goblin = _goblin("goblin_1", Position(x=0, y=1))
+    goblin.hp = goblin.max_hp = 100
+    ally = create_character(
+        character_id="grom",
+        name="Grom",
+        race_index="human",
+        class_index="fighter",
+        background_index="acolyte",
+        base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
+        chosen_skills=["skill-athletics", "skill-perception"],
+        position=Position(x=1, y=1),
+    )
+    state = _make_state(fenwick, goblin, ally)
+    rng = _FixedRandom([15, 3, 4, 15, 4])
+
+    resolve_action(
+        state,
+        ParsedAction(actor="fenwick", verb="offhand_attack", target="goblin_1", raw_text="x"),
+        rng,  # type: ignore[arg-type]
+    )
+    assert state.turn_order[state.current_turn] == "fenwick"  # bonus action keeps the turn
+    resolve_action(
+        state,
+        ParsedAction(
+            actor="fenwick",
+            verb="attack",
+            target="goblin_1",
+            item_or_spell="shortsword",
+            raw_text="x",
+        ),
+        rng,  # type: ignore[arg-type]
+    )
+
+    rolls = [e for e in state.events if e.type == "attack_roll"]
+    assert len(rolls) == 2
+    assert [bool(r.payload.get("sneak_attack_damage")) for r in rolls] == [True, False]
+
+
+def test_sneak_attack_is_available_again_on_the_next_turn() -> None:
+    fenwick = _rogue(Position(x=0, y=0))
+    goblin = _goblin("goblin_1", Position(x=0, y=1))
+    state = _make_state(fenwick, goblin)
+    fenwick.sneak_attack_used_this_turn = True
+    state.current_turn = 0
+    resolve_action(
+        state,
+        ParsedAction(actor="fenwick", verb="end_turn", raw_text="x"),
+        _FixedRandom([]),  # type: ignore[arg-type]
+    )
+    assert fenwick.sneak_attack_used_this_turn is False
