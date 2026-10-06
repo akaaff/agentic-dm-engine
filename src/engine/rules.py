@@ -982,8 +982,21 @@ def armor_ac_breakdown(
         # Monk/Barbarian in practice, since neither wants to spend a slot
         # replacing a class feature that's usually already as good or
         # better).
-        base = 13 if mage_armor_active else 10
-        breakdown.append(("Mage Armor base" if mage_armor_active else "base (unarmored)", base))
+        # Draconic Resilience (issue #89): a sorcerer's unarmored AC is 13 + DEX - the
+        # same base Mage Armor gives (and, like it, shield-compatible), so the two
+        # don't stack; the label says which one it is.
+        draconic = class_index == "sorcerer" and not mage_armor_active
+        base = 13 if (mage_armor_active or draconic) else 10
+        breakdown.append(
+            (
+                "Mage Armor base"
+                if mage_armor_active
+                else "Draconic Resilience base"
+                if draconic
+                else "base (unarmored)",
+                base,
+            )
+        )
         breakdown.append(("DEX mod", dex_mod))
         if class_index == "monk" and equipped_shield is None and wis_mod and not mage_armor_active:
             breakdown.append(("WIS mod (Unarmored Defense)", wis_mod))

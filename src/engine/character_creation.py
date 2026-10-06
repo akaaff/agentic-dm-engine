@@ -243,6 +243,13 @@ prepared_spell_count correctly returns 0 for a level-1 Paladin, so
 create_character's validation below naturally requires nothing from one."""
 
 
+def draconic_resilience_hp(class_index: str | None) -> int:
+    """Sorcerer's Draconic Bloodline (issue #89, the SRD's only origin - so every
+    SRD sorcerer has it): +1 hit point at level 1 and again with every level gained.
+    Its other half, an unarmored AC of 13 + DEX, lives in rules.armor_ac_breakdown."""
+    return 1 if class_index == "sorcerer" else 0
+
+
 def prepared_spell_count(class_index: str, level: int, ability_mod: int) -> int:
     """Real SRD 5.1 Prepared-caster formula: spellcasting-ability modifier +
     caster level, minimum 1. Paladin's caster level is character level // 2
@@ -527,7 +534,7 @@ def create_character(
     con_mod = ability_modifier(final_scores["CON"])
     dex_mod = ability_modifier(final_scores["DEX"])
     wis_mod = ability_modifier(final_scores["WIS"])
-    hp = max(1, cls["hit_die"] + con_mod)
+    hp = max(1, cls["hit_die"] + con_mod) + draconic_resilience_hp(class_index)
     ac = armor_ac(
         equipped_armor,
         equipped_shield,
@@ -759,7 +766,7 @@ def level_up(
     character.proficiency_bonus = PROFICIENCY_BONUS_BY_LEVEL[character.level]
 
     con_mod = ability_modifier(character.stats["CON"])
-    hp_gain = cls["hit_die"] // 2 + 1 + con_mod
+    hp_gain = cls["hit_die"] // 2 + 1 + con_mod + draconic_resilience_hp(character.class_index)
     character.max_hp += hp_gain
     character.hp += hp_gain
 
@@ -808,7 +815,7 @@ def level_up(
     # every class) since that's the only case level_up can actually change
     # the AC formula's inputs; a general "AC should recompute on any ASI"
     # gap for everyone else is real but pre-existing and out of scope.
-    if character.class_index in ("monk", "barbarian"):
+    if character.class_index in ("monk", "barbarian", "sorcerer"):
         character.ac = armor_ac(
             character.equipped_armor,
             character.equipped_shield,
