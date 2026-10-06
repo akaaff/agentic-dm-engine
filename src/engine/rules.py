@@ -1110,14 +1110,25 @@ def spell_range_feet(spell: SrdEntry) -> int:
     no "beyond normal range" disadvantage tier in 5e; you're either in
     range or you aren't. "Touch"/"Self"/anything unparseable falls back to
     5ft (melee-adjacent) - a safe default for spells whose range genuinely
-    is Touch/Self, but wrong for the rare spell (see
+    is Touch/Self (a "Self" spell *with an area* instead reaches its area's
+    size, issue #79), but wrong for the rare spell (see
     _SPELL_RANGE_OVERRIDES_FEET) whose real attack range only exists in
     free-text flavor, checked first."""
     override = _SPELL_RANGE_OVERRIDES_FEET.get(spell.get("index", ""))
     if override is not None:
         return override
     match = _SPELL_RANGE_RE.search(str(spell.get("range", "")))
-    return int(match.group(1)) if match else 5
+    if match:
+        return int(match.group(1))
+    # Issue #79: a "Self" spell with an area (Burning Hands/Color Spray: a
+    # 15-ft cone, Thunderwave: a 15-ft cube, Cone of Cold: 60 ft...) reaches
+    # as far as its area extends from the caster - the SRD keeps that in
+    # `area_of_effect.size`, not in `range`, so these used to fall through to
+    # the 5ft melee default and could only hit adjacent creatures.
+    area = spell.get("area_of_effect") or {}
+    if str(spell.get("range", "")).strip().lower() == "self" and area.get("size"):
+        return int(area["size"])
+    return 5
 
 
 _MONSTER_RANGE_RE = re.compile(r"range (\d+)/(\d+)\s*ft", re.IGNORECASE)

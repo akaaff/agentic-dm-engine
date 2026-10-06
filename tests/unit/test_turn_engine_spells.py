@@ -378,3 +378,45 @@ def test_magic_missile_rejects_more_targets_than_available_darts() -> None:
     )
     with pytest.raises(TurnEngineError, match="only creates 3 dart"):
         resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+
+
+def test_burning_hands_reaches_a_target_in_its_15ft_cone() -> None:
+    # Issue #79 (live-found: "goblin_3 is 10ft away - out of range for
+    # Burning Hands (max 5ft)"). Elrond moves to (0,0): goblin_1 (2,1) is 10ft
+    # away - inside the 15ft cone, outside the old 5ft fallback.
+    state = _build_demo_state(_INITIATIVE)
+    state.current_turn = state.turn_order.index("elrond")
+    state.characters["elrond"].position = Position(x=0, y=0)
+
+    resolve_action(
+        state,
+        ParsedAction(
+            actor="elrond",
+            verb="cast_spell",
+            target="goblin_1",
+            item_or_spell="burning hands",
+            raw_text="I cast burning hands on the goblin",
+        ),
+        _FixedRandom([4, 5, 5, 5]),  # type: ignore[arg-type]
+    )
+
+    assert any(e.type == "spell_cast" for e in state.events)
+
+
+def test_burning_hands_still_cannot_reach_beyond_15ft() -> None:
+    state = _build_demo_state(_INITIATIVE)
+    state.current_turn = state.turn_order.index("elrond")
+    state.characters["goblin_1"].position = Position(x=7, y=2)  # 30ft from Elrond (1,2)
+
+    with pytest.raises(TurnEngineError, match="out of range"):
+        resolve_action(
+            state,
+            ParsedAction(
+                actor="elrond",
+                verb="cast_spell",
+                target="goblin_1",
+                item_or_spell="burning hands",
+                raw_text="x",
+            ),
+            _FixedRandom([4, 5, 5, 5]),  # type: ignore[arg-type]
+        )
