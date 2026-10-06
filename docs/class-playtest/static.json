@@ -1,0 +1,254 @@
+[
+ {
+  "class": "fighter",
+  "check": "fighting style: archery",
+  "ok": true,
+  "detail": "ok"
+ },
+ {
+  "class": "fighter",
+  "check": "fighting style: defense",
+  "ok": true,
+  "detail": "ok"
+ },
+ {
+  "class": "fighter",
+  "check": "fighting style: dueling",
+  "ok": true,
+  "detail": "ok"
+ },
+ {
+  "class": "fighter",
+  "check": "fighting style: great-weapon-fighting",
+  "ok": false,
+  "detail": "Unknown or unimplemented fighting style: 'great-weapon-fighting' (implemented: ['archery', 'defense', 'dueling'])"
+ },
+ {
+  "class": "fighter",
+  "check": "fighting style: protection",
+  "ok": false,
+  "detail": "Unknown or unimplemented fighting style: 'protection' (implemented: ['archery', 'defense', 'dueling'])"
+ },
+ {
+  "class": "fighter",
+  "check": "fighting style: two-weapon-fighting",
+  "ok": false,
+  "detail": "Unknown or unimplemented fighting style: 'two-weapon-fighting' (implemented: ['archery', 'defense', 'dueling'])"
+ },
+ {
+  "class": "cleric",
+  "check": "Life domain heavy armor (chain mail)",
+  "ok": false,
+  "detail": "Cleric isn't proficient with Chain Mail - choose gear from a proficient category"
+ },
+ {
+  "class": "sorcerer",
+  "check": "Draconic Resilience AC (13 + DEX 2 = 15)",
+  "ok": false,
+  "detail": "AC 12"
+ },
+ {
+  "class": "sorcerer",
+  "check": "Draconic Resilience HP (+1)",
+  "ok": false,
+  "detail": "max_hp 8 (6 + CON 2 + 1 = 9)"
+ },
+ {
+  "class": "warlock",
+  "check": "Pact Magic slots refresh on short rest",
+  "ok": false,
+  "detail": "slots {1: 0}"
+ },
+ {
+  "class": "warlock",
+  "check": "has any spell list / known spells",
+  "ok": false,
+  "detail": "known []"
+ },
+ {
+  "class": "wizard",
+  "check": "Arcane Recovery on short rest",
+  "ok": true,
+  "detail": "slots {1: 1}"
+ },
+ {
+  "class": "paladin",
+  "check": "class resource: Lay on Hands pool",
+  "ok": false,
+  "detail": "{}"
+ },
+ {
+  "class": "barbarian",
+  "check": "class resource: Rage uses",
+  "ok": true,
+  "detail": "{'rage': 2}"
+ },
+ {
+  "class": "fighter",
+  "check": "class resource: Second Wind",
+  "ok": true,
+  "detail": "{'second_wind': 1}"
+ },
+ {
+  "class": "bard",
+  "check": "class resource: Bardic Inspiration",
+  "ok": true,
+  "detail": "{'bardic_inspiration': 3}"
+ },
+ {
+  "class": "wizard",
+  "check": "class resource: Arcane Recovery",
+  "ok": true,
+  "detail": "{'arcane_recovery': 1}"
+ },
+ {
+  "class": "rogue",
+  "check": "Expertise is modeled on the character",
+  "ok": false,
+  "detail": "no expertise field"
+ },
+ {
+  "class": "barbarian",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "bard",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "cleric",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "druid",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "fighter",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "monk",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "paladin",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "ranger",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "rogue",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "sorcerer",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "warlock",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "wizard",
+  "check": "class features list on the character",
+  "ok": false,
+  "detail": "fields: []"
+ },
+ {
+  "class": "barbarian",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "0 cantrips / 0 L1 spells"
+ },
+ {
+  "class": "bard",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "9 cantrips / 20 L1 spells"
+ },
+ {
+  "class": "cleric",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "7 cantrips / 15 L1 spells"
+ },
+ {
+  "class": "druid",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "7 cantrips / 16 L1 spells"
+ },
+ {
+  "class": "fighter",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "0 cantrips / 0 L1 spells"
+ },
+ {
+  "class": "monk",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "0 cantrips / 0 L1 spells"
+ },
+ {
+  "class": "paladin",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "0 cantrips / 11 L1 spells"
+ },
+ {
+  "class": "ranger",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "0 cantrips / 11 L1 spells"
+ },
+ {
+  "class": "rogue",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "0 cantrips / 0 L1 spells"
+ },
+ {
+  "class": "sorcerer",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "14 cantrips / 17 L1 spells"
+ },
+ {
+  "class": "warlock",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "7 cantrips / 7 L1 spells"
+ },
+ {
+  "class": "wizard",
+  "check": "spell list (L0 / L1 count)",
+  "ok": true,
+  "detail": "14 cantrips / 27 L1 spells"
+ }
+]
