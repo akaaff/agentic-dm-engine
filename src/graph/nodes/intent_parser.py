@@ -38,7 +38,7 @@ from src.engine.position import (
     distance_feet,
     rank_label,
 )
-from src.engine.rules import effective_speed, normalize_spell_name
+from src.engine.rules import effective_speed, is_unarmed_phrase, normalize_spell_name
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
 from src.graph.state_schema import GraphState
@@ -316,8 +316,30 @@ def _strip_invalid_smite(action: ParsedAction, game_state: GameState) -> ParsedA
     return action.model_copy(update={"params": new_params})
 
 
+def _normalize_unarmed_attack(
+    action: ParsedAction, game_state: GameState, utterance: str | None = None
+) -> ParsedAction:
+    """Issue #77: "I punch the ogre" comes back as `attack` with no weapon (or
+    a made-up one), and a character with any weapon equipped then swings that
+    weapon - a Monk's punch resolved as their Dart. When the player's own
+    words say punch/kick/unarmed/fists and they didn't name a weapon they
+    actually hold, make the intent explicit for the engine."""
+    # The player's actual words, not the model's paraphrase in action.raw_text.
+    if action.verb != "attack" or not is_unarmed_phrase(utterance or action.raw_text):
+        return action
+    actor = game_state.characters.get(action.actor)
+    if actor is not None and action.item_or_spell:
+        named = action.item_or_spell.lower().replace("-", " ")
+        if any(w.replace("-", " ") in named for w in actor.equipped_weapons):
+            return action  # "kick it with my dagger"-style: a held weapon was named
+    return action.model_copy(update={"item_or_spell": "unarmed strike"})
+
+
 def _postprocess_action(
-    action: ParsedAction, expected_actor_id: str, game_state: GameState
+    action: ParsedAction,
+    expected_actor_id: str,
+    game_state: GameState,
+    utterance: str | None = None,
 ) -> ParsedAction:
     """The full pipeline every parsed action goes through, regardless of
     which backend produced it - forcing the real actor, fixing a
@@ -329,6 +351,7 @@ def _postprocess_action(
     action = _promote_stray_target(action)
     action = _promote_stray_item_or_spell(action)
     action = _resolve_move_target(action, game_state)
+    action = _normalize_unarmed_attack(action, game_state, utterance)
     return _strip_invalid_smite(action, game_state)
 
 
@@ -368,7 +391,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         final_action = (
             _invalid_action(state)
             if action is None
-            else _postprocess_action(action, expected_actor_id, game_state)
+            else _postprocess_action(action, expected_actor_id, game_state, state["raw_text"])
         )
     elif backend == "finetuned_ollama":
         action = chat_structured_best_effort(
@@ -380,7 +403,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
         final_action = (
             _invalid_action(state)
             if action is None
-            else _postprocess_action(action, expected_actor_id, game_state)
+            else _postprocess_action(action, expected_actor_id, game_state, state["raw_text"])
         )
     else:
         action = chat_structured(
@@ -388,7 +411,7 @@ def intent_parser_node(state: GraphState) -> dict[str, Any]:
             schema=ParsedAction,
             temperature=0.2,
         )
-        final_action = _postprocess_action(action, expected_actor_id, game_state)
+        final_action = _postprocess_action(action, expected_actor_id, game_state, state["raw_text"])
 
     _log_if_unparseable(final_action, state, prompt)
     return {"parsed_action": final_action}
@@ -534,7 +557,10 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
         schema=ParsedActionSequence,
         temperature=0.2,
     )
-    actions = [_postprocess_action(a, expected_actor_id, game_state) for a in sequence.actions]
+    actions = [
+        _postprocess_action(a, expected_actor_id, game_state, state["raw_text"])
+        for a in sequence.actions
+    ]
     actions = _split_dual_wield_attacks(actions, game_state, expected_actor_id)
     actions = _bonus_actions_first(actions)
     if not actions:

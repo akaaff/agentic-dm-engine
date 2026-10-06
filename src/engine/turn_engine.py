@@ -158,6 +158,7 @@ from src.engine.rules import (
     has_relentless_endurance,
     is_class_proficient_with,
     is_monk_weapon,
+    is_unarmed_phrase,
     magic_missile_dart_count,
     max_wild_shape_cr,
     monk_martial_arts_die_sides,
@@ -437,6 +438,11 @@ def _pc_attack_params(
     lookup entirely, even if the actor has one or two weapons equipped -
     Flurry is always two *unarmed* strikes specifically, unlike a plain
     `attack` (which falls back to unarmed only when nothing is equipped)."""
+    if weapon_index and is_unarmed_phrase(weapon_index):
+        # Issue #77: "punch"/"kick"/"unarmed strike" mean the body, not
+        # whatever weapon happens to be equipped.
+        force_unarmed = True
+        weapon_index = None
     if smite_slot_level is not None:
         if actor.class_index != "paladin":
             raise TurnEngineError(f"{actor.id} is not a Paladin and cannot use Divine Smite")
