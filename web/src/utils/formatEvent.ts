@@ -194,6 +194,9 @@ export function formatEvent(
       const spell = typeof p.spell === 'string' ? p.spell : conditionDisplayName(condition)
       const reason = typeof p.reason === 'string' ? ` (${p.reason})` : ''
       const target = characterName(event.actor, characters)
+      if (p.reason === 'healed') {
+        return { key: event.id, color, label: `${target} regains consciousness` }
+      }
       return { key: event.id, color, label: `${spell} ends on ${target}${reason}` }
     }
     case 'saving_throw': {
