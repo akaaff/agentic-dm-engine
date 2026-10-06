@@ -178,6 +178,7 @@ from src.engine.rules import (
     saving_throw_bonus,
     shield_spell_bonus,
     skill_ability,
+    spell_attack_is_ranged,
     spell_damage_notation,
     spell_damage_resistance,
     spell_dc_info,
@@ -303,6 +304,7 @@ class PendingBardicChoice:
     is_finesse_or_ranged: bool
     had_advantage: bool
     smite_slot_level: int | None = None
+    damage_reroll_at_or_below: int = 0
 
 
 class BardicChoicePending(Exception):  # noqa: N818 - a control-flow signal, not an error
@@ -409,6 +411,9 @@ class AttackParams:
     rules.weapon_range_feet/monster_action_range_feet."""
     thrown_range_normal_feet: int | None = None
     thrown_range_long_feet: int | None = None
+    damage_reroll_at_or_below: int = 0
+    """Great Weapon Fighting (issue #92): 2 when this attack rerolls damage dice
+    showing 1 or 2; 0 otherwise."""
     """Live-reported bug fix: only ever set from _pc_attack_params, when
     the equipped weapon has the SRD "thrown" property (dagger/handaxe/
     javelin/light-hammer/spear/trident) - the real throw range from
@@ -604,6 +609,17 @@ def _pc_attack_params(
     properties = {p["index"] for p in (weapon.get("properties") or [])}
     is_finesse = "finesse" in properties
     is_ranged = weapon.get("weapon_range") == "Ranged"
+    # Great Weapon Fighting (issue #92): reroll 1s and 2s on the damage dice of a
+    # melee weapon wielded in two hands - a two-handed weapon, or a versatile
+    # one with nothing in the other hand (no shield, no second weapon).
+    two_handed = "two-handed" in properties or (
+        "versatile" in properties
+        and actor.equipped_shield is None
+        and len(actor.equipped_weapons) <= 1
+    )
+    gwf_reroll = (
+        2 if actor.fighting_style == "great-weapon-fighting" and not is_ranged and two_handed else 0
+    )
     if smite_slot_level is not None and is_ranged:
         raise TurnEngineError("Divine Smite requires a melee weapon attack")
     # Martial Arts (issue #24, Monk): DEX is usable for a monk weapon's
@@ -673,6 +689,7 @@ def _pc_attack_params(
         range_long_feet=range_long_feet,
         thrown_range_normal_feet=throw_range[0] if throw_range else None,
         thrown_range_long_feet=throw_range[1] if throw_range else None,
+        damage_reroll_at_or_below=gwf_reroll,
         is_finesse_or_ranged=is_finesse or is_ranged,
         is_melee_str_weapon=is_melee_str_weapon,
         smite_slot_level=smite_slot_level,
@@ -717,7 +734,10 @@ def current_attack_summaries(actor: Character, srd: SrdIndex) -> list[AttackSumm
     summaries = [_attack_summary_from_params(_pc_attack_params(actor, None, srd))]
     if len(actor.equipped_weapons) == 2:
         off_params = _pc_attack_params(
-            actor, actor.equipped_weapons[1], srd, include_ability_damage_bonus=False
+            actor,
+            actor.equipped_weapons[1],
+            srd,
+            include_ability_damage_bonus=actor.fighting_style == "two-weapon-fighting",
         )
         summaries.append(_attack_summary_from_params(off_params, name_suffix=" (off-hand)"))
     return summaries
@@ -987,7 +1007,16 @@ def _validate_attack_target(actor: Character, target: Character) -> None:
     one place both _resolve_attack and _resolve_cast_spell funnel through,
     closes it regardless of which LLM call picked the bad target - no
     prompt engineering can guarantee zero-shot compliance from a small
-    model, so the deterministic engine enforces the actual game rule."""
+    model, so the deterministic engine enforces the actual game rule.
+
+    Also rejects a creature that is already dead (class playtest, issue
+    #75): attacking or casting at a corpse used to be accepted - a weapon
+    attack silently produced no events and ended the turn, a spell burned
+    its slot for `dmg 0` - and "the nearest goblin" kept resolving to the
+    corpse. The rejection happens before anything is spent, so the actor is
+    simply re-prompted."""
+    if target.is_dead:
+        raise TurnEngineError(f"{target.id} is already dead")
     if target.is_pc == actor.is_pc:
         raise TurnEngineError(f"{actor.id} cannot attack {target.id} - same side")
     charmed_by = next(
@@ -1171,6 +1200,7 @@ def _resolve_single_attack(
             disadvantage=disadvantage,
             force_critical=already_unconscious,
             lucky=has_lucky_trait(actor),
+            damage_reroll_at_or_below=params.damage_reroll_at_or_below,
         )
         natural = probe.attack_roll.kept[0]
         if not probe.hit and natural != 1:
@@ -1196,6 +1226,7 @@ def _resolve_single_attack(
                     is_finesse_or_ranged=params.is_finesse_or_ranged,
                     had_advantage=advantage,
                     smite_slot_level=params.smite_slot_level,
+                    damage_reroll_at_or_below=params.damage_reroll_at_or_below,
                 )
             )
         # Already a hit, or a natural 1 the die couldn't have fixed anyway -
@@ -1219,6 +1250,7 @@ def _resolve_single_attack(
         force_critical=already_unconscious,
         lucky=has_lucky_trait(actor),
         bardic_die_sides=bardic_die_sides,
+        damage_reroll_at_or_below=params.damage_reroll_at_or_below,
     )
     if bardic_die_sides:
         actor.bardic_inspiration_die = None
@@ -1456,7 +1488,11 @@ def resolve_pending_bardic_choice(
             critical = choice.force_critical
             dice_count = choice.damage_dice_count * 2 if critical else choice.damage_dice_count
             damage_roll = roll(
-                dice_count, choice.damage_dice_sides, modifier=choice.damage_bonus, rng=rng
+                dice_count,
+                choice.damage_dice_sides,
+                modifier=choice.damage_bonus,
+                rng=rng,
+                reroll_at_or_below=choice.damage_reroll_at_or_below,
             )
             result = AttackResult(
                 attack_roll=roll_result,
@@ -1693,7 +1729,10 @@ def _resolve_offhand_attack(
     _validate_attack_target(actor, target)
 
     params = _pc_attack_params(
-        actor, actor.equipped_weapons[1], srd, include_ability_damage_bonus=False
+        actor,
+        actor.equipped_weapons[1],
+        srd,
+        include_ability_damage_bonus=actor.fighting_style == "two-weapon-fighting",
     )
     _resolve_single_attack(state, actor, target, params, rng, srd)
     actor.bonus_action_used = True
@@ -3036,6 +3075,8 @@ def _cast_attack_spell_at_target(
     spell_level: int,
     rng: random.Random,
     srd: SrdIndex,
+    *,
+    ranged: bool = False,
 ) -> None:
     """One target's independent attack roll (Phase 9D multi-target: called
     once per id in action.targets, or once for the single legacy `target`).
@@ -3078,6 +3119,11 @@ def _cast_attack_spell_at_target(
         target.is_dodging
         or condition_attack_disadvantage(actor, target, distance)
         or protected_from_evil_disadvantage(actor, target, srd)
+        # Issue #80: a ranged *spell* attack is a ranged attack too - same
+        # "hostile within 5ft" disadvantage _resolve_single_attack applies to
+        # weapons (it was missing here, so every cornered caster's Fire Bolt /
+        # Eldritch Blast rolled straight).
+        or (ranged and _has_adjacent_hostile(state, actor))
     )
     # Mirror Image (issue #61) - see _resolve_single_attack's identical handling.
     if _try_mirror_image(state, actor, target, params.attack_bonus, advantage, disadvantage, rng):
@@ -3257,24 +3303,29 @@ def _cast_save_spell_at_target(
     # "condition" mechanic (Bless/Blur/...), which has no save at all.
     if not success and params.failed_save_condition is not None:
         spec = params.failed_save_condition
-        apply_condition(
-            target,
-            Condition(
-                name=spec.condition,
-                duration_rounds=spec.duration_rounds,
-                source=actor.id,
-                spell=params.source_name,
-            ),
+        affected = spec.only_monster_types is None or (
+            target.monster_index is not None
+            and srd.monsters.get(target.monster_index, {}).get("type") in spec.only_monster_types
         )
-        state.events.append(
-            Event(
-                round=state.round,
-                turn_index=state.current_turn,
-                actor=target.id,
-                type="condition_applied",
-                payload={"condition": spec.condition, "source": params.source_name},
+        for condition_name in (spec.condition, *spec.extra_conditions) if affected else ():
+            apply_condition(
+                target,
+                Condition(
+                    name=condition_name,
+                    duration_rounds=spec.duration_rounds,
+                    source=actor.id,
+                    spell=params.source_name,
+                ),
             )
-        )
+            state.events.append(
+                Event(
+                    round=state.round,
+                    turn_index=state.current_turn,
+                    actor=target.id,
+                    type="condition_applied",
+                    payload={"condition": condition_name, "source": params.source_name},
+                )
+            )
 
     if params.damage_type is None:
         return  # no-damage control spell - nothing further to resolve
@@ -3814,7 +3865,16 @@ def _resolve_monster_innate_spell(
     spell_level = spell_ref["level"]
     if mechanic == "attack":
         attack_params = _monster_innate_attack_params(innate, spell, spell_level, range_normal_feet)
-        _cast_attack_spell_at_target(state, actor, target, attack_params, spell_level, rng, srd)
+        _cast_attack_spell_at_target(
+            state,
+            actor,
+            target,
+            attack_params,
+            spell_level,
+            rng,
+            srd,
+            ranged=spell_attack_is_ranged(spell),
+        )
     else:
         save_params = _monster_innate_save_params(innate, spell, spell_level)
         _cast_save_spell_at_target(state, actor, target, save_params, rng, srd)
@@ -3912,17 +3972,25 @@ def _resolve_cast_spell(
                         f"{actor.id} has no level-{spell_level} spell slots remaining"
                     )
                 actor.spell_slots[spell_level] = remaining - 1
+            try:
+                if normalized == "spare-the-dying":
+                    _resolve_spare_the_dying(state, actor, action, spell, srd)
+                elif normalized == "sleep":
+                    _resolve_sleep_spell(state, actor, action, spell, spell_level, rng, srd)
+                elif normalized == "true-strike":
+                    _resolve_true_strike(state, actor, spell)
+                else:  # mage-armor, shield-of-faith
+                    _resolve_ac_buff_spell(state, actor, action, spell, srd)
+            except TurnEngineError:
+                # These resolvers validate their targets themselves, after the
+                # slot above is spent (issue #75: Sleep naming only a corpse
+                # burned the slot) - a rejected cast must cost nothing, per
+                # resolve_action's "validate before mutating" contract.
+                if spell_level > 0:
+                    actor.spell_slots[spell_level] += 1
+                raise
             if spell.get("concentration"):
                 _begin_concentration(state, actor, spell["name"], srd)
-
-            if normalized == "spare-the-dying":
-                _resolve_spare_the_dying(state, actor, action, spell, srd)
-            elif normalized == "sleep":
-                _resolve_sleep_spell(state, actor, action, spell, spell_level, rng, srd)
-            elif normalized == "true-strike":
-                _resolve_true_strike(state, actor, spell)
-            else:  # mage-armor, shield-of-faith
-                _resolve_ac_buff_spell(state, actor, action, spell, srd)
 
             if is_bonus_action:
                 actor.bonus_action_used = True
@@ -4046,7 +4114,16 @@ def _resolve_cast_spell(
     if mechanic == "attack":
         attack_params = _spell_attack_params(actor, spell, spell_level, srd)
         for target in targets:
-            _cast_attack_spell_at_target(state, actor, target, attack_params, spell_level, rng, srd)
+            _cast_attack_spell_at_target(
+                state,
+                actor,
+                target,
+                attack_params,
+                spell_level,
+                rng,
+                srd,
+                ranged=spell_attack_is_ranged(spell),
+            )
     elif mechanic == "save":
         save_params = _spell_save_params(actor, spell, spell_level, srd)
         for target in targets:
@@ -4403,6 +4480,34 @@ def _handle_expired_conditions(
             caster.concentrating_on = None
 
 
+def _stand_up_if_prone(state: GameState, actor: Character) -> None:
+    """A prone creature stands at the start of its turn for half its speed
+    (SRD; issue #82). Nothing used to remove `prone` at all, so a shoved
+    monster had disadvantage on every attack and granted advantage to every
+    melee attacker for the rest of the fight - one successful shove
+    neutralised an enemy. Done automatically, for monsters and PCs alike,
+    rather than as a verb: nobody wants to spend a prompt on it, and the half-
+    speed cost lands in `movement_used_feet` so the rest of the turn (a
+    monster's approach path, a player's move) already accounts for it. A
+    creature that can't move (speed 0: grappled, exhaustion 5+) stays prone."""
+    if not has_condition(actor, "prone") or actor.hp <= 0 or actor.is_dead:
+        return
+    speed = effective_speed(actor)
+    if speed <= 0:
+        return
+    remove_condition(actor, "prone")
+    actor.movement_used_feet = speed // 2
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="condition_removed",
+            payload={"condition": "prone", "reason": "stood up", "movement_cost": speed // 2},
+        )
+    )
+
+
 def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -> None:
     """A character killed mid-round (e.g. on an earlier actor's turn) must
     not be prompted for its own turn later that same round - skip forward
@@ -4423,6 +4528,12 @@ def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -
             _handle_expired_conditions(state, expired, srd)
         state.current_turn = next_index
         state.round = next_round
+        # Sneak Attack is once per *turn* (issue #81) - and a turn is anyone's,
+        # so an opportunity attack on another creature's turn is its own
+        # chance. Every new turn therefore clears everyone's flag, not just
+        # the incoming actor's.
+        for character in state.characters.values():
+            character.sneak_attack_used_this_turn = False
         next_actor = state.characters[state.turn_order[state.current_turn]]
         if not _skip_this_turn(next_actor):
             # Phase 9H: bonus_action_used resets here, when a turn actually
@@ -4447,6 +4558,7 @@ def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -
             # follow-up attack in the same real turn must still see
             # whatever movement this character already spent this turn.
             next_actor.movement_used_feet = 0
+            _stand_up_if_prone(state, next_actor)
             return
 
 
@@ -4489,13 +4601,12 @@ def resolve_action(
     # why this generic per-call reset would break it) - is_dodging being
     # cleared an extra time when a bonus-action spell precedes this actor's
     # own main action in the same turn is harmless, since it wasn't going
-    # to read True again this turn anyway. sneak_attack_used_this_turn
-    # (Phase 9I) resets the same safe way - a Rogue's plain `attack` never
-    # produces more than one resolve_action call per real turn under this
-    # engine (no Extra Attack, no two-weapon-fighting bonus-action offhand
-    # attack), so there's no equivalent risk to bonus_action_used's.
+    # to read True again this turn anyway. (sneak_attack_used_this_turn used
+    # to reset here too, on the assumption a Rogue never makes two
+    # resolve_action calls in one turn - false once offhand_attack + attack
+    # became two calls, so dual-wielding got Sneak Attack twice (issue #81).
+    # It now resets in _advance_turn_skipping_dead, once per turn.)
     actor.is_dodging = False
-    actor.sneak_attack_used_this_turn = False
 
     if action.verb == "invalid":
         # The DM didn't understand the action - not a system error. No

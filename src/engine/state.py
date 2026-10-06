@@ -42,6 +42,7 @@ ConditionName = Literal[
     "mirror_image",
     "protected_from_evil",
     "shielded",
+    "outlined",
 ]
 """Exhaustion isn't in this list - SRD exhaustion is a leveled (0-6) effect
 with per-level rules, not an on/off tag like these - see

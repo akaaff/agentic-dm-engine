@@ -277,7 +277,10 @@ export default function CharacterDetailSheet({
       {character.fighting_style && (
         <p>
           <strong>Fighting Style:</strong>{' '}
-          {character.fighting_style[0].toUpperCase() + character.fighting_style.slice(1)}
+          {character.fighting_style
+            .split('-')
+            .map((w) => w[0].toUpperCase() + w.slice(1))
+            .join(' ')}
         </p>
       )}
       {character.is_raging && <p className="race-bonus-badge">Raging</p>}

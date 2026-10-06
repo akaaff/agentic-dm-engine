@@ -41,6 +41,7 @@ def resolve_attack(
     force_critical: bool = False,
     lucky: bool = False,
     bardic_die_sides: int | None = None,
+    damage_reroll_at_or_below: int = 0,
 ) -> AttackResult:
     """A natural 1 always misses, a natural 20 always hits and doubles the
     damage dice (not the flat bonus), per SRD rules.
@@ -91,7 +92,13 @@ def resolve_attack(
 
     critical = natural_twenty or force_critical
     dice_count = damage_dice_count * 2 if critical else damage_dice_count
-    damage_roll = roll(dice_count, damage_dice_sides, modifier=damage_bonus, rng=rng)
+    damage_roll = roll(
+        dice_count,
+        damage_dice_sides,
+        modifier=damage_bonus,
+        rng=rng,
+        reroll_at_or_below=damage_reroll_at_or_below,
+    )
     damage = max(0, damage_roll.total)
     return AttackResult(
         attack_roll, hit=True, critical=critical, damage=damage, damage_type=damage_type
@@ -350,6 +357,12 @@ class ConditionSpellSpec:
     cures: ConditionName | None = None
     """An existing condition the cast removes from each target first
     (Protection from Poison cures `poisoned`)."""
+    extra_conditions: tuple[ConditionName, ...] = ()
+    """More conditions applied alongside `condition` (Hideous Laughter: prone
+    AND incapacitated)."""
+    only_monster_types: frozenset[str] | None = None
+    """If set, only a monster whose SRD `type` is in the set is affected (Animal
+    Friendship: beasts). Anyone else just shrugs the spell off."""
 
 
 _CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
@@ -403,6 +416,25 @@ disadvantage flag)."""
 
 _FAILED_SAVE_CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     "bane": ConditionSpellSpec(condition="baned", duration_rounds=10),
+    # Issue #96 (class playtest): these cast "successfully" - a save event and a
+    # spent slot - and then did nothing to a target that failed. Durations are
+    # the SRD's; the repeat saves they allow (Entangle's Strength check to
+    # break free, Hideous Laughter's save at the end of each turn) aren't
+    # modeled, so they simply run their course or until concentration ends.
+    "charm-person": ConditionSpellSpec(condition="charmed", duration_rounds=600),
+    "animal-friendship": ConditionSpellSpec(
+        condition="charmed", duration_rounds=14400, only_monster_types=frozenset({"beast"})
+    ),
+    "hideous-laughter": ConditionSpellSpec(
+        condition="incapacitated", duration_rounds=10, extra_conditions=("prone",)
+    ),
+    "entangle": ConditionSpellSpec(condition="restrained", duration_rounds=10),
+    "faerie-fire": ConditionSpellSpec(condition="outlined", duration_rounds=10),
+    "grease": ConditionSpellSpec(condition="prone", duration_rounds=None),
+    # Command's real effect is one of several one-word orders for a single
+    # turn (approach / drop / flee / grovel / halt); modeled as losing that
+    # turn, which is what every one of them amounts to for a combatant.
+    "command": ConditionSpellSpec(condition="incapacitated", duration_rounds=1),
 }
 """Issue #68: save-based spells whose real effect is an ongoing condition on
 every target that FAILS the save (the "save" mechanic otherwise resolves only
@@ -486,6 +518,16 @@ def normalize_spell_name(raw: str) -> str:
     monster_innate_spellcasting's own spell-name lookups use the identical
     rule rather than a second, potentially drifting copy."""
     return raw.strip().lower().replace(" ", "-")
+
+
+def spell_attack_is_ranged(spell: SrdEntry) -> bool:
+    """Whether an attack-roll spell is a *ranged* spell attack (issue #80) -
+    the SRD's own `attack_type`, plus Scorching Ray whose vendored entry omits
+    it (see _ATTACK_TYPE_OVERRIDES; its text says "ranged spell attack").
+    Ranged spell attacks, like ranged weapon attacks, have disadvantage while a
+    hostile creature is within 5 feet; melee ones (Shocking Grasp, Inflict
+    Wounds, Flame Blade) don't."""
+    return spell.get("attack_type") == "ranged" or spell.get("index") == "scorching-ray"
 
 
 def class_spell_indices(class_index: str, srd: SrdIndex, level: int | None = None) -> set[str]:
@@ -1118,14 +1160,25 @@ def spell_range_feet(spell: SrdEntry) -> int:
     no "beyond normal range" disadvantage tier in 5e; you're either in
     range or you aren't. "Touch"/"Self"/anything unparseable falls back to
     5ft (melee-adjacent) - a safe default for spells whose range genuinely
-    is Touch/Self, but wrong for the rare spell (see
+    is Touch/Self (a "Self" spell *with an area* instead reaches its area's
+    size, issue #79), but wrong for the rare spell (see
     _SPELL_RANGE_OVERRIDES_FEET) whose real attack range only exists in
     free-text flavor, checked first."""
     override = _SPELL_RANGE_OVERRIDES_FEET.get(spell.get("index", ""))
     if override is not None:
         return override
     match = _SPELL_RANGE_RE.search(str(spell.get("range", "")))
-    return int(match.group(1)) if match else 5
+    if match:
+        return int(match.group(1))
+    # Issue #79: a "Self" spell with an area (Burning Hands/Color Spray: a
+    # 15-ft cone, Thunderwave: a 15-ft cube, Cone of Cold: 60 ft...) reaches
+    # as far as its area extends from the caster - the SRD keeps that in
+    # `area_of_effect.size`, not in `range`, so these used to fall through to
+    # the 5ft melee default and could only hit adjacent creatures.
+    area = spell.get("area_of_effect") or {}
+    if str(spell.get("range", "")).strip().lower() == "self" and area.get("size"):
+        return int(area["size"])
+    return 5
 
 
 _MONSTER_RANGE_RE = re.compile(r"range (\d+)/(\d+)\s*ft", re.IGNORECASE)
@@ -1178,6 +1231,9 @@ def condition_attack_advantage(actor: Character, target: Character, distance_fee
         or has_condition(target, "restrained")
         or has_condition(target, "stunned")
         or has_condition(target, "unconscious")
+        # Faerie Fire (issue #96): outlined in light - attackers who can see it
+        # have advantage.
+        or has_condition(target, "outlined")
         or (has_condition(target, "prone") and distance_feet <= 5)
     )
 

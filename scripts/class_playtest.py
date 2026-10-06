@@ -1622,6 +1622,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--classes", default="", help="comma list (default all)")
     ap.add_argument("--trials", type=int, default=2)
+    ap.add_argument("--play", default="", help="only plays whose name contains this")
     ap.add_argument("--sweep", action="store_true")
     ap.add_argument("--static", action="store_true")
     ap.add_argument("--out", default="")
@@ -1649,6 +1650,7 @@ def main() -> None:
 
     wanted = {c for c in args.classes.split(",") if c} or None
     plays = [p for p in build_plays() if wanted is None or p.cls in wanted]
+    plays = [p for p in plays if args.play in p.name]
     results: list[dict[str, Any]] = []
     for play in plays:
         trials = [run_play(play, srd) for _ in range(args.trials)]

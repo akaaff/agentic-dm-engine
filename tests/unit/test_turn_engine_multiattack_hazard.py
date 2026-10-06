@@ -7,6 +7,8 @@ mechanically inert, now deals a small fixed amount of damage on entry).
 
 from __future__ import annotations
 
+import pytest
+
 from src.cli.play import build_demo_encounter
 from src.engine.actions import ParsedAction
 from src.engine.character_creation import create_character
@@ -14,7 +16,12 @@ from src.engine.encounter import build_encounter_state, monster_to_character
 from src.engine.position import BattleMap, Position
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
-from src.engine.turn_engine import HAZARD_DAMAGE, HAZARD_DAMAGE_TYPE, resolve_action
+from src.engine.turn_engine import (
+    HAZARD_DAMAGE,
+    HAZARD_DAMAGE_TYPE,
+    TurnEngineError,
+    resolve_action,
+)
 
 
 class _FixedRandom:
@@ -178,7 +185,10 @@ def test_multiattack_rolls_no_sub_attacks_against_an_already_dead_target() -> No
     action = ParsedAction(
         actor="giant-badger_1", verb="attack", target="thorin", raw_text="the badger attacks"
     )
-    resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
+    # Issue #75: a dead target is now rejected up front (it used to be
+    # accepted and silently do nothing) - either way no sub-attack rolls.
+    with pytest.raises(TurnEngineError, match="already dead"):
+        resolve_action(state, action, _FixedRandom([]))  # type: ignore[arg-type]
 
     assert not any(e.type == "attack_roll" for e in state.events)
 

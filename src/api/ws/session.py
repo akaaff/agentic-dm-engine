@@ -821,6 +821,16 @@ def _state_update_message(session: Session) -> dict[str, object]:
     }
 
 
+MAX_ACTIONS_PER_TURN = 30
+"""Autoplay safety valve (a CI test hung for 30 minutes on this): one actor's
+turn legitimately takes a handful of actions (a monster moves then attacks; a
+companion's sequence maybe six). If the turn pointer hasn't moved after this
+many iterations the loop forces an end_turn, and after twice this many it
+gives up and returns - the existing consecutive_invalid breaker only counts
+*rejected* actions, so a successful action that never ends the turn (every
+iteration appending events, so it looks like progress) used to spin forever."""
+
+
 async def _autoplay_non_human_turns(session: Session) -> None:
     """Resolves every actor's turn up to (not including) the next human one -
     companions via player_agent_node (empty raw_text/parsed_action, the same
@@ -842,10 +852,31 @@ async def _autoplay_non_human_turns(session: Session) -> None:
     human_ids = session.human_character_ids.values()
 
     consecutive_invalid = 0
+    turn_marker: tuple[int, int] | None = None
+    same_turn_iterations = 0
+    last_action: ParsedAction | None = None
     while session.game_state.status == "in_progress":
         current_actor_id = session.game_state.turn_order[session.game_state.current_turn]
         actor = session.game_state.characters[current_actor_id]
         forced_end_turn = False
+
+        marker = (session.game_state.round, session.game_state.current_turn)
+        if marker == turn_marker:
+            same_turn_iterations += 1
+        else:
+            turn_marker, same_turn_iterations = marker, 0
+        if same_turn_iterations >= 2 * MAX_ACTIONS_PER_TURN:
+            log_event(
+                kind="backend_error",
+                source="autoplay_no_progress",
+                session_id=session.session_id,
+                actor=current_actor_id,
+                round=session.game_state.round,
+                iterations=same_turn_iterations,
+                last_action=last_action.model_dump(mode="json") if last_action else None,
+                message="autoplay made no turn progress; giving up on this call",
+            )
+            return
 
         if current_actor_id in human_ids:
             if actor.hp <= 0 and not actor.is_dead:
@@ -863,7 +894,7 @@ async def _autoplay_non_human_turns(session: Session) -> None:
                 )
             else:
                 return
-        elif consecutive_invalid >= 3:
+        elif consecutive_invalid >= 3 or same_turn_iterations >= MAX_ACTIONS_PER_TURN:
             # Applies to monsters too, not just companions - found live as
             # a real infinite loop once turn_engine started enforcing
             # attack range: choose_monster_action's own path-finding can
@@ -881,6 +912,7 @@ async def _autoplay_non_human_turns(session: Session) -> None:
         else:
             parsed_action = None
 
+        last_action = parsed_action
         events_before = len(session.game_state.events)
         graph_input: GraphState = {
             "game_state": session.game_state,
