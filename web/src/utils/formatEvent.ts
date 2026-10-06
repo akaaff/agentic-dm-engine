@@ -163,6 +163,12 @@ export function formatEvent(
         label: `${actorName}'s attack ${hit ? 'destroys a mirror image of' : 'misses a mirror image of'} ${target}${left}`,
       }
     }
+    case 'protection': {
+      // Protection fighting style (issue #92): the reaction that gave the
+      // coming attack disadvantage - the attack_roll badge after it has the roll.
+      const target = characterName(p.target, characters)
+      return { key: event.id, color, label: `${actorName} protects ${target}` }
+    }
     case 'sanctuary_blocked': {
       // Sanctuary (issue #61): the attacker failed the Wisdom save and lost
       // the attack - the saving_throw badge just before this one has the roll.

@@ -58,11 +58,14 @@ from src.engine.state import Character, GameState
 from src.engine.turn_engine import (
     BardicChoicePending,
     PendingBardicChoice,
+    PendingProtectionChoice,
     PendingShieldChoice,
+    ProtectionChoicePending,
     ShieldChoicePending,
     TurnEngineError,
     current_attack_summaries,
     resolve_pending_bardic_choice,
+    resolve_pending_protection_choice,
     resolve_pending_shield_choice,
 )
 from src.graph.graph_builder import build_graph
@@ -203,6 +206,12 @@ class Session:
     by the shield_response that resumes it. In memory only: a restart before
     the answer replays the monster's attack from the last snapshot, which
     predates it (nothing about the attack is applied until it resumes)."""
+    pending_protection_choice: PendingProtectionChoice | None = None
+    """Issue #92: set while a monster's attack on a character a Protection
+    fighter stands beside is paused (before it is rolled) waiting for that
+    fighter's human to answer a protection_offer - cleared by the
+    protection_response that resumes it. In memory only, like
+    pending_shield_choice."""
     pending_party_choice: PendingPartyChoice | None = None
     """Story-adaptive-encounters Phase 2: set the instant the campaign's
     chain-walk stops at a party_choice scene (see _start_party_choice) -
@@ -722,15 +731,54 @@ def _resolve_and_narrate_bardic_choice(
     return str(narrator_node(narrator_state)["narration"])
 
 
-def _resolve_and_narrate_shield_choice(
-    session: Session, choice: PendingShieldChoice, cast: bool
+def _shield_offer_message(session: Session, choice: PendingShieldChoice) -> dict[str, object]:
+    target = session.game_state.characters[choice.target_id]
+    return {
+        "type": "shield_offer",
+        "target": choice.target_id,
+        "attacker": choice.attacker_id,
+        "attack_total": choice.result.attack_roll.total,
+        "target_ac": target.ac,
+        "shield_ac": target.ac + 5,
+    }
+
+
+def _protection_offer_message(
+    session: Session, choice: PendingProtectionChoice
+) -> dict[str, object]:
+    return {
+        "type": "protection_offer",
+        "protector": choice.protector_id,
+        "target": choice.target_id,
+        "attacker": choice.attacker_id,
+    }
+
+
+def _reaction_pending(session: Session) -> bool:
+    """Whether the turn loop is paused on a reaction (Shield/Protection) a
+    human still has to answer."""
+    return (
+        session.pending_shield_choice is not None or session.pending_protection_choice is not None
+    )
+
+
+def _resume_reaction(
+    session: Session,
+    choice: PendingShieldChoice | PendingProtectionChoice,
+    answer: bool,
+    events_before: int,
 ) -> str:
-    """Issue #93: the Shield counterpart of _resolve_and_narrate_bardic_choice -
-    finishes the paused attack and narrates it (the narrator runs standalone,
-    this resume path doesn't go back through the graph)."""
-    events_before = len(session.game_state.events)
+    """Finishes the paused attack with `answer` and narrates everything since
+    `events_before` (the narrator runs standalone - this resume path doesn't go
+    back through the graph). May itself raise another reaction pause: a
+    Protection answer re-rolls the attack, which can then pause for Shield."""
     srd = session.srd or load_srd()
-    resolve_pending_shield_choice(session.game_state, choice, cast, session.action_rng, srd)
+    if isinstance(choice, PendingProtectionChoice):
+        resolve_pending_protection_choice(
+            session.game_state, choice, answer, session.action_rng, srd
+        )
+    else:
+        resolve_pending_shield_choice(session.game_state, choice, answer, session.action_rng, srd)
     narrator_state: GraphState = {
         "game_state": session.game_state,
         "raw_text": "",
@@ -743,16 +791,51 @@ def _resolve_and_narrate_shield_choice(
     return str(narrator_node(narrator_state)["narration"])
 
 
-def _shield_offer_message(session: Session, choice: PendingShieldChoice) -> dict[str, object]:
-    target = session.game_state.characters[choice.target_id]
-    return {
-        "type": "shield_offer",
-        "target": choice.target_id,
-        "attacker": choice.attacker_id,
-        "attack_total": choice.result.attack_roll.total,
-        "target_ac": target.ac,
-        "shield_ac": target.ac + 5,
-    }
+async def _run_reaction_chain(
+    session: Session,
+    choice: PendingShieldChoice | PendingProtectionChoice,
+    answer: bool | None,
+) -> None:
+    """Issues #92/#93: drives a paused attack through however many reactions it
+    triggers. With `answer` None the owner is asked: a human's character pauses
+    the loop (the pending choice is stored and an offer broadcast - the matching
+    *_response message calls back in here with their answer); an AI companion
+    has no one to ask and always reacts. A Protection answer can lead straight
+    into a Shield offer for the same attack, hence the loop."""
+    human_ids = set(session.human_character_ids.values())
+    events_before = len(session.game_state.events)
+    while True:
+        if answer is None:
+            if isinstance(choice, PendingProtectionChoice):
+                if choice.protector_id in human_ids:
+                    session.pending_protection_choice = choice
+                    await _broadcast(session, _protection_offer_message(session, choice))
+                    return
+            elif choice.target_id in human_ids:
+                session.pending_shield_choice = choice
+                await _broadcast(session, _shield_offer_message(session, choice))
+                return
+            answer = True
+        try:
+            narration = _resume_reaction(session, choice, answer, events_before)
+        except (ShieldChoicePending, ProtectionChoicePending) as nxt:
+            choice, answer = nxt.choice, None
+            continue
+        except httpx.TransportError as exc:
+            # The mechanical outcome is already applied (see the Bardic
+            # Inspiration branch's identical reasoning) - only the narration
+            # line is lost.
+            logger.info("Reaction choice narration LLM call failed: %s", exc)
+            log_event(
+                kind="backend_error",
+                source="reaction_chain",
+                exc_type=type(exc).__name__,
+                message=str(exc),
+            )
+            return
+        await _broadcast_narration(session, narration)
+        await _broadcast(session, _state_update_message(session))
+        return
 
 
 def _bardic_offer_message(choice: PendingBardicChoice) -> dict[str, object]:
@@ -806,6 +889,10 @@ async def _send_pending_offers(session: Session, websocket: WebSocket) -> None:
         await websocket.send_json(_bardic_offer_message(session.pending_bardic_choice))
     if session.pending_shield_choice is not None:
         await websocket.send_json(_shield_offer_message(session, session.pending_shield_choice))
+    if session.pending_protection_choice is not None:
+        await websocket.send_json(
+            _protection_offer_message(session, session.pending_protection_choice)
+        )
     if session.pending_party_choice is not None:
         await websocket.send_json(
             _party_choice_offer_message(session, session.pending_party_choice)
@@ -847,7 +934,7 @@ async def _autoplay_non_human_turns(session: Session) -> None:
     - without this, that failure mode would hang the session forever instead
     of just wasting a few turns.
     """
-    if not session.human_character_ids or session.pending_shield_choice is not None:
+    if not session.human_character_ids or _reaction_pending(session):
         return
     human_ids = session.human_character_ids.values()
 
@@ -960,35 +1047,12 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             await _broadcast(session, _state_update_message(session))
             consecutive_invalid = 0
             continue
-        except ShieldChoicePending as exc:
-            # Issue #93: a monster's hit on a character who could cast Shield.
-            # A human's character pauses the turn loop and asks (answered by a
-            # shield_response, which resumes and carries on from there); an
-            # AI companion has no one to ask, so it casts - the same
-            # always-yes auto-decision a companion's Bardic Inspiration die
-            # gets above.
-            if exc.choice.target_id in human_ids:
-                session.pending_shield_choice = exc.choice
-                await _broadcast(session, _shield_offer_message(session, exc.choice))
+        except (ShieldChoicePending, ProtectionChoicePending) as exc:
+            # Issues #92/#93: a reaction (Protection before the roll, Shield
+            # after a hit) a human may want to take - see _run_reaction_chain.
+            await _run_reaction_chain(session, exc.choice, None)
+            if _reaction_pending(session):
                 return
-            try:
-                narration = _resolve_and_narrate_shield_choice(session, exc.choice, True)
-            except httpx.TransportError as timeout_exc:
-                # The mechanical outcome is already applied (see the bardic
-                # branch's identical reasoning) - only this narration line is
-                # lost.
-                logger.info("Shield choice narration LLM call failed: %s", timeout_exc)
-                log_event(
-                    kind="backend_error",
-                    source="autoplay_non_human_turns_shield_choice",
-                    actor=current_actor_id,
-                    exc_type=type(timeout_exc).__name__,
-                    message=str(timeout_exc),
-                )
-                consecutive_invalid = 0
-                continue
-            await _broadcast_narration(session, narration)
-            await _broadcast(session, _state_update_message(session))
             consecutive_invalid = 0
             continue
         except (TurnEngineError, NotImplementedError) as exc:
@@ -1498,25 +1562,38 @@ async def _handle_client_message(
         await _send_awaiting_input(session)
         return
 
-    if msg_type == "shield_response":
-        # Issue #93: answers a shield_offer. Same checks as the Bardic
-        # Inspiration response above - something must be pending, and this
-        # connection must control the character being attacked.
-        shield_pending = session.pending_shield_choice
-        if shield_pending is None:
-            await websocket.send_json({"type": "error", "detail": "No Shield choice is pending."})
+    if msg_type in ("shield_response", "protection_response"):
+        # Issues #92/#93: answers a shield_offer / protection_offer. Same checks
+        # as the Bardic Inspiration response above - something of that kind must
+        # be pending, and this connection must control the character who
+        # decides (the one attacked for Shield, the protector for Protection).
+        is_shield = msg_type == "shield_response"
+        label = "Shield" if is_shield else "Protection"
+        reaction_choice = (
+            session.pending_shield_choice if is_shield else session.pending_protection_choice
+        )
+        if reaction_choice is None:
+            await websocket.send_json({"type": "error", "detail": f"No {label} choice is pending."})
             return
-        if shield_pending.target_id not in connection.controlled_character_ids:
+        decider = (
+            reaction_choice.target_id
+            if isinstance(reaction_choice, PendingShieldChoice)
+            else reaction_choice.protector_id
+        )
+        if decider not in connection.controlled_character_ids:
             await websocket.send_json(
-                {"type": "error", "detail": "It is not your Shield choice to make."}
+                {"type": "error", "detail": f"It is not your {label} choice to make."}
             )
             return
-        session.pending_shield_choice = None
-        narration = _resolve_and_narrate_shield_choice(
-            session, shield_pending, bool(raw.get("cast"))
+        if is_shield:
+            session.pending_shield_choice = None
+        else:
+            session.pending_protection_choice = None
+        await _run_reaction_chain(
+            session, reaction_choice, bool(raw.get("cast" if is_shield else "use"))
         )
-        await _broadcast_narration(session, narration)
-        await _broadcast(session, _state_update_message(session))
+        if _reaction_pending(session):
+            return
         await _autoplay_non_human_turns(session)
         await _send_awaiting_input(session)
         return
@@ -1669,12 +1746,13 @@ async def _handle_client_message(
             session.pending_bardic_choice = exc.choice
             await _broadcast(session, _bardic_offer_message(exc.choice))
             return
-        except ShieldChoicePending as shield_exc:
+        except (ShieldChoicePending, ProtectionChoicePending) as reaction_exc:
             # Only reachable for a monster action injected here (debug_action):
             # a human's own attacks never target their own side.
-            session.pending_shield_choice = shield_exc.choice
-            await _broadcast(session, _shield_offer_message(session, shield_exc.choice))
-            return
+            await _run_reaction_chain(session, reaction_exc.choice, None)
+            if _reaction_pending(session):
+                return
+            break
         except (TurnEngineError, NotImplementedError) as exc:
             # Caught live, two real cases: (1) a free-text action can name a
             # real-looking but invalid item/spell (e.g. the LLM extracting

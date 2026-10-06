@@ -40,6 +40,7 @@ EventType = Literal[
     "death_ward",
     "mirror_image",
     "sanctuary_blocked",
+    "protection",
 ]
 
 

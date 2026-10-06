@@ -324,7 +324,7 @@ def test_unimplemented_fighting_style_rejected() -> None:
             background_index="acolyte",
             base_ability_scores={"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8},
             chosen_skills=["skill-athletics", "skill-perception"],
-            fighting_style="protection",  # a real SRD style, not implemented (needs a reaction)
+            fighting_style="blind-fighting",  # not an SRD 5.1 fighting style
         )
 
 

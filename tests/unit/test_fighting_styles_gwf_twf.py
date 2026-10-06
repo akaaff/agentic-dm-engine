@@ -145,8 +145,9 @@ def test_a_real_off_hand_attack_gets_the_modifier_only_with_the_style() -> None:
 # ------------------------------------------------------------------ creation
 
 
-def test_creation_accepts_the_two_new_styles_and_still_rejects_protection() -> None:
+def test_creation_accepts_all_the_srd_styles_and_rejects_others() -> None:
     _fighter("great-weapon-fighting", ["greatsword"])
     _fighter("two-weapon-fighting", ["shortsword", "dagger"])
-    with pytest.raises(CharacterCreationError, match="protection"):
-        _fighter("protection", ["longsword", "shield"])
+    _fighter("protection", ["longsword", "shield"])
+    with pytest.raises(CharacterCreationError, match="blind-fighting"):
+        _fighter("blind-fighting", ["longsword"])
