@@ -18,6 +18,7 @@ ownership.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import traceback
@@ -200,6 +201,14 @@ class Session:
     a bardic_inspiration_response message resumes it. While set, the turn
     loop stays paused (no autoplay, no awaiting_input) - the only thing this
     session should be receiving next is that response."""
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    """Issue #105: the blocking LLM/TTS/image calls now run in worker threads
+    (asyncio.to_thread) so the event loop keeps answering pings, /health and
+    other sessions - which means a second message for the SAME session could
+    otherwise start while a worker is still mutating its game state. Held for
+    the whole of handling one client message and for the connect flow's
+    resolve-and-send block, so a session still does one thing at a time.
+    Never re-entered: only those two entry points take it."""
     pending_shield_choice: PendingShieldChoice | None = None
     """Issue #93: set while a monster's hit on a human's character is paused
     waiting for their answer to a shield_offer (ShieldChoicePending) - cleared
@@ -548,10 +557,8 @@ def _narration_message(
     narration send below, which needs the identical {type, text, audio_url}
     shape but can't go through _broadcast (it's addressed to one specific
     just-connected websocket, not every connection in the session).
-    Generation stays synchronous/blocking inline, matching this file's own
-    existing accepted tradeoff (session.graph.invoke below is already called
-    directly, not wrapped in asyncio.to_thread) - no new pattern introduced
-    here. `audio_url` is None (not omitted) whenever TTS_ENABLED is off, the
+    Blocking (TTS generation) - async callers run it with asyncio.to_thread
+    (issue #105). `audio_url` is None (not omitted) whenever TTS_ENABLED is off, the
     text is empty, or generation itself was skipped/failed - the frontend
     simply doesn't play anything for a None."""
     audio_path = generate_narration_audio(text, voice) if config.TTS_ENABLED else None
@@ -610,7 +617,7 @@ def _narration_backfill(session: Session, since_seq: int) -> list[dict[str, Any]
 async def _broadcast_narration(
     session: Session, text: str, msg_type: str = "narration", voice: str = config.NARRATOR_VOICE
 ) -> None:
-    message = _narration_message(text, msg_type, voice)
+    message = await asyncio.to_thread(_narration_message, text, msg_type, voice)
     _record_narration(session, message)
     await _broadcast(session, message)
 
@@ -631,7 +638,7 @@ def _scene_narration_messages(lines: list[str]) -> list[dict[str, object]]:
 
 
 async def _broadcast_scene_narration(session: Session, lines: list[str]) -> None:
-    for message in _scene_narration_messages(lines):
+    for message in await asyncio.to_thread(_scene_narration_messages, lines):
         _record_narration(session, message)
         await _broadcast(session, message)
 
@@ -817,7 +824,9 @@ async def _run_reaction_chain(
                 return
             answer = True
         try:
-            narration = _resume_reaction(session, choice, answer, events_before)
+            narration = await asyncio.to_thread(
+                _resume_reaction, session, choice, answer, events_before
+            )
         except (ShieldChoicePending, ProtectionChoicePending) as nxt:
             choice, answer = nxt.choice, None
             continue
@@ -1011,7 +1020,7 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             "scene_image_url": None,
         }
         try:
-            result = session.graph.invoke(graph_input)
+            result = await asyncio.to_thread(session.graph.invoke, graph_input)
         except BardicChoicePending as exc:
             # Issue #53: an AI-controlled companion (not a human) can hold a
             # banked die too - there's no one to ask during autoplay, so it
@@ -1020,7 +1029,9 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             # unconditionally). Only a real human's own turn (see
             # _handle_client_message) actually pauses to ask.
             try:
-                narration = _resolve_and_narrate_bardic_choice(session, exc.choice, True)
+                narration = await asyncio.to_thread(
+                    _resolve_and_narrate_bardic_choice, session, exc.choice, True
+                )
             except httpx.TransportError as timeout_exc:
                 # Same transient-LLM-call protection as the httpx.TransportError
                 # branch below, and the same "did the turn actually advance"
@@ -1253,7 +1264,9 @@ async def _start_party_choice(session: Session, scene: Scene) -> None:
     response_audio: dict[str, str | None] = {}
     for character in session.party:
         if character.is_companion and not character.is_dead:
-            text = generate_companion_party_choice_response(character, scene.narrative_intro)
+            text = await asyncio.to_thread(
+                generate_companion_party_choice_response, character, scene.narrative_intro
+            )
             responses[character.id] = text
             # Phase 2 of the narration-TTS work: each companion's own
             # reaction is already cleanly attributed to one character id (no
@@ -1262,7 +1275,9 @@ async def _start_party_choice(session: Session, scene: Scene) -> None:
             # Character.voice, falling back to the narrator voice for a
             # companion authored without one.
             audio_path = (
-                generate_narration_audio(text, character.voice or config.NARRATOR_VOICE)
+                await asyncio.to_thread(
+                    generate_narration_audio, text, character.voice or config.NARRATOR_VOICE
+                )
                 if config.TTS_ENABLED
                 else None
             )
@@ -1322,8 +1337,8 @@ async def _resolve_party_choice(session: Session) -> None:
     assert session.party is not None
     session.pending_party_choice = None
 
-    narration = synthesize_party_choice_narration(
-        pending.situation, pending.responses, session.party
+    narration = await asyncio.to_thread(
+        synthesize_party_choice_narration, pending.situation, pending.responses, session.party
     )
     await _broadcast_scene_narration(session, [narration])
 
@@ -1336,15 +1351,23 @@ async def _resolve_party_choice(session: Session) -> None:
             return
         session.adaptive_generations_used += 1
         force_ending = session.adaptive_generations_used >= config.MAX_ADAPTIVE_GENERATIONS
-        new_scenes = generate_continuation(
-            situation=pending.situation,
-            responses=pending.responses,
-            party=session.party,
-            campaign_id=session.campaign.id,
-            generation_index=session.adaptive_generations_used,
-            force_ending=force_ending,
-            srd=session.srd,
-            rng=session.action_rng,
+        campaign_id, party, srd, rng = (
+            session.campaign.id,
+            session.party,
+            session.srd,
+            session.action_rng,
+        )
+        new_scenes = await asyncio.to_thread(
+            lambda: generate_continuation(
+                situation=pending.situation,
+                responses=pending.responses,
+                party=party,
+                campaign_id=campaign_id,
+                generation_index=session.adaptive_generations_used,
+                force_ending=force_ending,
+                srd=srd,
+                rng=rng,
+            )
         )
         session.campaign.scenes.extend(new_scenes)
         next_scene = new_scenes[0]
@@ -1555,7 +1578,9 @@ async def _handle_client_message(
         # by BardicChoicePending), so game_state is already fully caught up
         # by the time this broadcasts - no extra turn-advance logic needed
         # here, same as the ordinary action loop below.
-        narration = _resolve_and_narrate_bardic_choice(session, pending, bool(raw.get("use")))
+        narration = await asyncio.to_thread(
+            _resolve_and_narrate_bardic_choice, session, pending, bool(raw.get("use"))
+        )
         await _broadcast_narration(session, narration)
         await _broadcast(session, _state_update_message(session))
         await _autoplay_non_human_turns(session)
@@ -1634,7 +1659,28 @@ async def _handle_client_message(
             "narration": None,
             "scene_image_url": None,
         }
-        actions_to_resolve = parse_intent_sequence(parse_state)
+        try:
+            actions_to_resolve = await asyncio.to_thread(parse_intent_sequence, parse_state)
+        except httpx.TransportError as exc:
+            # Issue #105: an Ollama timeout/connection failure while reading a
+            # human's free text used to escape the handler and drop the socket
+            # with no close frame. Nothing has happened yet, so tell the player
+            # and let them retry (the same recovery a rejected action gets).
+            logger.info("Intent parse LLM call failed: %s", exc)
+            log_event(
+                kind="backend_error",
+                source="human_intent_parse",
+                exc_type=type(exc).__name__,
+                message=str(exc),
+            )
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "detail": "The game master took too long to answer - please try again.",
+                }
+            )
+            await _send_awaiting_input(session)
+            return
     elif msg_type == "player_move":
         # Live-reported bug fix: this used to send a single-element path
         # straight to the clicked square (the actor's own current position
@@ -1733,7 +1779,7 @@ async def _handle_client_message(
             "scene_image_url": None,
         }
         try:
-            result = session.graph.invoke(graph_input)
+            result = await asyncio.to_thread(session.graph.invoke, graph_input)
         except BardicChoicePending as exc:
             # Issue #53: this single attack roll would miss without the
             # holder's banked Bardic Inspiration die - pause here instead of
@@ -1913,57 +1959,63 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             for actor in reconnected:
                 await _broadcast(session, {"type": "player_reconnected", "actor": actor})
 
-        # The campaign's own scene-setting text (a narrative "hook" before the
-        # fight, etc.) - collected once at session setup and sent by whichever
-        # connection arrives first (generating its audio/image once). It is
-        # recorded in narration_history like every other line, so a connection
-        # arriving later gets it from the backfill above instead.
-        if session.pending_scene_narration:
-            hook_messages = _scene_narration_messages(session.pending_scene_narration)
-            session.pending_scene_narration = []
-            for message in hook_messages:
-                _record_narration(session, message)
-                await websocket.send_json(message)
+        # Issue #105: the resolve-and-send below runs blocking LLM/TTS/image work in
+        # worker threads, so nothing else may touch this session meanwhile.
+        async with session.lock:
+            # The campaign's own scene-setting text (a narrative "hook" before the
+            # fight, etc.) - collected once at session setup and sent by whichever
+            # connection arrives first (generating its audio/image once). It is
+            # recorded in narration_history like every other line, so a connection
+            # arriving later gets it from the backfill above instead.
+            if session.pending_scene_narration:
+                hook_messages = await asyncio.to_thread(
+                    _scene_narration_messages, session.pending_scene_narration
+                )
+                session.pending_scene_narration = []
+                for message in hook_messages:
+                    _record_narration(session, message)
+                    await websocket.send_json(message)
 
-        # Resolve any monster/companion turns that come before the human's
-        # first one (e.g. a monster going first in initiative) before this
-        # connection's own initial state_update, so it opens on a state the
-        # human can actually act on rather than one that's already stale.
-        await _autoplay_non_human_turns(session)
-        # Rare, but possible: companions alone finish the first encounter
-        # before the human ever acts - status is "victory" already on this
-        # connection's first state_update. That's fine: issue #28 made
-        # "victory" a real stop the player leaves via an explicit
-        # continue_campaign message (or rests first), not something this
-        # connect path should silently skip past.
-        await websocket.send_json(_state_update_message(session))
-        await _send_pending_offers(session, websocket)
-        pending_party = session.pending_party_choice
-        if pending_party is not None and not (
-            _living_human_ids(session) - pending_party.responses.keys()
-        ):
-            # A restored snapshot can land exactly between "the last human
-            # answered" and the continuation being generated (the process
-            # stopped in that window) - nobody is left to answer, so nothing
-            # would ever resolve the pause on its own.
-            await _resolve_party_choice(session)
+            # Resolve any monster/companion turns that come before the human's
+            # first one (e.g. a monster going first in initiative) before this
+            # connection's own initial state_update, so it opens on a state the
+            # human can actually act on rather than one that's already stale.
             await _autoplay_non_human_turns(session)
-        # Personal, not the shared _send_awaiting_input (which searches the
-        # whole session for whoever should act next, after an action
-        # resolves): a just-connected client needs to be told about its own
-        # turn status regardless of who else is already in the session, or
-        # it would never hear about it if an earlier connection happens to
-        # control the same actor - which, under Day 11's "one connection
-        # controls everyone" simplification, is every other connection.
-        if session.game_state.status == "in_progress" and session.pending_bardic_choice is None:
-            current_actor = session.game_state.turn_order[session.game_state.current_turn]
-            if current_actor in connection.controlled_character_ids:
-                await websocket.send_json({"type": "awaiting_input", "actor": current_actor})
+            # Rare, but possible: companions alone finish the first encounter
+            # before the human ever acts - status is "victory" already on this
+            # connection's first state_update. That's fine: issue #28 made
+            # "victory" a real stop the player leaves via an explicit
+            # continue_campaign message (or rests first), not something this
+            # connect path should silently skip past.
+            await websocket.send_json(_state_update_message(session))
+            await _send_pending_offers(session, websocket)
+            pending_party = session.pending_party_choice
+            if pending_party is not None and not (
+                _living_human_ids(session) - pending_party.responses.keys()
+            ):
+                # A restored snapshot can land exactly between "the last human
+                # answered" and the continuation being generated (the process
+                # stopped in that window) - nobody is left to answer, so nothing
+                # would ever resolve the pause on its own.
+                await _resolve_party_choice(session)
+                await _autoplay_non_human_turns(session)
+            # Personal, not the shared _send_awaiting_input (which searches the
+            # whole session for whoever should act next, after an action
+            # resolves): a just-connected client needs to be told about its own
+            # turn status regardless of who else is already in the session, or
+            # it would never hear about it if an earlier connection happens to
+            # control the same actor - which, under Day 11's "one connection
+            # controls everyone" simplification, is every other connection.
+            if session.game_state.status == "in_progress" and session.pending_bardic_choice is None:
+                current_actor = session.game_state.turn_order[session.game_state.current_turn]
+                if current_actor in connection.controlled_character_ids:
+                    await websocket.send_json({"type": "awaiting_input", "actor": current_actor})
 
         while True:
             raw = await websocket.receive_json()
             try:
-                await _handle_client_message(session, websocket, connection, raw)
+                async with session.lock:
+                    await _handle_client_message(session, websocket, connection, raw)
             except WebSocketDisconnect:
                 # An ordinary disconnect, not a bug - let the outer
                 # `except WebSocketDisconnect: pass` handle it as always,
