@@ -4295,6 +4295,34 @@ def _handle_expired_conditions(
             caster.concentrating_on = None
 
 
+def _stand_up_if_prone(state: GameState, actor: Character) -> None:
+    """A prone creature stands at the start of its turn for half its speed
+    (SRD; issue #82). Nothing used to remove `prone` at all, so a shoved
+    monster had disadvantage on every attack and granted advantage to every
+    melee attacker for the rest of the fight - one successful shove
+    neutralised an enemy. Done automatically, for monsters and PCs alike,
+    rather than as a verb: nobody wants to spend a prompt on it, and the half-
+    speed cost lands in `movement_used_feet` so the rest of the turn (a
+    monster's approach path, a player's move) already accounts for it. A
+    creature that can't move (speed 0: grappled, exhaustion 5+) stays prone."""
+    if not has_condition(actor, "prone") or actor.hp <= 0 or actor.is_dead:
+        return
+    speed = effective_speed(actor)
+    if speed <= 0:
+        return
+    remove_condition(actor, "prone")
+    actor.movement_used_feet = speed // 2
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="condition_removed",
+            payload={"condition": "prone", "reason": "stood up", "movement_cost": speed // 2},
+        )
+    )
+
+
 def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -> None:
     """A character killed mid-round (e.g. on an earlier actor's turn) must
     not be prompted for its own turn later that same round - skip forward
@@ -4345,6 +4373,7 @@ def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -
             # follow-up attack in the same real turn must still see
             # whatever movement this character already spent this turn.
             next_actor.movement_used_feet = 0
+            _stand_up_if_prone(state, next_actor)
             return
 
 
