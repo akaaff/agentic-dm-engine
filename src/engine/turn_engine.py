@@ -3252,6 +3252,32 @@ def _spell_heal_params(
     )
 
 
+def _revive_if_healed(state: GameState, healer: Character, target: Character) -> None:
+    """Issue #119: healing a creature that dropped to 0 HP ends the unconscious
+    condition and resets its death saves (5e: any healing that restores at
+    least 1 HP). Only the "0 HP" kind - a Sleep-induced unconsciousness
+    (source "sleep") is not undone by healing, and a dead creature stays dead.
+    Every heal path calls this: previously Cure Wounds / Healing Word raised a
+    downed ally's HP but left them unconscious and still rolling death saves."""
+    if target.hp <= 0 or target.is_dead:
+        return
+    if not any(c.name == "unconscious" and c.source == "0 HP" for c in target.conditions):
+        return
+    remove_condition(target, "unconscious")
+    target.death_save_successes = 0
+    target.death_save_failures = 0
+    target.is_stable = False
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=target.id,
+            type="condition_removed",
+            payload={"condition": "unconscious", "reason": "healed", "healer": healer.id},
+        )
+    )
+
+
 def _cast_heal_spell_at_target(
     state: GameState,
     actor: Character,
@@ -3281,6 +3307,7 @@ def _cast_heal_spell_at_target(
             },
         )
     )
+    _revive_if_healed(state, actor, target)
 
 
 _SPECIAL_CAST_SPELLS = {"spare-the-dying", "sleep", "true-strike", "mage-armor", "shield-of-faith"}
