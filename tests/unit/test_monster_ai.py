@@ -407,7 +407,9 @@ def test_a_monster_that_has_spent_its_movement_is_not_treated_as_blocked() -> No
     # No movement left this turn is not the same as "no route exists": the
     # fallback to a downed target is only for a monster that had budget and
     # still found no way. One that already moved keeps its conscious target
-    # (its follow-up attack is simply out of range, as it always was).
+    # rather than turning on the downed one - and, with nothing in reach and no
+    # movement left, simply ends its turn (issue #106) instead of declaring an
+    # attack that is certain to be rejected.
     goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=1))
     downed = _make_character("thorin", is_pc=True, position=Position(x=1, y=1))
     companion = _make_character("grom", is_pc=True, position=Position(x=4, y=1))
@@ -417,4 +419,29 @@ def test_a_monster_that_has_spent_its_movement_is_not_treated_as_blocked() -> No
 
     action = choose_monster_action(state, goblin)
 
-    assert action.target == "grom"
+    assert action.verb == "end_turn"
+    assert action.target is None  # not the downed neighbour, not an attack on grom
+
+
+def test_ends_the_turn_when_the_movement_is_spent_and_nothing_is_in_reach() -> None:
+    # Issue #106: a goblin that already moved its full speed toward a target
+    # 30ft away used to declare an attack that turn_engine rejected as out of
+    # range - three rejections in a row tripped the autoplay breaker and the
+    # turn was narrated as "hesitates, unable to settle on an action".
+    goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=1))
+    thorin = _make_character("thorin", is_pc=True, position=Position(x=7, y=1))
+    goblin.movement_used_feet = goblin.speed
+    state = _make_state([goblin, thorin], battle_map=_open_map(10, 3))
+
+    assert choose_monster_action(state, goblin).verb == "end_turn"
+
+
+def test_still_attacks_a_target_in_reach_after_the_movement_is_spent() -> None:
+    goblin = _make_character("goblin_1", is_pc=False, position=Position(x=0, y=1))
+    thorin = _make_character("thorin", is_pc=True, position=Position(x=1, y=1))
+    goblin.movement_used_feet = goblin.speed
+    state = _make_state([goblin, thorin], battle_map=_open_map(10, 3))
+
+    action = choose_monster_action(state, goblin)
+
+    assert (action.verb, action.target) == ("attack", "thorin")
