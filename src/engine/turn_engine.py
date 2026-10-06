@@ -921,7 +921,16 @@ def _validate_attack_target(actor: Character, target: Character) -> None:
     one place both _resolve_attack and _resolve_cast_spell funnel through,
     closes it regardless of which LLM call picked the bad target - no
     prompt engineering can guarantee zero-shot compliance from a small
-    model, so the deterministic engine enforces the actual game rule."""
+    model, so the deterministic engine enforces the actual game rule.
+
+    Also rejects a creature that is already dead (class playtest, issue
+    #75): attacking or casting at a corpse used to be accepted - a weapon
+    attack silently produced no events and ended the turn, a spell burned
+    its slot for `dmg 0` - and "the nearest goblin" kept resolving to the
+    corpse. The rejection happens before anything is spent, so the actor is
+    simply re-prompted."""
+    if target.is_dead:
+        raise TurnEngineError(f"{target.id} is already dead")
     if target.is_pc == actor.is_pc:
         raise TurnEngineError(f"{actor.id} cannot attack {target.id} - same side")
     charmed_by = next(
@@ -3765,17 +3774,25 @@ def _resolve_cast_spell(
                         f"{actor.id} has no level-{spell_level} spell slots remaining"
                     )
                 actor.spell_slots[spell_level] = remaining - 1
+            try:
+                if normalized == "spare-the-dying":
+                    _resolve_spare_the_dying(state, actor, action, spell, srd)
+                elif normalized == "sleep":
+                    _resolve_sleep_spell(state, actor, action, spell, spell_level, rng, srd)
+                elif normalized == "true-strike":
+                    _resolve_true_strike(state, actor, spell)
+                else:  # mage-armor, shield-of-faith
+                    _resolve_ac_buff_spell(state, actor, action, spell, srd)
+            except TurnEngineError:
+                # These resolvers validate their targets themselves, after the
+                # slot above is spent (issue #75: Sleep naming only a corpse
+                # burned the slot) - a rejected cast must cost nothing, per
+                # resolve_action's "validate before mutating" contract.
+                if spell_level > 0:
+                    actor.spell_slots[spell_level] += 1
+                raise
             if spell.get("concentration"):
                 _begin_concentration(state, actor, spell["name"], srd)
-
-            if normalized == "spare-the-dying":
-                _resolve_spare_the_dying(state, actor, action, spell, srd)
-            elif normalized == "sleep":
-                _resolve_sleep_spell(state, actor, action, spell, spell_level, rng, srd)
-            elif normalized == "true-strike":
-                _resolve_true_strike(state, actor, spell)
-            else:  # mage-armor, shield-of-faith
-                _resolve_ac_buff_spell(state, actor, action, spell, srd)
 
             if is_bonus_action:
                 actor.bonus_action_used = True
