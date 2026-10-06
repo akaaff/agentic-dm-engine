@@ -41,6 +41,7 @@ ConditionName = Literal[
     "warded",
     "mirror_image",
     "protected_from_evil",
+    "shielded",
     "hidden",
     "outlined",
 ]

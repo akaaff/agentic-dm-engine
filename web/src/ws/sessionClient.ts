@@ -135,6 +135,16 @@ export interface BardicInspirationOffer {
   die_sides: number
 }
 
+// Issue #93: mirrors the shield_offer server message - a monster's hit on
+// `target` that Shield (+5 AC) would turn into a miss.
+export interface ShieldOffer {
+  target: string
+  attacker: string
+  attack_total: number
+  target_ac: number
+  shield_ac: number
+}
+
 // Story-adaptive-encounters Phase 2: a party_choice scene's live pause -
 // every companion's own reaction is generated up front (server-side, see
 // api/ws/session.py's _start_party_choice), only the human seats listed in
@@ -232,6 +242,9 @@ type ServerMessage =
   // sendBardicInspirationResponse and the server's own authorization
   // check).
   | ({ type: 'bardic_inspiration_offer' } & BardicInspirationOffer)
+  // Issue #93: the Shield reaction offer - broadcast to everyone, answerable
+  // only by the connection controlling `target`.
+  | ({ type: 'shield_offer' } & ShieldOffer)
   // Story-adaptive-encounters Phase 2: a party_choice scene's live pause -
   // broadcast to everyone so the whole party sees the situation and each
   // other's companions' reactions, but only a connection controlling one
@@ -357,6 +370,7 @@ export function useSessionSocket(sessionId: string) {
   const [sceneImageUrl, setSceneImageUrl] = useState<string | null>(null)
   const [awaitingActor, setAwaitingActor] = useState<string | null>(null)
   const [bardicOffer, setBardicOffer] = useState<BardicInspirationOffer | null>(null)
+  const [shieldOffer, setShieldOffer] = useState<ShieldOffer | null>(null)
   const [partyChoice, setPartyChoice] = useState<PartyChoiceOffer | null>(null)
   const [campaignComplete, setCampaignComplete] = useState(false)
   // Issue #46: character ids whose player is currently disconnected - reset
@@ -411,6 +425,7 @@ export function useSessionSocket(sessionId: string) {
     setLogCaughtUp(true)
     setDisconnectedActors([])
     setBardicOffer(null)
+    setShieldOffer(null)
     setPartyChoice(null)
 
     // Paces the queue by real elapsed time since the last reveal, not by
@@ -535,6 +550,7 @@ export function useSessionSocket(sessionId: string) {
         pendingNarrationAudioRef.current = null
         setAwaitingActor(null)
         setBardicOffer(null)
+        setShieldOffer(null)
         setPartyChoice(null)
         setDisconnectedActors([])
       }
@@ -704,6 +720,9 @@ export function useSessionSocket(sessionId: string) {
           case 'bardic_inspiration_offer':
             setBardicOffer(message)
             break
+          case 'shield_offer':
+            setShieldOffer(message)
+            break
           case 'party_choice_offer':
             setPartyChoice({
               situation: message.situation,
@@ -781,6 +800,14 @@ export function useSessionSocket(sessionId: string) {
     setError(null)
   }
 
+  // Issue #93: answers a shield_offer; cleared optimistically like the Bardic
+  // Inspiration answer above.
+  function sendShieldResponse(cast: boolean) {
+    wsRef.current?.send(JSON.stringify({ type: 'shield_response', cast }))
+    setShieldOffer(null)
+    setError(null)
+  }
+
   // Story-adaptive-encounters Phase 2. No character_id in the payload - the
   // server derives it from whichever human seat this connection controls
   // (see _handle_client_message's own "party_choice_response" handling),
@@ -808,6 +835,7 @@ export function useSessionSocket(sessionId: string) {
     awaitingActor,
     disconnectedActors,
     bardicOffer,
+    shieldOffer,
     partyChoice,
     campaignComplete,
     error,
@@ -818,6 +846,7 @@ export function useSessionSocket(sessionId: string) {
     sendRest,
     sendContinueCampaign,
     sendBardicInspirationResponse,
+    sendShieldResponse,
     sendPartyChoiceResponse,
   }
 }

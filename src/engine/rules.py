@@ -157,6 +157,14 @@ def ability_modifier(score: int) -> int:
     return (score - 10) // 2
 
 
+def shield_spell_bonus(character: Character) -> int:
+    """+5 AC while the Shield reaction (issue #93) is up. Folded into the
+    `temporary_ac_bonus` every AC computation already takes, next to Shield
+    of Faith's flat +2 - one helper so the engine's recompute and the sheet's
+    breakdown can't disagree."""
+    return 5 if has_condition(character, "shielded") else 0
+
+
 def passive_perception(character: Character, srd: SrdIndex) -> int:
     """10 + Wisdom modifier (+ proficiency with Perception) for a PC; a
     monster's own stat-block figure (a monster has no skill list here, its
