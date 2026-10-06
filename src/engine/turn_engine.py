@@ -3110,24 +3110,29 @@ def _cast_save_spell_at_target(
     # "condition" mechanic (Bless/Blur/...), which has no save at all.
     if not success and params.failed_save_condition is not None:
         spec = params.failed_save_condition
-        apply_condition(
-            target,
-            Condition(
-                name=spec.condition,
-                duration_rounds=spec.duration_rounds,
-                source=actor.id,
-                spell=params.source_name,
-            ),
+        affected = spec.only_monster_types is None or (
+            target.monster_index is not None
+            and srd.monsters.get(target.monster_index, {}).get("type") in spec.only_monster_types
         )
-        state.events.append(
-            Event(
-                round=state.round,
-                turn_index=state.current_turn,
-                actor=target.id,
-                type="condition_applied",
-                payload={"condition": spec.condition, "source": params.source_name},
+        for condition_name in (spec.condition, *spec.extra_conditions) if affected else ():
+            apply_condition(
+                target,
+                Condition(
+                    name=condition_name,
+                    duration_rounds=spec.duration_rounds,
+                    source=actor.id,
+                    spell=params.source_name,
+                ),
             )
-        )
+            state.events.append(
+                Event(
+                    round=state.round,
+                    turn_index=state.current_turn,
+                    actor=target.id,
+                    type="condition_applied",
+                    payload={"condition": condition_name, "source": params.source_name},
+                )
+            )
 
     if params.damage_type is None:
         return  # no-damage control spell - nothing further to resolve
