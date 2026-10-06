@@ -5,14 +5,46 @@ read-only, never mutates GameState."""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from src.engine.events import Event
+from src.engine.state import Character
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_english_only, load_prompt
 
 
-def _event_line(event: Event) -> str:
+def character_label(character: Character) -> str:
+    """ "Lark the bard" for a party member (issue #104), the plain name for a
+    monster ("Goblin 1" already says what it is). Used everywhere the narrator
+    prompt names someone, so a model with several similar party members can
+    tell them apart and has each one's class next to the name instead of an
+    opaque id."""
+    if character.is_pc and character.class_:
+        return f"{character.name} the {character.class_.lower()}"
+    return character.name
+
+
+def _label_ids(value: Any, labels: dict[str, str]) -> Any:
+    """Replaces any string equal to a character id, anywhere in an event payload
+    (nested dicts/lists included), with that character's label."""
+    if isinstance(value, str):
+        return labels.get(value, value)
+    if isinstance(value, list):
+        return [_label_ids(v, labels) for v in value]
+    if isinstance(value, dict):
+        return {k: _label_ids(v, labels) for k, v in value.items()}
+    return value
+
+
+def _event_line(event: Event, labels: dict[str, str] | None = None) -> str:
+    """One prompt line per event. With `labels` (id -> display label) every
+    character reference - the actor and any id in the payload - is shown by name
+    and class rather than by id (issue #104: with three similar party members
+    the model mixed up opaque ids and attributed dialogue to bystanders)."""
+    labels = labels or {}
+    actor = labels.get(event.actor, event.actor)
+    payload = _label_ids(event.payload, labels)
     # Live-found: "actor" means the perpetrator for every other
     # damage-causing event (attack_roll/damage_dealt - actor hits target),
     # but hazard_damage inverts that (actor is the one who stepped on the
@@ -25,8 +57,8 @@ def _event_line(event: Event) -> str:
     # format otherwise leaves for the model to guess at.
     if event.type == "hazard_damage":
         return (
-            f"- {event.actor} steps on hazardous terrain and takes "
-            f"{event.payload.get('amount')} {event.payload.get('damage_type')} damage "
+            f"- {actor} steps on hazardous terrain and takes "
+            f"{payload.get('amount')} {payload.get('damage_type')} damage "
             "(environmental/terrain damage - not caused by any other character)"
         )
     # A spell's saving throw is rolled by the *target* against the caster's
@@ -35,7 +67,7 @@ def _event_line(event: Event) -> str:
     # (live: a failed Entangle save narrated as the tendrils failing to
     # ensnare the creature) - issue #96. Spelled out the way hazard_damage is.
     if event.type == "saving_throw" and event.payload.get("kind") == "spell_save":
-        p = event.payload
+        p = payload
         outcome = (
             "RESISTS the spell (passed the save - it has no effect on them)"
             if p.get("success")
@@ -43,9 +75,9 @@ def _event_line(event: Event) -> str:
         )
         return (
             f"- {p.get('target')} makes a {p.get('ability')} saving throw against "
-            f"{event.actor}'s {p.get('spell')} and {outcome}"
+            f"{actor}'s {p.get('spell')} and {outcome}"
         )
-    return f"- actor={event.actor} type={event.type} payload={event.payload}"
+    return f"- actor={actor} type={event.type} payload={payload}"
 
 
 def _fallback_narration(new_events: list[Event], state: GraphState) -> str:
@@ -65,12 +97,70 @@ def _fallback_narration(new_events: list[Event], state: GraphState) -> str:
     return f"{name} acts."
 
 
+def _event_character_ids(events: list[Event], characters: dict[str, Character]) -> set[str]:
+    """Every character an event batch actually involves: each event's actor plus
+    any id appearing anywhere in a payload (a target, a caster, an ally)."""
+    involved: set[str] = set()
+
+    def walk(value: Any) -> None:
+        if isinstance(value, str):
+            if value in characters:
+                involved.add(value)
+        elif isinstance(value, list):
+            for v in value:
+                walk(v)
+        elif isinstance(value, dict):
+            for v in value.values():
+                walk(v)
+
+    for event in events:
+        walk(event.actor)
+        walk(event.payload)
+    return involved
+
+
+def _mentions(narration: str, name: str) -> bool:
+    return re.search(rf"\b{re.escape(name)}\b", narration, re.IGNORECASE) is not None
+
+
+def _misattribution_problem(
+    narration: str, events: list[Event], characters: dict[str, Character]
+) -> str | None:
+    """Issue #104: a light check that the narration is about the right people.
+    With several similar party members the model attributed actions and quoted
+    dialogue to a bystander ("Vex snarls" for a spell Elara cast). Two cheap,
+    deterministic tests, applied to party members only (a monster is rightly
+    narrated as "the goblin"):
+    - a party member who is NOT part of these events is named -> wrong person;
+    - exactly one party member acts in these events and is never named.
+    Returns what is wrong, for the retry prompt, or None."""
+    involved = _event_character_ids(events, characters)
+    for character in characters.values():
+        if (
+            character.is_pc
+            and character.id not in involved
+            and _mentions(narration, character.name)
+        ):
+            return (
+                f"it names {character.name}, who is not part of these events - only the "
+                "characters listed in the events may act or speak"
+            )
+    pc_actors = {e.actor for e in events if e.actor in characters and characters[e.actor].is_pc}
+    if len(pc_actors) == 1:
+        actor = characters[next(iter(pc_actors))]
+        if not any(_mentions(narration, token) for token in actor.name.split() if len(token) > 2):
+            return f"it never names {actor.name}, whose action this is"
+    return None
+
+
 def narrator_node(state: GraphState) -> dict[str, Any]:
     new_events = state["game_state"].events[state["events_before"] :]
     if not new_events:
         return {"narration": ""}
 
-    events_summary = "\n".join(_event_line(e) for e in new_events)
+    characters = state["game_state"].characters
+    labels = {cid: character_label(c) for cid, c in characters.items()}
+    events_summary = "\n".join(_event_line(e, labels) for e in new_events)
     # Issue #33: a live report of the narrator inventing an unrelated
     # monster ("the drow's poison...") mid-fight against a wolves-only
     # encounter. Confirmed this isn't context accumulation across turns -
@@ -86,14 +176,32 @@ def narrator_node(state: GraphState) -> dict[str, Any]:
     # generic instruction alone - not a guaranteed fix for a small model's
     # occasional hallucination, same honest framing as issue #16's CJK
     # mitigation.
-    cast_names = ", ".join(sorted({c.name for c in state["game_state"].characters.values()}))
+    cast_names = ", ".join(sorted({labels[cid] for cid in characters}))
     prompt = load_prompt("narrator").format(events_summary=events_summary, cast_names=cast_names)
     # Retried the same way chat_english_only already retries on a CJK leak
     # (issue #16) - a real independent sample, not a deterministic failure -
-    # before falling back to _fallback_narration's deterministic minimum.
+    # before falling back to _fallback_narration's deterministic minimum. A
+    # draft that fails the attribution check (issue #104) is retried too, with
+    # what was wrong spelled out; if every attempt does, the last non-empty
+    # draft is used rather than dropping the line.
+    last_draft = ""
+    attempt_prompt = prompt
     for _ in range(3):
-        raw = chat_english_only(messages=[{"role": "user", "content": prompt}], temperature=0.7)
+        raw = chat_english_only(
+            messages=[{"role": "user", "content": attempt_prompt}], temperature=0.7
+        )
         narration = raw.strip()
-        if narration:
+        if not narration:
+            continue
+        last_draft = narration
+        problem = _misattribution_problem(narration, new_events, characters)
+        if problem is None:
             return {"narration": narration}
+        attempt_prompt = (
+            f"{prompt}\n\nYour previous draft was rejected because {problem}. "
+            "Write it again, keeping every action and every quoted line with the character "
+            "whose event it is."
+        )
+    if last_draft:
+        return {"narration": last_draft}
     return {"narration": _fallback_narration(new_events, state)}
