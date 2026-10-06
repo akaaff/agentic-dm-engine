@@ -93,6 +93,11 @@ def test_a_failed_save_applies_the_spells_condition(spell: str, conditions: list
     _cast(state, spell, ["goblin_1"], d20=1)  # a natural 1 always fails the save
     goblin = state.characters["goblin_1"]
     for name in conditions:
+        if name == "prone":
+            # The cast ends the caster's turn, and the goblin's own turn then
+            # starts - a prone creature stands up at the start of its turn
+            # (#82), so only the applied event can show it was knocked prone.
+            continue
         assert has_condition(goblin, name), name  # type: ignore[arg-type]
     applied = [e.payload["condition"] for e in state.events if e.type == "condition_applied"]
     assert sorted(applied) == sorted(conditions)
