@@ -74,6 +74,9 @@ def test_cast_cantrip_hits_and_does_not_touch_spell_slots() -> None:
     # 6 -> total 6 (no ability mod added to spell damage). goblin_1 HP 7-6=1.
     state = _build_demo_state(_INITIATIVE)
     _end_turn(state, "thorin")
+    # Out of melee: a ranged spell attack with a hostile within 5ft has
+    # disadvantage (issue #80), which isn't what this test is about.
+    state.characters["elrond"].position = Position(x=0, y=0)
     slots_before = dict(state.characters["elrond"].spell_slots)
 
     action = ParsedAction(
