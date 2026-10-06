@@ -26,6 +26,7 @@ above, just hitting Ollama instead of a locally loaded model.
 
 from __future__ import annotations
 
+import difflib
 from typing import Any
 
 from src import config
@@ -39,6 +40,7 @@ from src.engine.position import (
     rank_label,
 )
 from src.engine.rules import (
+    class_spell_indices,
     effective_speed,
     is_unarmed_phrase,
     normalize_spell_name,
@@ -47,6 +49,7 @@ from src.engine.rules import (
 )
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
+from src.graph.nodes.actor_options import actor_options_summary
 from src.graph.state_schema import GraphState
 from src.llm.providers import chat_structured, chat_structured_best_effort, load_prompt
 from src.training.failed_intents import log_failed_intent
@@ -63,11 +66,21 @@ def _character_summary_line(character: Character, actor: Character, rank: int) -
     )
 
 
-def build_intent_parser_prompt(state: GraphState) -> str:
+def build_intent_parser_prompt(
+    state: GraphState, *, include_actor_options: bool | None = None
+) -> str:
     """Public (Day 25) so src.training.tasks.intent_parser_task can generate
     synthetic training prompts in the *exact* format production sends -
     essential for a Day 26 fine-tuned model to actually behave like the
-    teacher it's distilled from once swapped in (Day 27)."""
+    teacher it's distilled from once swapped in (Day 27).
+
+    `include_actor_options` (issue #98) adds what the actor really has - spells,
+    weapons - so a described effect ("I conjure a flame") maps to a real name
+    instead of a hallucinated one. It defaults to on only for the teacher
+    backend: the distilled student was trained on prompts without the block and
+    the training-data generator passes False, so neither sees a changed format."""
+    if include_actor_options is None:
+        include_actor_options = config.INTENT_PARSER_BACKEND == "teacher"
     game_state = state["game_state"]
     actor = game_state.characters[game_state.turn_order[game_state.current_turn]]
     # Dead creatures are not candidates (issue #75): listed, a corpse still
@@ -83,11 +96,26 @@ def build_intent_parser_prompt(state: GraphState) -> str:
         _character_summary_line(c, actor, rank) for rank, c in enumerate(others, start=1)
     )
 
+    actor_options = ""
+    if include_actor_options:
+        summary = actor_options_summary(actor, load_srd())
+        if summary:
+            actor_options = (
+                "\nWhat the current actor has (use these exact names for item_or_spell - "
+                "a spell described by its effect is the matching spell below, never an "
+                "invented one; a weapon named for an attack is an attack, not a spell. "
+                "This is only a reference: leave item_or_spell unset for an attack where the "
+                "player names no weapon - never fill in the equipped weapon yourself, and "
+                "punches/kicks/fists are not a weapon):\n"
+                f"{summary}"
+            )
+
     return load_prompt("intent_parser").format(
         actor_id=actor.id,
         actor_x=actor.position.x,
         actor_y=actor.position.y,
         actor_speed=effective_speed(actor),
+        actor_options=actor_options,
         characters_summary=characters_summary,
         utterance=state["raw_text"],
     )
@@ -322,6 +350,51 @@ def _strip_invalid_smite(action: ParsedAction, game_state: GameState) -> ParsedA
     return action.model_copy(update={"params": new_params})
 
 
+def _spell_names_for(actor: Character) -> dict[str, str]:
+    """Normalized spell index -> display name for what the actor can cast: their
+    class's cantrips plus known/prepared spells."""
+    srd = load_srd()
+    indices = set(actor.known_spells) | set(actor.prepared_spells)
+    if actor.class_index:
+        indices |= class_spell_indices(actor.class_index, srd, level=0)
+    return {i: str(srd.spells[i]["name"]) for i in indices if i in srd.spells}
+
+
+def _reconcile_cast_name(action: ParsedAction, game_state: GameState) -> ParsedAction:
+    """Issue #98: a `cast_spell` whose name is not a real spell. The model
+    sometimes invents one from a description ("throw a dart" -> spell "dart") or
+    drifts to a near name. Two deterministic repairs, both only when the name is
+    NOT an SRD spell (a real spell the actor can't cast is the engine's call):
+    - it is a weapon the actor has, aimed at an enemy -> that was an attack;
+    - it is close to a spell the actor really has (difflib) -> use that spell.
+    Anything else is left for the engine to reject, now with the actor's spell
+    list in the message."""
+    if action.verb != "cast_spell" or not action.item_or_spell:
+        return action
+    actor = game_state.characters.get(action.actor)
+    if actor is None:
+        return action
+    srd = load_srd()
+    name = normalize_spell_name(action.item_or_spell)
+    if name in srd.spells:
+        return action
+
+    target = game_state.characters.get(action.target) if action.target else None
+    if target is not None and target.is_pc != actor.is_pc:
+        for index in [*actor.equipped_weapons, *actor.inventory]:
+            weapon = srd.equipment.get(index)
+            if weapon is None or not weapon.get("weapon_category"):
+                continue
+            if normalize_spell_name(str(weapon["name"])) == name or index == name:
+                return action.model_copy(update={"verb": "attack", "item_or_spell": index})
+
+    mine = _spell_names_for(actor)
+    close = difflib.get_close_matches(name, list(mine), n=1, cutoff=0.75)
+    if close:
+        return action.model_copy(update={"item_or_spell": mine[close[0]]})
+    return action
+
+
 def _hide_as_cunning_action(action: ParsedAction, game_state: GameState) -> ParsedAction:
     """A Rogue of level 2+ with their bonus action free who says "I hide"
     (issue #84) gets Cunning Action's bonus-action Hide: it costs them
@@ -346,12 +419,27 @@ def _normalize_unarmed_attack(
     words say punch/kick/unarmed/fists and they didn't name a weapon they
     actually hold, make the intent explicit for the engine."""
     # The player's actual words, not the model's paraphrase in action.raw_text.
-    if action.verb != "attack" or not is_unarmed_phrase(utterance or action.raw_text):
+    if not is_unarmed_phrase(utterance or action.raw_text):
         return action
     actor = game_state.characters.get(action.actor)
+    if action.verb == "offhand_attack":
+        # "...and then kick it as a bonus action": with the actor-options block in
+        # the prompt the model sometimes files a Monk's bonus kick under the
+        # two-weapon off-hand attack. A Monk without a second weapon means
+        # Martial Arts' bonus strike.
+        if actor is not None and actor.class_index == "monk" and len(actor.equipped_weapons) < 2:
+            return action.model_copy(update={"verb": "martial_arts_strike", "item_or_spell": None})
+        return action
+    if action.verb != "attack":
+        return action
     if actor is not None and action.item_or_spell:
         named = action.item_or_spell.lower().replace("-", " ")
-        if any(w.replace("-", " ") in named for w in actor.equipped_weapons):
+        said = (utterance or action.raw_text).lower().replace("-", " ")
+        # Only a weapon the PLAYER named counts. Issue #98's actor-options block
+        # lists the equipped weapon in the prompt, and the model then echoes it
+        # into item_or_spell for "I punch the ogre" - being held isn't enough.
+        held = [w.replace("-", " ") for w in actor.equipped_weapons]
+        if any(w in named and w in said for w in held):
             return action  # "kick it with my dagger"-style: a held weapon was named
     return action.model_copy(update={"item_or_spell": "unarmed strike"})
 
@@ -373,6 +461,7 @@ def _postprocess_action(
     action = _promote_stray_item_or_spell(action)
     action = _resolve_move_target(action, game_state)
     action = _hide_as_cunning_action(action, game_state)
+    action = _reconcile_cast_name(action, game_state)
     action = _normalize_unarmed_attack(action, game_state, utterance)
     return _strip_invalid_smite(action, game_state)
 
@@ -510,6 +599,18 @@ def _is_area_hostile_spell(action: ParsedAction) -> bool:
     return spell_mechanic(spell) == "save" or spell.get("index") == "sleep"
 
 
+def _is_condition_buff_spell(action: ParsedAction) -> bool:
+    """A buff that lands as a condition on each target it names (Bless - up to
+    three creatures - Blur, Longstrider...). "Bless me and Buddy" comes back as
+    two consecutive casts of the same spell: the first ends the turn, so the
+    second never resolves (and would cost a second slot). Same merge as the area
+    spells get, without the plural-wording expansion - the player names who."""
+    if action.verb != "cast_spell" or not action.item_or_spell:
+        return False
+    spell = load_srd().spells.get(normalize_spell_name(action.item_or_spell))
+    return spell is not None and spell_mechanic(spell) == "condition"
+
+
 def _expand_area_spell_targets(
     actions: list[ParsedAction], game_state: GameState, actor_id: str, utterance: str
 ) -> list[ParsedAction]:
@@ -531,7 +632,7 @@ def _expand_area_spell_targets(
         previous = merged[-1] if merged else None
         if (
             previous is not None
-            and _is_area_hostile_spell(action)
+            and (_is_area_hostile_spell(action) or _is_condition_buff_spell(action))
             and previous.verb == "cast_spell"
             and normalize_spell_name(previous.item_or_spell or "")
             == normalize_spell_name(action.item_or_spell or "")

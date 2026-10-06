@@ -146,6 +146,7 @@ from src.engine.rules import (
     baned_penalty,
     bardic_inspiration_die_sides,
     blessed_bonus,
+    class_spell_indices,
     condition_attack_advantage,
     condition_attack_disadvantage,
     condition_check_disadvantage,
@@ -4208,6 +4209,17 @@ def _chosen_damage_type(action: ParsedAction, spell: SrdEntry) -> str:
     )
 
 
+def _castable_spells_hint(actor: Character, srd: SrdIndex) -> str:
+    """ " (you can cast: Fire Bolt, Shield, ...)" - the actor's own cantrips plus
+    known/prepared spells, appended to an unknown-spell rejection (issue #98) so
+    the player sees what a misnamed or invented spell could have been."""
+    indices = set(actor.known_spells) | set(actor.prepared_spells)
+    if actor.class_index:
+        indices |= class_spell_indices(actor.class_index, srd, level=0)
+    names = sorted(srd.spells[i]["name"] for i in indices if i in srd.spells)
+    return f" (you can cast: {', '.join(names)})" if names else ""
+
+
 def _resolve_cast_spell(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> bool:
@@ -4221,7 +4233,9 @@ def _resolve_cast_spell(
     normalized = normalize_spell_name(action.item_or_spell)
     spell = srd.spells.get(normalized)
     if spell is None:
-        raise TurnEngineError(f"Unknown spell: {action.item_or_spell!r}")
+        raise TurnEngineError(
+            f"Unknown spell: {action.item_or_spell!r}{_castable_spells_hint(actor, srd)}"
+        )
 
     # "Spells Known" restriction (issue #30) - Bard/Sorcerer may only cast a
     # level-1+ spell they actually know. Cantrips (level 0) stay unrestricted
