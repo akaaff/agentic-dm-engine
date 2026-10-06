@@ -1,0 +1,1282 @@
+[
+ {
+  "class": "bard",
+  "spell": "animal-friendship",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "bard",
+  "spell": "bane",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: condition_applied,saving_throw"
+ },
+ {
+  "class": "bard",
+  "spell": "charm-person",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "bard",
+  "spell": "comprehend-languages",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Comprehend Languages is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-impl"
+ },
+ {
+  "class": "bard",
+  "spell": "cure-wounds",
+  "level": 1,
+  "mechanic": "heal",
+  "status": "castable",
+  "detail": "on goblin_1: hp_change"
+ },
+ {
+  "class": "bard",
+  "spell": "dancing-lights",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Dancing Lights is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ },
+ {
+  "class": "bard",
+  "spell": "detect-magic",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Detect Magic is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "bard",
+  "spell": "disguise-self",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Disguise Self is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented"
+ },
+ {
+  "class": "bard",
+  "spell": "faerie-fire",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "bard",
+  "spell": "feather-fall",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Feather Fall is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "bard",
+  "spell": "healing-word",
+  "level": 1,
+  "mechanic": "heal",
+  "status": "castable",
+  "detail": "on goblin_1: hp_change"
+ },
+ {
+  "class": "bard",
+  "spell": "heroism",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Heroism is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones "
+ },
+ {
+  "class": "bard",
+  "spell": "hideous-laughter",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "bard",
+  "spell": "identify",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Identify is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones"
+ },
+ {
+  "class": "bard",
+  "spell": "illusory-script",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Illusory Script is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implement"
+ },
+ {
+  "class": "bard",
+  "spell": "light",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "bard",
+  "spell": "longstrider",
+  "level": 1,
+  "mechanic": "condition",
+  "status": "castable",
+  "detail": "on buddy: condition_applied,spell_cast"
+ },
+ {
+  "class": "bard",
+  "spell": "mage-hand",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Mage Hand is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented one"
+ },
+ {
+  "class": "bard",
+  "spell": "mending",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Mending is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones "
+ },
+ {
+  "class": "bard",
+  "spell": "message",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Message is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones "
+ },
+ {
+  "class": "bard",
+  "spell": "minor-illusion",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Minor Illusion is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ },
+ {
+  "class": "bard",
+  "spell": "prestidigitation",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Prestidigitation is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemen"
+ },
+ {
+  "class": "bard",
+  "spell": "silent-image",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Silent Image is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "bard",
+  "spell": "sleep",
+  "level": 1,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: condition_applied,spell_cast"
+ },
+ {
+  "class": "bard",
+  "spell": "speak-with-animals",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Speak with Animals is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implem"
+ },
+ {
+  "class": "bard",
+  "spell": "thunderwave",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "bard",
+  "spell": "true-strike",
+  "level": 0,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "bard",
+  "spell": "unseen-servant",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Unseen Servant is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ },
+ {
+  "class": "bard",
+  "spell": "vicious-mockery",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,saving_throw,spell_cast"
+ },
+ {
+  "class": "cleric",
+  "spell": "bane",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: condition_applied,saving_throw"
+ },
+ {
+  "class": "cleric",
+  "spell": "bless",
+  "level": 1,
+  "mechanic": "condition",
+  "status": "castable",
+  "detail": "on buddy: condition_applied,spell_cast"
+ },
+ {
+  "class": "cleric",
+  "spell": "command",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "cleric",
+  "spell": "create-or-destroy-water",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Create or Destroy Water is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-i"
+ },
+ {
+  "class": "cleric",
+  "spell": "cure-wounds",
+  "level": 1,
+  "mechanic": "heal",
+  "status": "castable",
+  "detail": "on goblin_1: hp_change"
+ },
+ {
+  "class": "cleric",
+  "spell": "detect-evil-and-good",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Detect Evil and Good is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-impl"
+ },
+ {
+  "class": "cleric",
+  "spell": "detect-magic",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Detect Magic is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "cleric",
+  "spell": "detect-poison-and-disease",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Detect Poison and Disease is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually"
+ },
+ {
+  "class": "cleric",
+  "spell": "guidance",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Guidance is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones"
+ },
+ {
+  "class": "cleric",
+  "spell": "guiding-bolt",
+  "level": 1,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "cleric",
+  "spell": "healing-word",
+  "level": 1,
+  "mechanic": "heal",
+  "status": "castable",
+  "detail": "on goblin_1: hp_change"
+ },
+ {
+  "class": "cleric",
+  "spell": "inflict-wounds",
+  "level": 1,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "cleric",
+  "spell": "light",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "cleric",
+  "spell": "mending",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Mending is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones "
+ },
+ {
+  "class": "cleric",
+  "spell": "protection-from-evil-and-good",
+  "level": 1,
+  "mechanic": "condition",
+  "status": "castable",
+  "detail": "on buddy: condition_applied,spell_cast"
+ },
+ {
+  "class": "cleric",
+  "spell": "purify-food-and-drink",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Purify Food and Drink is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-imp"
+ },
+ {
+  "class": "cleric",
+  "spell": "resistance",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Resistance is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented on"
+ },
+ {
+  "class": "cleric",
+  "spell": "sacred-flame",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,saving_throw,spell_cast"
+ },
+ {
+  "class": "cleric",
+  "spell": "sanctuary",
+  "level": 1,
+  "mechanic": "condition",
+  "status": "castable",
+  "detail": "on buddy: condition_applied,spell_cast"
+ },
+ {
+  "class": "cleric",
+  "spell": "shield-of-faith",
+  "level": 1,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "cleric",
+  "spell": "spare-the-dying",
+  "level": 0,
+  "mechanic": null,
+  "status": "error",
+  "detail": "cleric is not a valid Spare the Dying target - must be unconscious, not already stable, and not dead"
+ },
+ {
+  "class": "cleric",
+  "spell": "thaumaturgy",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Thaumaturgy is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented o"
+ },
+ {
+  "class": "druid",
+  "spell": "animal-friendship",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "druid",
+  "spell": "charm-person",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "druid",
+  "spell": "create-or-destroy-water",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Create or Destroy Water is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-i"
+ },
+ {
+  "class": "druid",
+  "spell": "cure-wounds",
+  "level": 1,
+  "mechanic": "heal",
+  "status": "castable",
+  "detail": "on goblin_1: hp_change"
+ },
+ {
+  "class": "druid",
+  "spell": "detect-magic",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Detect Magic is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "druid",
+  "spell": "detect-poison-and-disease",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Detect Poison and Disease is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually"
+ },
+ {
+  "class": "druid",
+  "spell": "druidcraft",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Druidcraft is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented on"
+ },
+ {
+  "class": "druid",
+  "spell": "entangle",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "druid",
+  "spell": "faerie-fire",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "druid",
+  "spell": "fog-cloud",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Fog Cloud is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented one"
+ },
+ {
+  "class": "druid",
+  "spell": "goodberry",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Goodberry is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented one"
+ },
+ {
+  "class": "druid",
+  "spell": "guidance",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Guidance is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones"
+ },
+ {
+  "class": "druid",
+  "spell": "healing-word",
+  "level": 1,
+  "mechanic": "heal",
+  "status": "castable",
+  "detail": "on goblin_1: hp_change"
+ },
+ {
+  "class": "druid",
+  "spell": "jump",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Jump is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones (Sl"
+ },
+ {
+  "class": "druid",
+  "spell": "longstrider",
+  "level": 1,
+  "mechanic": "condition",
+  "status": "castable",
+  "detail": "on buddy: condition_applied,spell_cast"
+ },
+ {
+  "class": "druid",
+  "spell": "mending",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Mending is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones "
+ },
+ {
+  "class": "druid",
+  "spell": "poison-spray",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "druid",
+  "spell": "produce-flame",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "druid",
+  "spell": "purify-food-and-drink",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Purify Food and Drink is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-imp"
+ },
+ {
+  "class": "druid",
+  "spell": "resistance",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Resistance is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented on"
+ },
+ {
+  "class": "druid",
+  "spell": "shillelagh",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Shillelagh is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented on"
+ },
+ {
+  "class": "druid",
+  "spell": "speak-with-animals",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Speak with Animals is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implem"
+ },
+ {
+  "class": "druid",
+  "spell": "thunderwave",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "acid-splash",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,saving_throw,spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "burning-hands",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "charm-person",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "chill-touch",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "color-spray",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Color Spray is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented o"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "comprehend-languages",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Comprehend Languages is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-impl"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "dancing-lights",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Dancing Lights is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "detect-magic",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Detect Magic is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "sorcerer",
+  "spell": "disguise-self",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Disguise Self is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "expeditious-retreat",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Expeditious Retreat is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-imple"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "false-life",
+  "level": 1,
+  "mechanic": "heal",
+  "status": "error",
+  "detail": "Unrecognized heal notation for 'False Life': '1d4 + 4'"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "feather-fall",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Feather Fall is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "sorcerer",
+  "spell": "fire-bolt",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "fog-cloud",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Fog Cloud is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented one"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "jump",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Jump is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones (Sl"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "light",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "mage-armor",
+  "level": 1,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "mage-hand",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Mage Hand is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented one"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "magic-missile",
+  "level": 1,
+  "mechanic": "auto_hit",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "mending",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Mending is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones "
+ },
+ {
+  "class": "sorcerer",
+  "spell": "message",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Message is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones "
+ },
+ {
+  "class": "sorcerer",
+  "spell": "minor-illusion",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Minor Illusion is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "poison-spray",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "prestidigitation",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Prestidigitation is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemen"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "ray-of-frost",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "shield",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Shield is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones ("
+ },
+ {
+  "class": "sorcerer",
+  "spell": "shocking-grasp",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "silent-image",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Silent Image is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "sorcerer",
+  "spell": "sleep",
+  "level": 1,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: condition_applied,spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "thunderwave",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "sorcerer",
+  "spell": "true-strike",
+  "level": 0,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "warlock",
+  "spell": "charm-person",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "warlock",
+  "spell": "chill-touch",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "warlock",
+  "spell": "comprehend-languages",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Comprehend Languages is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-impl"
+ },
+ {
+  "class": "warlock",
+  "spell": "eldritch-blast",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "warlock",
+  "spell": "expeditious-retreat",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Expeditious Retreat is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-imple"
+ },
+ {
+  "class": "warlock",
+  "spell": "hellish-rebuke",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "warlock",
+  "spell": "illusory-script",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Illusory Script is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implement"
+ },
+ {
+  "class": "warlock",
+  "spell": "mage-hand",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Mage Hand is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented one"
+ },
+ {
+  "class": "warlock",
+  "spell": "minor-illusion",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Minor Illusion is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ },
+ {
+  "class": "warlock",
+  "spell": "poison-spray",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "warlock",
+  "spell": "prestidigitation",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Prestidigitation is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemen"
+ },
+ {
+  "class": "warlock",
+  "spell": "protection-from-evil-and-good",
+  "level": 1,
+  "mechanic": "condition",
+  "status": "castable",
+  "detail": "on buddy: condition_applied,spell_cast"
+ },
+ {
+  "class": "warlock",
+  "spell": "true-strike",
+  "level": 0,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "warlock",
+  "spell": "unseen-servant",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Unseen Servant is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ },
+ {
+  "class": "wizard",
+  "spell": "acid-splash",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,saving_throw,spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "alarm",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Alarm is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones (S"
+ },
+ {
+  "class": "wizard",
+  "spell": "burning-hands",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "charm-person",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "wizard",
+  "spell": "chill-touch",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "color-spray",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Color Spray is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented o"
+ },
+ {
+  "class": "wizard",
+  "spell": "comprehend-languages",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Comprehend Languages is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-impl"
+ },
+ {
+  "class": "wizard",
+  "spell": "dancing-lights",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Dancing Lights is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ },
+ {
+  "class": "wizard",
+  "spell": "detect-magic",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Detect Magic is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "wizard",
+  "spell": "disguise-self",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Disguise Self is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented"
+ },
+ {
+  "class": "wizard",
+  "spell": "expeditious-retreat",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Expeditious Retreat is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-imple"
+ },
+ {
+  "class": "wizard",
+  "spell": "false-life",
+  "level": 1,
+  "mechanic": "heal",
+  "status": "error",
+  "detail": "Unrecognized heal notation for 'False Life': '1d4 + 4'"
+ },
+ {
+  "class": "wizard",
+  "spell": "feather-fall",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Feather Fall is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "wizard",
+  "spell": "find-familiar",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Find Familiar is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented"
+ },
+ {
+  "class": "wizard",
+  "spell": "fire-bolt",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "floating-disk",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Floating Disk is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented"
+ },
+ {
+  "class": "wizard",
+  "spell": "fog-cloud",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Fog Cloud is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented one"
+ },
+ {
+  "class": "wizard",
+  "spell": "grease",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "wizard",
+  "spell": "hideous-laughter",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "wizard",
+  "spell": "identify",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Identify is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones"
+ },
+ {
+  "class": "wizard",
+  "spell": "illusory-script",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Illusory Script is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implement"
+ },
+ {
+  "class": "wizard",
+  "spell": "jump",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Jump is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones (Sl"
+ },
+ {
+  "class": "wizard",
+  "spell": "light",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: saving_throw"
+ },
+ {
+  "class": "wizard",
+  "spell": "longstrider",
+  "level": 1,
+  "mechanic": "condition",
+  "status": "castable",
+  "detail": "on buddy: condition_applied,spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "mage-armor",
+  "level": 1,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "mage-hand",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Mage Hand is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented one"
+ },
+ {
+  "class": "wizard",
+  "spell": "magic-missile",
+  "level": 1,
+  "mechanic": "auto_hit",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "mending",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Mending is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones "
+ },
+ {
+  "class": "wizard",
+  "spell": "message",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Message is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones "
+ },
+ {
+  "class": "wizard",
+  "spell": "minor-illusion",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Minor Illusion is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ },
+ {
+  "class": "wizard",
+  "spell": "poison-spray",
+  "level": 0,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "prestidigitation",
+  "level": 0,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Prestidigitation is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemen"
+ },
+ {
+  "class": "wizard",
+  "spell": "protection-from-evil-and-good",
+  "level": 1,
+  "mechanic": "condition",
+  "status": "castable",
+  "detail": "on buddy: condition_applied,spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "ray-of-frost",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "shield",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Shield is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented ones ("
+ },
+ {
+  "class": "wizard",
+  "spell": "shocking-grasp",
+  "level": 0,
+  "mechanic": "attack",
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "silent-image",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Silent Image is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemented "
+ },
+ {
+  "class": "wizard",
+  "spell": "sleep",
+  "level": 1,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: condition_applied,spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "thunderwave",
+  "level": 1,
+  "mechanic": "save",
+  "status": "castable",
+  "detail": "on goblin_1: damage_dealt,death,saving_throw,spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "true-strike",
+  "level": 0,
+  "mechanic": null,
+  "status": "castable",
+  "detail": "on goblin_1: spell_cast"
+ },
+ {
+  "class": "wizard",
+  "spell": "unseen-servant",
+  "level": 1,
+  "mechanic": null,
+  "status": "UNSUPPORTED",
+  "detail": "Unseen Servant is not supported - cast_spell resolves attack-roll, save-based, heal, auto-hit, and condition spells, plus a small set of individually-implemente"
+ }
+]
