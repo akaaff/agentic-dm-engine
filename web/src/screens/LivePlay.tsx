@@ -28,6 +28,7 @@ export default function LivePlay({
     disconnectedActors,
     bardicOffer,
     shieldOffer,
+    protectionOffer,
     partyChoice,
     campaignComplete,
     error,
@@ -39,6 +40,7 @@ export default function LivePlay({
     sendContinueCampaign,
     sendBardicInspirationResponse,
     sendShieldResponse,
+    sendProtectionResponse,
     sendPartyChoiceResponse,
   } = useSessionSocket(sessionId)
   const [draft, setDraft] = useState('')
@@ -278,6 +280,32 @@ export default function LivePlay({
           <p className="companion-meta">
             {characters?.[bardicOffer.holder]?.name ?? bardicOffer.holder} is deciding whether to
             spend their Bardic Inspiration...
+          </p>
+        )}
+        {protectionOffer && mine.has(protectionOffer.protector) && (
+          // Issue #92: the Protection fighting style - asked before the attack
+          // is rolled; same shape as the Shield prompt below.
+          <div className="bardic-inspiration-offer">
+            <p>
+              {characters?.[protectionOffer.attacker]?.name ?? protectionOffer.attacker} is about
+              to attack {characters?.[protectionOffer.target]?.name ?? protectionOffer.target}, who
+              is next to you. Use your reaction to give the attack disadvantage?
+            </p>
+            <div className="bardic-inspiration-offer-buttons">
+              <button type="button" onClick={() => sendProtectionResponse(true)}>
+                Protect them
+              </button>
+              <button type="button" onClick={() => sendProtectionResponse(false)}>
+                Let it come
+              </button>
+            </div>
+          </div>
+        )}
+        {protectionOffer && !mine.has(protectionOffer.protector) && (
+          <p className="companion-meta">
+            {characters?.[protectionOffer.protector]?.name ?? protectionOffer.protector} is
+            deciding whether to protect{' '}
+            {characters?.[protectionOffer.target]?.name ?? protectionOffer.target}...
           </p>
         )}
         {shieldOffer && mine.has(shieldOffer.target) && (

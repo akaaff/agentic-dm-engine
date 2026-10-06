@@ -389,6 +389,59 @@ def can_cast_shield(character: Character) -> bool:
     )
 
 
+@dataclass
+class PendingProtectionChoice:
+    """Issue #92 (Protection fighting style): a monster's single attack on a
+    character who has a Protection fighter, wielding a shield, within 5ft -
+    paused BEFORE the attack is rolled, since the reaction imposes
+    disadvantage on the roll itself. Nothing about the attack has been
+    recorded or applied, so (like PendingShieldChoice) it is in memory only
+    and a restart just replays it."""
+
+    attacker_id: str
+    target_id: str
+    protector_id: str
+    params: AttackParams
+
+
+class ProtectionChoicePending(Exception):  # noqa: N818 - a control-flow signal, not an error
+    """Raised instead of rolling an attack a Protection fighter could make
+    disadvantageous - caught in api/ws/session.py (a human is asked; a
+    companion reacts automatically) and resumed through
+    resolve_pending_protection_choice."""
+
+    def __init__(self, choice: PendingProtectionChoice) -> None:
+        super().__init__("Protection choice pending")
+        self.choice = choice
+
+
+def eligible_protector(
+    state: GameState, attacker: Character, target: Character
+) -> Character | None:
+    """Protection: "when a creature you can see attacks a target other than
+    you that is within 5 feet of you, you can use your reaction to impose
+    disadvantage on the attack roll. You must be wielding a shield." The first
+    ally of the target who has the style, a shield, an unspent reaction, isn't
+    down or incapacitated and stands within 5ft of the target. ("Can see" isn't
+    modeled - there is no line of sight.)"""
+    if attacker.is_pc == target.is_pc:
+        return None
+    for candidate in state.characters.values():
+        if (
+            candidate.id not in (attacker.id, target.id)
+            and candidate.is_pc == target.is_pc
+            and candidate.fighting_style == "protection"
+            and candidate.equipped_shield is not None
+            and candidate.hp > 0
+            and not candidate.is_dead
+            and not candidate.reaction_used_this_round
+            and not any(has_condition(candidate, n) for n in _SHIELD_BLOCKING_CONDITIONS)
+            and distance_feet(candidate.position, target.position) <= 5
+        ):
+            return candidate
+    return None
+
+
 def parse_dice_notation(notation: str) -> tuple[int, int, int]:
     """ "1d6+2" -> (count=1, sides=6, bonus=2). Bonus defaults to 0."""
     match = _DICE_NOTATION_RE.fullmatch(notation.replace(" ", ""))
@@ -1092,6 +1145,7 @@ def _resolve_single_attack(
     srd: SrdIndex,
     defer_bardic_choice: bool = False,
     defer_shield_choice: bool = False,
+    protection: bool | None = None,
 ) -> None:
     """One full attack roll (range check through hit/damage/downing) against
     `target` - the body every single `attack` action resolves, and what a
@@ -1128,6 +1182,21 @@ def _resolve_single_attack(
     if distance > max_range:
         raise _out_of_range_error(actor, target, distance, params.source_name, max_range)
     long_range_disadvantage = range_long_feet is not None and distance > range_normal_feet
+    # Protection (issue #92): a fighter beside the target may impose
+    # disadvantage - asked before anything is rolled or changed. `protection`
+    # is None until decided; resolve_pending_protection_choice re-enters here
+    # with the answer.
+    if defer_shield_choice and protection is None:
+        protector = eligible_protector(state, actor, target)
+        if protector is not None:
+            raise ProtectionChoicePending(
+                PendingProtectionChoice(
+                    attacker_id=actor.id,
+                    target_id=target.id,
+                    protector_id=protector.id,
+                    params=params,
+                )
+            )
     # Sanctuary (issue #61): after the range check (a rejected attack changes
     # nothing), before any roll - the attacker's own ward ends, then the
     # target's ward makes them save or lose the attack.
@@ -1208,6 +1277,7 @@ def _resolve_single_attack(
         or engaged_disadvantage
         or condition_attack_disadvantage(actor, target, distance)
         or protected_from_evil_disadvantage(actor, target, srd)
+        or protection is True
     )
 
     # Mirror Image (issue #61): may redirect this attack to a duplicate,
@@ -1612,6 +1682,50 @@ def resolve_pending_shield_choice(
         None,
         rng,
         srd,
+    )
+    attacker.action_used_this_turn = True
+    _check_victory_defeat(state)
+    if state.status == "in_progress":
+        _advance_turn_skipping_dead(state, srd)
+
+
+def resolve_pending_protection_choice(
+    state: GameState,
+    choice: PendingProtectionChoice,
+    use: bool,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """Issue #92: finishes an attack that paused for a Protection decision.
+    Using it spends the protector's reaction and re-enters the attack with
+    disadvantage; declining re-enters it unchanged. Either way the attack is
+    then rolled for real - and may itself pause for the target's Shield
+    (ShieldChoicePending propagates; whoever answers that runs the turn-advance
+    tail). Otherwise replicates the victory-check/turn-advance tail of
+    resolve_action, which the original attempt never reached."""
+    attacker = state.characters[choice.attacker_id]
+    target = state.characters[choice.target_id]
+    protector = state.characters[choice.protector_id]
+    if use:
+        protector.reaction_used_this_round = True
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=protector.id,
+                type="protection",
+                payload={"target": target.id, "attacker": attacker.id},
+            )
+        )
+    _resolve_single_attack(
+        state,
+        attacker,
+        target,
+        choice.params,
+        rng,
+        srd,
+        defer_shield_choice=True,
+        protection=use,
     )
     attacker.action_used_this_turn = True
     _check_victory_defeat(state)

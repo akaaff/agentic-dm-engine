@@ -40,6 +40,11 @@ const FIGHTING_STYLES: { value: string; label: string; hint: string }[] = [
     hint: 'Reroll 1s and 2s on the damage dice of a two-handed melee weapon (or a versatile one wielded in two hands).',
   },
   {
+    value: 'protection',
+    label: 'Protection',
+    hint: 'While wielding a shield, use your reaction to impose disadvantage on an attack against an ally within 5 feet of you.',
+  },
+  {
     value: 'two-weapon-fighting',
     label: 'Two-Weapon Fighting',
     hint: 'Add your ability modifier to the damage of your off-hand attack.',
