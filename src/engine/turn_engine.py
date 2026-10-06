@@ -3640,6 +3640,9 @@ class HealSpellParams:
     dice_sides: int
     ability_mod: int
     source_name: str
+    bonus: int = 0
+    """Disciple of Life (issue #88): +2 + the spell's level for a cleric's healing
+    spells; 0 for everyone else."""
 
 
 def _spell_heal_params(
@@ -3665,6 +3668,7 @@ def _spell_heal_params(
         dice_sides=int(match.group(2)),
         ability_mod=ability_mod,
         source_name=spell["name"],
+        bonus=(2 + spell_level) if actor.class_index == "cleric" else 0,
     )
 
 
@@ -3705,7 +3709,12 @@ def _cast_heal_spell_at_target(
     14's use_item healing potion is the existing precedent for this
     clamp-at-max_hp shape)."""
     healed = min(
-        roll(params.dice_count, params.dice_sides, modifier=params.ability_mod, rng=rng).total,
+        roll(
+            params.dice_count,
+            params.dice_sides,
+            modifier=params.ability_mod + params.bonus,
+            rng=rng,
+        ).total,
         target.max_hp - target.hp,
     )
     target.hp += healed
@@ -3720,6 +3729,7 @@ def _cast_heal_spell_at_target(
                 "source": params.source_name,
                 "target": target.id,
                 "hp_remaining": target.hp,
+                **({"disciple_of_life": params.bonus} if params.bonus else {}),
             },
         )
     )

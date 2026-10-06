@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from src.api.db.models import CharacterRecord
 from src.api.db.session import get_db
 from src.engine.character_creation import (
+    ALWAYS_PREPARED_SPELLS,
     PREPARED_CASTER_CLASSES,
     SPELLS_KNOWN_BY_LEVEL,
     CharacterCreationError,
@@ -104,6 +105,10 @@ class ClassDetail(ClassSummary):
     cls["starting_equipment"] entries character_creation.create_character's
     inventory-building loop reads, exposed so the wizard can show what a
     player is actually getting before they submit, not just after."""
+    always_prepared_spells: list[str] = []
+    """Issue #88: spell indices the class always has prepared on top of its picks
+    (the Life Domain's Bless and Cure Wounds for a cleric) - the wizard shows them as
+    fixed and leaves them out of the picker's count."""
     spells_known: int = 0
     """Issue #30: this class's level-1 SPELLS_KNOWN_BY_LEVEL count - >0 only
     for a "Spells Known" caster (Bard/Sorcerer). 0 for every other class,
@@ -342,6 +347,7 @@ def get_class(class_index: str) -> ClassDetail:
         equipment_options=class_equipment_options(cls, srd),
         cantrips=sorted(cantrips, key=lambda s: s.name),
         starting_equipment=_starting_equipment_items(cls.get("starting_equipment", [])),
+        always_prepared_spells=list(ALWAYS_PREPARED_SPELLS.get(class_index, [])),
         spells_known=spells_known,
         known_spells_pool=sorted(known_spells_pool, key=lambda s: s.name),
         spellcasting_ability=spellcasting_ability,

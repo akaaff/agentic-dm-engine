@@ -131,7 +131,7 @@ def test_heal_spell_restores_the_expected_hp() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-medicine", "skill-religion"],
-        chosen_prepared_spells=["cure-wounds", "bless", "healing-word", "shield-of-faith"],
+        chosen_prepared_spells=["healing-word", "shield-of-faith", "guiding-bolt", "sanctuary"],
     )
     encounter = build_demo_encounter()
     state = build_encounter_state(encounter, [mira], _FixedRandom([20, 5, 5]))  # type: ignore[arg-type]
@@ -166,7 +166,7 @@ def test_heal_spell_is_capped_at_max_hp() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-medicine", "skill-religion"],
-        chosen_prepared_spells=["cure-wounds", "bless", "healing-word", "shield-of-faith"],
+        chosen_prepared_spells=["healing-word", "shield-of-faith", "guiding-bolt", "sanctuary"],
     )
     encounter = build_demo_encounter()
     state = build_encounter_state(encounter, [mira], _FixedRandom([20, 5, 5]))  # type: ignore[arg-type]

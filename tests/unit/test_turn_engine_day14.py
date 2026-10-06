@@ -130,7 +130,7 @@ def test_cast_leveled_spell_consumes_a_slot_and_can_kill() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-medicine", "skill-religion"],
-        chosen_prepared_spells=["guiding-bolt", "cure-wounds", "bless", "healing-word"],
+        chosen_prepared_spells=["guiding-bolt", "healing-word", "shield-of-faith", "sanctuary"],
     )
     encounter = build_demo_encounter()
     state = build_encounter_state(encounter, [mira], _FixedRandom([20, 5, 5]))  # type: ignore[arg-type]
@@ -159,7 +159,7 @@ def test_cast_spell_with_no_slots_remaining_errors_clearly() -> None:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-medicine", "skill-religion"],
-        chosen_prepared_spells=["guiding-bolt", "cure-wounds", "bless", "healing-word"],
+        chosen_prepared_spells=["guiding-bolt", "healing-word", "shield-of-faith", "sanctuary"],
     )
     encounter = build_demo_encounter()
     state = build_encounter_state(encounter, [mira], _FixedRandom([20, 5, 5]))  # type: ignore[arg-type]

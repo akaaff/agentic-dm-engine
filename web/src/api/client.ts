@@ -91,6 +91,9 @@ export interface ClassDetail extends ClassSummary {
   // at spells_known.
   spells_known: number
   known_spells_pool: SpellSummary[]
+  // Issue #88: spell indices always prepared on top of the picks (a cleric's Life
+  // Domain Bless and Cure Wounds) - left out of the picker and its count.
+  always_prepared_spells: string[]
   // Issue #30's follow-up phase: set only for a Prepared caster (Cleric/
   // Druid/Wizard/Paladin) - the wizard's picker offers the same
   // known_spells_pool, but the required count depends on the player's own

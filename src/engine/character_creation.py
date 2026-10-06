@@ -243,6 +243,14 @@ prepared_spell_count correctly returns 0 for a level-1 Paladin, so
 create_character's validation below naturally requires nothing from one."""
 
 
+ALWAYS_PREPARED_SPELLS: dict[str, list[str]] = {"cleric": ["bless", "cure-wounds"]}
+"""Issue #88: the Life Domain (the SRD's only cleric domain, so every SRD cleric has
+it) always has Bless and Cure Wounds prepared - they don't count against the
+number of spells a cleric prepares (prepared_spell_count), and are added on top
+of whatever the player picks. Naming one among the picks is tolerated and
+ignored, so existing choices keep working."""
+
+
 def prepared_spell_count(class_index: str, level: int, ability_mod: int) -> int:
     """Real SRD 5.1 Prepared-caster formula: spellcasting-ability modifier +
     caster level, minimum 1. Paladin's caster level is character level // 2
@@ -416,7 +424,10 @@ def create_character(
                     f"(exactly {required_prepared_count} level-1 spells)"
                 )
             _validate_prepared_spell_choices(
-                class_index, required_prepared_count, chosen_prepared_spells, srd
+                class_index,
+                required_prepared_count,
+                _picks_beyond_domain(class_index, chosen_prepared_spells),
+                srd,
             )
         elif chosen_prepared_spells:
             raise CharacterCreationError(f"{class_index} has no spells to prepare yet at level 1")
@@ -611,7 +622,14 @@ def create_character(
         gender=gender,
         voice=voice,
         known_spells=list(chosen_spells) if chosen_spells is not None else [],
-        prepared_spells=list(chosen_prepared_spells) if chosen_prepared_spells is not None else [],
+        prepared_spells=[
+            *ALWAYS_PREPARED_SPELLS.get(class_index, []),
+            *(
+                _picks_beyond_domain(class_index, chosen_prepared_spells)
+                if chosen_prepared_spells is not None
+                else []
+            ),
+        ],
     )
 
 
@@ -675,6 +693,13 @@ def _validate_spell_choices(class_index: str, chosen_spells: list[str], srd: Srd
     for spell in chosen_spells:
         if spell not in allowed:
             raise CharacterCreationError(f"{spell} is not a valid level-1 spell for {class_index}")
+
+
+def _picks_beyond_domain(class_index: str, chosen: list[str]) -> list[str]:
+    """The prepared-spell picks that count against the limit: everything chosen
+    except the always-prepared domain spells (ALWAYS_PREPARED_SPELLS)."""
+    domain = ALWAYS_PREPARED_SPELLS.get(class_index, [])
+    return [s for s in chosen if s not in domain]
 
 
 def _validate_prepared_spell_choices(
