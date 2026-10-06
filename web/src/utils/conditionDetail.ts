@@ -33,6 +33,7 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
   stunned: "Incapacitated, can't move, speaks only falteringly, auto-fails STR/DEX saves. Attacks against it have advantage.",
   unconscious:
     'Incapacitated, unaware of surroundings, drops what it’s holding and falls prone. Attacks against it have advantage and auto-crit within 5ft.',
+  shielded: 'AC +5 from the Shield reaction, until the round ends.',
   blessed: "A d4 bonus die added to this creature's attack rolls and saving throws, until the spell ends.",
   baned:
     "A d4 is subtracted from every attack roll and saving throw it makes (death saves excepted), until the spell ends.",
@@ -67,6 +68,7 @@ const CONDITION_DISPLAY_NAMES: Record<string, string> = {
   warded: 'Sanctuary',
   mirror_image: 'Mirror Image',
   protected_from_evil: 'Protection from Evil and Good',
+  shielded: 'Shield',
 }
 
 // A spell's ongoing effect, as opposed to one of the SRD's 15 real
@@ -85,6 +87,7 @@ const SPELL_EFFECT_CONDITIONS = new Set([
   'warded',
   'mirror_image',
   'protected_from_evil',
+  'shielded',
 ])
 
 export function conditionDisplayName(name: string): string {

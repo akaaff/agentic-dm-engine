@@ -27,6 +27,7 @@ export default function LivePlay({
     awaitingActor,
     disconnectedActors,
     bardicOffer,
+    shieldOffer,
     partyChoice,
     campaignComplete,
     error,
@@ -37,6 +38,7 @@ export default function LivePlay({
     sendRest,
     sendContinueCampaign,
     sendBardicInspirationResponse,
+    sendShieldResponse,
     sendPartyChoiceResponse,
   } = useSessionSocket(sessionId)
   const [draft, setDraft] = useState('')
@@ -276,6 +278,33 @@ export default function LivePlay({
           <p className="companion-meta">
             {characters?.[bardicOffer.holder]?.name ?? bardicOffer.holder} is deciding whether to
             spend their Bardic Inspiration...
+          </p>
+        )}
+        {shieldOffer && mine.has(shieldOffer.target) && (
+          // Issue #93: the Shield reaction - same shape as the Bardic
+          // Inspiration prompt above (everyone sees the pause, only the
+          // targeted character's connection can answer).
+          <div className="bardic-inspiration-offer">
+            <p>
+              {characters?.[shieldOffer.attacker]?.name ?? shieldOffer.attacker} hit{' '}
+              {characters?.[shieldOffer.target]?.name ?? shieldOffer.target} (total{' '}
+              {shieldOffer.attack_total} vs AC {shieldOffer.target_ac}). Cast Shield as a reaction
+              (AC {shieldOffer.shield_ac} until the round ends) to turn it into a miss?
+            </p>
+            <div className="bardic-inspiration-offer-buttons">
+              <button type="button" onClick={() => sendShieldResponse(true)}>
+                Cast Shield
+              </button>
+              <button type="button" onClick={() => sendShieldResponse(false)}>
+                Take the hit
+              </button>
+            </div>
+          </div>
+        )}
+        {shieldOffer && !mine.has(shieldOffer.target) && (
+          <p className="companion-meta">
+            {characters?.[shieldOffer.target]?.name ?? shieldOffer.target} is deciding whether to
+            cast Shield...
           </p>
         )}
         {resourceQuickActions.length > 0 && (

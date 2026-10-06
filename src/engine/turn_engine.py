@@ -176,6 +176,7 @@ from src.engine.rules import (
     resolve_saving_throw,
     resolve_skill_check,
     saving_throw_bonus,
+    shield_spell_bonus,
     skill_ability,
     spell_damage_notation,
     spell_damage_resistance,
@@ -317,6 +318,71 @@ class BardicChoicePending(Exception):  # noqa: N818 - a control-flow signal, not
     def __init__(self, choice: PendingBardicChoice) -> None:
         super().__init__("Bardic Inspiration choice pending")
         self.choice = choice
+
+
+@dataclass
+class PendingShieldChoice:
+    """Issue #93: a monster's single attack roll that HIT a character who could
+    cast Shield (a reaction: +5 AC until their next turn) and would miss at AC
+    +5 - captured the instant it's rolled, before anything about it is
+    recorded or any damage is applied. In memory only (never snapshotted): a
+    restart before the answer simply replays the monster's whole attack,
+    since nothing was mutated yet."""
+
+    attacker_id: str
+    target_id: str
+    params: AttackParams
+    result: AttackResult
+    advantage: bool
+    already_unconscious: bool
+
+
+class ShieldChoicePending(Exception):  # noqa: N818 - a control-flow signal, not an error
+    """Raised instead of finalizing a hit that Shield could turn into a miss -
+    the Shield counterpart of BardicChoicePending, caught in api/ws/session.py
+    (a human is asked; a companion auto-casts) and resumed through
+    resolve_pending_shield_choice."""
+
+    def __init__(self, choice: PendingShieldChoice) -> None:
+        super().__init__("Shield choice pending")
+        self.choice = choice
+
+
+_SHIELD_BLOCKING_CONDITIONS: tuple[ConditionName, ...] = (
+    "unconscious",
+    "incapacitated",
+    "paralyzed",
+    "petrified",
+    "stunned",
+)
+
+
+def _shield_slot_level(character: Character) -> int | None:
+    """Lowest spell slot level (1+) with a slot left, or None."""
+    return next(
+        (
+            lvl
+            for lvl in sorted(character.spell_slots)
+            if lvl >= 1 and character.spell_slots[lvl] > 0
+        ),
+        None,
+    )
+
+
+def can_cast_shield(character: Character) -> bool:
+    """Whether `character` could cast Shield as a reaction right now: a PC who
+    has it (prepared or known), a slot to spend, an unspent reaction, and who
+    isn't down or incapacitated or already shielded."""
+    return (
+        character.is_pc
+        and character.hp > 0
+        and not character.is_dead
+        and not character.reaction_used_this_round
+        and not any(has_condition(character, name) for name in _SHIELD_BLOCKING_CONDITIONS)
+        and not has_condition(character, "shielded")
+        and "shield" in {*character.known_spells, *character.prepared_spells}
+        and _shield_slot_level(character) is not None
+    )
 
 
 def parse_dice_notation(notation: str) -> tuple[int, int, int]:
@@ -966,6 +1032,7 @@ def _resolve_single_attack(
     rng: random.Random,
     srd: SrdIndex,
     defer_bardic_choice: bool = False,
+    defer_shield_choice: bool = False,
 ) -> None:
     """One full attack roll (range check through hit/damage/downing) against
     `target` - the body every single `attack` action resolves, and what a
@@ -1155,6 +1222,25 @@ def _resolve_single_attack(
     )
     if bardic_die_sides:
         actor.bardic_inspiration_die = None
+    # Shield (issue #93): a hit that +5 AC would turn into a miss. A natural 20
+    # always hits, so a critical is never offered.
+    if (
+        defer_shield_choice
+        and result.hit
+        and not result.critical
+        and result.attack_roll.total < target.ac + 5
+        and can_cast_shield(target)
+    ):
+        raise ShieldChoicePending(
+            PendingShieldChoice(
+                attacker_id=actor.id,
+                target_id=target.id,
+                params=params,
+                result=result,
+                advantage=advantage,
+                already_unconscious=already_unconscious,
+            )
+        )
     _finalize_attack_result(
         state,
         actor,
@@ -1404,6 +1490,67 @@ def resolve_pending_bardic_choice(
         _advance_turn_skipping_dead(state, srd)
 
 
+def resolve_pending_shield_choice(
+    state: GameState,
+    choice: PendingShieldChoice,
+    cast: bool,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """Issue #93: finishes an attack that paused for the target's Shield
+    decision. Casting spends the lowest slot and the reaction, applies the
+    +5 AC condition (until the round turns over - the closest this engine's
+    round-ticked conditions get to "until your next turn") and records the
+    attack as the miss it now is; declining records the hit exactly as it was
+    rolled. Replicates the victory-check/turn-advance tail of resolve_action,
+    which the original attempt never reached."""
+    attacker = state.characters[choice.attacker_id]
+    target = state.characters[choice.target_id]
+    result = choice.result
+    if cast:
+        level = _shield_slot_level(target)
+        if level is None:
+            raise TurnEngineError(f"{target.id} has no spell slot left for Shield")
+        target.spell_slots[level] -= 1
+        target.reaction_used_this_round = True
+        apply_condition(
+            target, Condition(name="shielded", duration_rounds=1, source=target.id, spell="Shield")
+        )
+        _recompute_ac(target, srd)
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=target.id,
+                type="spell_cast",
+                payload={"spell": "Shield", "reaction": True, "spell_level": level},
+            )
+        )
+        result = AttackResult(
+            attack_roll=result.attack_roll,
+            hit=False,
+            critical=False,
+            damage=None,
+            damage_type=None,
+        )
+    _finalize_attack_result(
+        state,
+        attacker,
+        target,
+        choice.params,
+        result,
+        choice.advantage,
+        choice.already_unconscious,
+        None,
+        rng,
+        srd,
+    )
+    attacker.action_used_this_turn = True
+    _check_victory_defeat(state)
+    if state.status == "in_progress":
+        _advance_turn_skipping_dead(state, srd)
+
+
 def _apply_unconscious_hit_death_save_failures(state: GameState, target: Character) -> None:
     """The other half of the Phase 9C unconscious-hit rule (see
     _resolve_attack's force_critical call) - 2 automatic death-save failures,
@@ -1486,7 +1633,7 @@ def _resolve_attack(
             _resolve_multiattack(state, actor, target, monster_action, rng, srd)
             return
         params = _monster_attack_params(actor, action.item_or_spell, srd)
-        _resolve_single_attack(state, actor, target, params, rng, srd)
+        _resolve_single_attack(state, actor, target, params, rng, srd, defer_shield_choice=True)
         return
 
     params = _pc_attack_params(
@@ -2501,7 +2648,7 @@ def _recompute_ac(actor: Character, srd: SrdIndex) -> None:
         wis_mod=ability_modifier(actor.stats["WIS"]),
         con_mod=ability_modifier(actor.stats["CON"]),
         mage_armor_active=actor.mage_armor_active,
-        temporary_ac_bonus=actor.temporary_ac_bonus,
+        temporary_ac_bonus=actor.temporary_ac_bonus + shield_spell_bonus(actor),
         ac_floor=ac_floor_for(actor),
     )
 
@@ -3782,6 +3929,10 @@ def _resolve_cast_spell(
                 return False
             return True
 
+        if normalized == "shield":
+            raise TurnEngineError(
+                "Shield is a reaction - it's offered automatically when an attack would hit you"
+            )
         raise TurnEngineError(
             f"{spell['name']} is not supported - cast_spell resolves attack-roll, save-based, "
             "heal, auto-hit, and condition spells, plus a small set of individually-"
@@ -4237,7 +4388,7 @@ def _handle_expired_conditions(
     after Bless fades)."""
     if srd is not None:
         for character, condition in expired:
-            if condition.name == "barkskin":
+            if condition.name in ("barkskin", "shielded"):
                 _recompute_ac(character, srd)
     for source, spell in {(c.source, c.spell) for _, c in expired if c.source and c.spell}:
         caster = state.characters.get(source)
