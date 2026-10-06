@@ -27,6 +27,7 @@ above, just hitting Ollama instead of a locally loaded model.
 from __future__ import annotations
 
 import difflib
+import re
 from typing import Any
 
 from src import config
@@ -46,6 +47,7 @@ from src.engine.rules import (
     normalize_spell_name,
     spell_mechanic,
     spell_range_feet,
+    weapon_range_feet,
 )
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
@@ -350,6 +352,83 @@ def _strip_invalid_smite(action: ParsedAction, game_state: GameState) -> ParsedA
     return action.model_copy(update={"params": new_params})
 
 
+_SELF_WORDS = re.compile(r"(?:myself|\bon me\b|\bself\b)", re.IGNORECASE)
+
+
+def _default_self_target(
+    action: ParsedAction, game_state: GameState, utterance: str | None
+) -> ParsedAction:
+    """Issue #99: "I cast cure wounds on myself" sometimes comes back with no
+    target at all, and is then rejected for it. The player said who: themselves.
+    Only when the words say so (myself / on me / self) - a spell with no named
+    target and no such words is left for the engine to reject."""
+    if (
+        action.verb != "cast_spell"
+        or action.target
+        or action.targets
+        or not action.item_or_spell
+        or not _SELF_WORDS.search(utterance or action.raw_text)
+        or action.actor not in game_state.characters
+    ):
+        return action
+    return action.model_copy(update={"target": action.actor})
+
+
+_CHARGE_PHRASES = re.compile(
+    r"(?:\b(?:charge|charges|charging|rush|rushes|rushing|advance|advances|sprint|sprints)"
+    r"\b|\brun(?:s|ning)? (?:up|at|to|toward|towards)\b|\bclos(?:e|ing) in\b"
+    r"|\bclose the distance\b)",
+    re.IGNORECASE,
+)
+
+
+def _insert_charge_move(
+    actions: list[ParsedAction], game_state: GameState, actor_id: str, utterance: str
+) -> list[ParsedAction]:
+    """Issue #107: "I rage and charge the nearest goblin, then chop it with my
+    greataxe" came back as [rage, attack] with no move, so the attack was
+    rejected as out of reach - and a human's explicit attack deliberately isn't
+    turned into a move by the engine. When the player's own words say charge /
+    rush / run up / close in, the sequence has a melee attack on a target that is
+    out of reach, and nothing moves before it, the approach is inserted (the same
+    approach_path a companion's out-of-range redirect uses)."""
+    if not _CHARGE_PHRASES.search(utterance):
+        return actions
+    actor = game_state.characters.get(actor_id)
+    if actor is None:
+        return actions
+    first_attack = None
+    for i, action in enumerate(actions):
+        if action.verb in ("move", "dash"):
+            return actions  # the player's sequence already closes the distance
+        if action.verb == "attack":
+            first_attack = i
+            break
+    if first_attack is None:
+        return actions
+    attack = actions[first_attack]
+    target = game_state.characters.get(attack.target) if attack.target else None
+    if target is None or target.is_pc == actor.is_pc:
+        return actions
+    srd = load_srd()
+    named = (attack.item_or_spell or "").lower().replace("-", " ")
+    weapon_index = next(
+        (w for w in actor.equipped_weapons if w.replace("-", " ") in named),
+        actor.equipped_weapons[0] if actor.equipped_weapons else None,
+    )
+    reach, long_range = (5, None)
+    if weapon_index is not None and weapon_index in srd.equipment:
+        reach, long_range = weapon_range_feet(srd.equipment[weapon_index])
+    if long_range is not None:
+        return actions  # a ranged weapon doesn't need to close in
+    if distance_feet(actor.position, target.position) <= reach:
+        return actions
+    move = build_move_toward_target(game_state, actor, target, "move")
+    if move is None or not move.params.get("path"):
+        return actions
+    return [*actions[:first_attack], move, *actions[first_attack:]]
+
+
 def _spell_names_for(actor: Character) -> dict[str, str]:
     """Normalized spell index -> display name for what the actor can cast: their
     class's cantrips plus known/prepared spells."""
@@ -461,6 +540,7 @@ def _postprocess_action(
     action = _promote_stray_item_or_spell(action)
     action = _resolve_move_target(action, game_state)
     action = _hide_as_cunning_action(action, game_state)
+    action = _default_self_target(action, game_state, utterance)
     action = _reconcile_cast_name(action, game_state)
     action = _normalize_unarmed_attack(action, game_state, utterance)
     return _strip_invalid_smite(action, game_state)
@@ -780,6 +860,7 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
         _postprocess_action(a, expected_actor_id, game_state, state["raw_text"])
         for a in sequence.actions
     ]
+    actions = _insert_charge_move(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _split_dual_wield_attacks(actions, game_state, expected_actor_id)
     actions = _expand_area_spell_targets(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _bonus_actions_first(actions)
