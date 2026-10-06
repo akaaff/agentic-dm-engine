@@ -87,6 +87,15 @@ def apply_short_rest(party: list[Character], rng: random.Random) -> None:
             if resource in max_resources:
                 character.class_resources[resource] = max_resources[resource]
 
+        # Pact Magic (issue #90, Warlock): every spell slot comes back on a
+        # *short* rest - the warlock has one or two slots and the whole class
+        # is built around that. (The slot row is the same Pact Magic shape
+        # SPELL_SLOTS_BY_LEVEL already models for level-ups and long rests.)
+        if character.class_index == "warlock":
+            character.spell_slots = dict(
+                SPELL_SLOTS_BY_LEVEL.get("warlock", {}).get(character.level, {})
+            )
+
         # Arcane Recovery (issue #25, Wizard): once/day, recover spell
         # slots with a combined level up to arcane_recovery_slot_budget
         # (level). SRD lets the player choose which slots; this engine has
