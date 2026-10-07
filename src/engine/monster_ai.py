@@ -360,7 +360,9 @@ def _action_against(
 
 def choose_monster_action(game_state: GameState, actor: Character) -> ParsedAction:
     living_targets = [
-        c for c in game_state.characters.values() if c.is_pc and not c.is_dead and c.id != actor.id
+        c
+        for c in game_state.characters.values()
+        if c.is_pc != actor.is_pc and not c.is_dead and c.id != actor.id
     ]
     if not living_targets:
         return ParsedAction(

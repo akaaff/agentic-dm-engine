@@ -161,6 +161,7 @@ from src.engine.rules import (
     has_relentless_endurance,
     is_class_proficient_with,
     is_monk_weapon,
+    is_party_member,
     is_unarmed_phrase,
     magic_missile_dart_count,
     max_wild_shape_cr,
@@ -205,6 +206,7 @@ from src.engine.state import (
     GameState,
     WildShapeSnapshot,
 )
+from src.engine.summons import dismiss_summons
 from src.engine.turn_order import next_turn
 
 _DICE_NOTATION_RE = re.compile(r"(\d+)d(\d+)([+-]\d+)?")
@@ -800,7 +802,7 @@ def current_attack_summaries(actor: Character, srd: SrdIndex) -> list[AttackSumm
     nothing meaningful to preview here (their stat-block attack bonus is
     already a single precomputed number, not something that varies by
     equipment choice), so this is a no-op for anyone but a PC."""
-    if not actor.is_pc:
+    if not is_party_member(actor):
         return []
     summaries = [_attack_summary_from_params(_pc_attack_params(actor, None, srd))]
     if len(actor.equipped_weapons) == 2:
@@ -2269,6 +2271,7 @@ def _end_concentration(state: GameState, caster: Character, srd: SrdIndex) -> No
     if spell_name is None:
         return
     caster.concentrating_on = None
+    dismiss_summons(state, caster.id, spell_name)
     for character in state.characters.values():
         ended = [c for c in character.conditions if c.source == caster.id and c.spell == spell_name]
         if not ended:
@@ -2511,7 +2514,7 @@ def _apply_damage_and_handle_downing(
     if target.hp > 0 or target.is_dead:
         return
 
-    if not target.is_pc:
+    if not is_party_member(target):  # monsters and summoned creatures die outright
         target.is_dead = True
         state.events.append(
             Event(
@@ -5273,7 +5276,7 @@ def _check_victory_defeat(state: GameState) -> None:
     # for defeat purposes. Monsters have no death-save subsystem and are
     # marked is_dead immediately at 0 HP, so this is equivalent to the old
     # hp>0 check for them.
-    party_alive = any(not c.is_dead for c in state.characters.values() if c.is_pc)
+    party_alive = any(not c.is_dead for c in state.characters.values() if is_party_member(c))
     monsters_alive = any(not c.is_dead for c in state.characters.values() if not c.is_pc)
     if not monsters_alive:
         state.status = "victory"

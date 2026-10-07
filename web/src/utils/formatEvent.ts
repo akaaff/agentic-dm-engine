@@ -159,6 +159,15 @@ export function formatEvent(
           : `${actorName}'s Divine Sense finds nothing within 60 ft`,
       }
     }
+    case 'summoned': {
+      // A summoning spell added a creature to the fight (issue #56).
+      const name = typeof p.name === 'string' ? p.name : characterName(String(p.summoned), characters)
+      return { key: event.id, color, label: `${actorName} conjures ${name}` }
+    }
+    case 'summon_ended': {
+      const name = typeof p.name === 'string' ? p.name : String(p.summoned)
+      return { key: event.id, color, label: `${name} vanishes as ${actorName}'s spell ends` }
+    }
     case 'temp_hp': {
       // Temporary hit points (issue #94): gained from a spell/feature, or soaked up
       // by damage (a negative change).

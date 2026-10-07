@@ -46,6 +46,8 @@ EventType = Literal[
     "readied_attack",
     "divine_sense",
     "temp_hp",
+    "summoned",
+    "summon_ended",
 ]
 
 

@@ -149,6 +149,12 @@ class Character(BaseModel):
     is_companion: bool = False
     persona: str | None = None
     """Only set for simulated (companion/NPC) agents."""
+    summoned_by: str | None = None
+    """The id of the creature that conjured this one (issue #56) - set only on a creature
+    added mid-fight by a summoning spell (see engine/summons.py). It keeps the creature
+    from being treated as a party member even though `is_pc` marks its side."""
+    summon_spell: str | None = None
+    """The spell that conjured it, so ending that spell's concentration can find it."""
     monster_index: str | None = None
     """Set only for monsters (see encounter.monster_to_character) - lets the
     turn engine re-look-up the SRD stat block's actions (attack bonus,

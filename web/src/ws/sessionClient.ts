@@ -23,6 +23,8 @@ export interface LiveCharacter {
   name: string
   is_pc: boolean
   is_companion: boolean
+  /** Set on a creature a summoning spell added mid-fight (issue #56). */
+  summoned_by?: string | null
   hp: number
   max_hp: number
   temp_hp?: number
