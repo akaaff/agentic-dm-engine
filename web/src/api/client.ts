@@ -78,9 +78,18 @@ export interface StartingEquipmentItem {
   quantity: number
 }
 
+export interface ClassFeature {
+  name: string
+  desc: string
+  note: string | null
+}
+
 export interface ClassDetail extends ClassSummary {
   skill_choose: number
   skill_options: string[]
+  // Issue #103: the class's level-1 SRD features; `note` says when this game only
+  // partly models one or treats it as flavor.
+  features: ClassFeature[]
   equipment_options: string[]
   cantrips: SpellSummary[]
   // The class's fixed starting kit (issue #32) - separate from

@@ -20,6 +20,7 @@ from src.engine.character_creation import (
     class_skill_choice_pool,
     create_character,
 )
+from src.engine.class_features import level_1_features
 from src.engine.position import Position
 from src.engine.rules import class_equipment_options, class_spell_indices, spell_damage_notation
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
@@ -83,6 +84,15 @@ class StartingEquipmentItem(BaseModel):
     quantity: int
 
 
+class ClassFeatureSummary(BaseModel):
+    """One level-1 class feature (issue #103) - `note` says what this game does with it
+    when it is not fully modeled (a flavor-only feature, a missing half)."""
+
+    name: str
+    desc: str
+    note: str | None = None
+
+
 class ClassDetail(ClassSummary):
     skill_choose: int
     skill_options: list[str]
@@ -109,6 +119,9 @@ class ClassDetail(ClassSummary):
     """Issue #88: spell indices the class always has prepared on top of its picks
     (the Life Domain's Bless and Cure Wounds for a cleric) - the wizard shows them as
     fixed and leaves them out of the picker's count."""
+    features: list[ClassFeatureSummary] = []
+    """The class's level-1 SRD features (issue #103), for the creator preview and the
+    character sheet."""
     spells_known: int = 0
     """Issue #30: this class's level-1 SPELLS_KNOWN_BY_LEVEL count - >0 only
     for a "Spells Known" caster (Bard/Sorcerer). 0 for every other class,
@@ -349,6 +362,10 @@ def get_class(class_index: str) -> ClassDetail:
         cantrips=sorted(cantrips, key=lambda s: s.name),
         starting_equipment=_starting_equipment_items(cls.get("starting_equipment", [])),
         always_prepared_spells=list(ALWAYS_PREPARED_SPELLS.get(class_index, [])),
+        features=[
+            ClassFeatureSummary(name=f.name, desc=f.desc, note=f.note)
+            for f in level_1_features(class_index)
+        ],
         spells_known=spells_known,
         known_spells_pool=sorted(known_spells_pool, key=lambda s: s.name),
         spellcasting_ability=spellcasting_ability,

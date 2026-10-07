@@ -129,6 +129,20 @@ export default function CharacterPreviewSheet({
         </tbody>
       </table>
 
+      {classDetail && classDetail.features.length > 0 && (
+        <div>
+          <strong>Class features:</strong>
+          <ul className="detail-action-list">
+            {classDetail.features.map((f) => (
+              <li key={f.name}>
+                {f.name}
+                <InfoTip text={f.note ? `${f.desc} (${f.note})` : f.desc} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {fightingStyle && (
         <p>
           <strong>Fighting Style:</strong> {fightingStyle[0].toUpperCase() + fightingStyle.slice(1)}
