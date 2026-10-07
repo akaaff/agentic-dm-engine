@@ -42,6 +42,7 @@ from src.engine.position import (
 )
 from src.engine.rules import (
     class_spell_indices,
+    condition_spell_spec,
     effective_speed,
     is_unarmed_phrase,
     normalize_skill_name,
@@ -375,6 +376,31 @@ def _default_self_target(
     return action.model_copy(update={"target": action.actor})
 
 
+def _drop_stray_target_on_self_spell(
+    action: ParsedAction, game_state: GameState, utterance: str | None
+) -> ParsedAction:
+    """A Self-range buff (Expeditious Retreat, Blur...) can only be cast on its caster - and
+    Guidance/Resistance default to the caster - but the
+    model sometimes names whoever is listed in the scene as its target - found live: 'I cast
+    expeditious retreat' came back aimed at the fighter and was rejected. If the player's own
+    words don't mention that character, the target was invented, so the spell is aimed at its
+    caster. Naming someone in the words is left alone - that is a real rules error to report."""
+    if action.verb != "cast_spell" or not action.item_or_spell or not action.target:
+        return action
+    spell = load_srd().spells.get(normalize_spell_name(action.item_or_spell))
+    if spell is None or spell_mechanic(spell) != "condition":
+        return action
+    if spell.get("range") != "Self" and not condition_spell_spec(spell).default_to_self:
+        return action
+    target = game_state.characters.get(action.target)
+    if target is None or target.id == action.actor:
+        return action
+    words = (utterance or action.raw_text).lower()
+    if target.id.lower() in words or target.name.lower() in words:
+        return action
+    return action.model_copy(update={"target": action.actor})
+
+
 _CHARGE_PHRASES = re.compile(
     r"(?:\b(?:charge|charges|charging|rush|rushes|rushing|advance|advances|sprint|sprints)"
     r"\b|\brun(?:s|ning)? (?:up|at|to|toward|towards)\b|\bclos(?:e|ing) in\b"
@@ -682,6 +708,7 @@ def _postprocess_action(
     action = _hide_as_cunning_action(action, game_state)
     action = _default_attack_target(action, game_state)
     action = _default_self_target(action, game_state, utterance)
+    action = _drop_stray_target_on_self_spell(action, game_state, utterance)
     action = _reconcile_cast_name(action, game_state)
     action = _normalize_unarmed_attack(action, game_state, utterance)
     return _strip_invalid_smite(action, game_state)

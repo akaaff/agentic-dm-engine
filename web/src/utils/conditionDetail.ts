@@ -60,6 +60,9 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
   protected_from_evil:
     'Aberrations, celestials, elementals, fey, fiends, and undead have disadvantage on attack rolls against it.',
   outlined: 'Outlined in shimmering light: attack rolls against it have advantage.',
+  guidance: 'Adds a d4 to its next ability check, then the spell ends.',
+  spell_resistance: 'Adds a d4 to its next saving throw, then the spell ends.',
+  expeditious_retreat: 'Can Dash as a bonus action on each of its turns, until the spell ends.',
   beacon_of_hope:
     'Advantage on Wisdom saving throws and death saving throws, and it regains the maximum from any healing, until the spell ends.',
 }
@@ -69,6 +72,9 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
 // something to show a player.
 const CONDITION_DISPLAY_NAMES: Record<string, string> = {
   baned: 'Bane',
+  guidance: 'Guidance',
+  spell_resistance: 'Resistance',
+  expeditious_retreat: 'Expeditious Retreat',
   heroic: 'Heroism',
   beacon_of_hope: 'Beacon of Hope',
   blurred: 'Blur',
@@ -92,6 +98,9 @@ const CONDITION_DISPLAY_NAMES: Record<string, string> = {
 // conditions - reads as "affected by X" rather than "now X" in the log.
 const SPELL_EFFECT_CONDITIONS = new Set([
   'baned',
+  'guidance',
+  'spell_resistance',
+  'expeditious_retreat',
   'heroic',
   'beacon_of_hope',
   'blurred',
