@@ -1800,6 +1800,61 @@ def _resolve_multiattack(
             _resolve_single_attack(state, actor, target, params, rng, srd)
 
 
+def _auto_equip_for_attack(
+    state: GameState, actor: Character, weapon_name: str | None, srd: SrdIndex
+) -> None:
+    """Issue #83: attacking with a weapon the actor carries but hasn't equipped
+    ("I shoot the ogre with my shortbow", "I throw a javelin") was rejected with
+    "use 'equip' first". In 5e drawing or stowing one weapon is a free object
+    interaction folded into the attack - nobody types a separate equip. So an
+    attack that names an OWNED weapon outside the equipped set equips it first,
+    through the same _resolve_equip (one equip per turn, a legal hand
+    combination). The new weapon joins the current set when the hands allow it
+    (a second light weapon, or a one-hander beside a shield) and otherwise
+    replaces it. Anything not owned is left alone, for _pc_attack_params to
+    reject exactly as before."""
+    if not weapon_name or is_unarmed_phrase(weapon_name):
+        return
+    equipped = [item for idx in actor.equipped_weapons if (item := srd.equipment.get(idx))]
+    named = srd.equipment.get(weapon_name)
+    if (named is not None and named["index"] in actor.equipped_weapons) or (
+        _match_weapon_by_name(weapon_name, equipped) is not None
+    ):
+        return  # already in hand
+    owned = [
+        item
+        for idx in dict.fromkeys(actor.inventory)
+        if (item := srd.equipment.get(idx)) and item.get("weapon_category")
+    ]
+    wanted = (
+        named
+        if named is not None and named["index"] in {o["index"] for o in owned}
+        else _match_weapon_by_name(weapon_name, owned)
+    )
+    if wanted is None:
+        return  # not something they own - the ordinary rejection applies
+    shield = actor.equipped_shield is not None
+    combined = [*actor.equipped_weapons, wanted["index"]]
+    items = (
+        combined
+        if weapon_combo_is_legal(combined, srd.equipment, shield_equipped=shield)
+        else [wanted["index"]]
+    )
+    try:
+        _resolve_equip(
+            state,
+            actor,
+            ParsedAction(
+                actor=actor.id, verb="equip", params={"items": items}, raw_text="(draws a weapon)"
+            ),
+            srd,
+        )
+    except TurnEngineError as exc:
+        raise TurnEngineError(
+            f"{wanted['name']} isn't in hand and {exc} - equip it first, then attack next turn"
+        ) from exc
+
+
 def _resolve_attack(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> None:
@@ -1819,6 +1874,7 @@ def _resolve_attack(
         _resolve_single_attack(state, actor, target, params, rng, srd, defer_shield_choice=True)
         return
 
+    _auto_equip_for_attack(state, actor, action.item_or_spell, srd)
     params = _pc_attack_params(
         actor, action.item_or_spell, srd, smite_slot_level=action.params.get("smite_slot_level")
     )

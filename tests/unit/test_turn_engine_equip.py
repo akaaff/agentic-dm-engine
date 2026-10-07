@@ -184,7 +184,9 @@ def test_equip_changes_what_attack_resolves_against() -> None:
     assert attack_event.payload["source"] == "Dagger"
 
 
-def test_attack_rejected_with_a_weapon_no_longer_equipped() -> None:
+def test_attack_with_an_owned_weapon_not_in_hand_is_rejected_once_the_equip_is_spent() -> None:
+    # Issue #83: naming an owned, unequipped weapon equips it as part of the
+    # attack - but only if this turn's one free equip is still available.
     thorin = _fighter()
     thorin.inventory.append("dagger")
     goblin = _goblin("goblin_1", Position(x=0, y=0))
@@ -195,7 +197,8 @@ def test_attack_rejected_with_a_weapon_no_longer_equipped() -> None:
     )
     resolve_action(state, equip_action, _FixedRandom([]))  # type: ignore[arg-type]
 
-    # ...but the longsword, no longer equipped (even though still owned), is rejected.
+    # ...but the longsword, no longer equipped (owned), can't be drawn too: the
+    # turn's single free object interaction is already spent on the dagger.
     attack_with_longsword = ParsedAction(
         actor="thorin",
         verb="attack",
@@ -203,7 +206,7 @@ def test_attack_rejected_with_a_weapon_no_longer_equipped() -> None:
         item_or_spell="longsword",
         raw_text="I swing my longsword",
     )
-    with pytest.raises(TurnEngineError, match="isn't in thorin's equipped weapon set"):
+    with pytest.raises(TurnEngineError, match="already equipped something this turn"):
         resolve_action(state, attack_with_longsword, _FixedRandom([]))  # type: ignore[arg-type]
 
 
