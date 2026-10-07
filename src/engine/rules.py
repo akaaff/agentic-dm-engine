@@ -1408,6 +1408,14 @@ def condition_save_disadvantage(character: Character) -> bool:
     return character.exhaustion_level >= 3
 
 
+def is_party_member(character: Character) -> bool:
+    """A real member of the player's side: a PC or companion, not a creature a spell
+    conjured for it (issue #56). `is_pc` alone means "which side"; a summoned creature
+    shares its summoner's side but has no death saves, is driven by monster_ai rather
+    than a player, and doesn't keep the party alive."""
+    return character.is_pc and character.summoned_by is None
+
+
 def condition_save_advantage(character: Character, ability: str) -> bool:
     """Beacon of Hope (issue #62): advantage on Wisdom saving throws (and on death
     saves - see turn_engine._resolve_death_save)."""

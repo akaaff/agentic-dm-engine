@@ -30,6 +30,7 @@ from src.engine.companions import build_companion, load_companion_spec
 from src.engine.encounter import Encounter, MonsterSpawn, build_encounter_state, load_encounter
 from src.engine.monster_ai import choose_monster_action
 from src.engine.position import BattleMap, Position
+from src.engine.rules import is_party_member
 from src.engine.srd_loader import load_srd
 from src.engine.state import Character, GameState
 from src.engine.turn_engine import TurnEngineError, resolve_action
@@ -272,8 +273,8 @@ def _autoplay_combat_encounter(
                 verb="end_turn",
                 raw_text="(forced end_turn after repeated invalid actions)",
             )
-        elif not actor.is_pc:
-            # Monsters never reach player_agent/intent_parser at all - the
+        elif not is_party_member(actor):
+            # Monsters (and summoned creatures) never reach player_agent/intent_parser at all - the
             # heuristic action is pre-supplied, the same bypass every
             # scripted test since Day 7 relies on.
             parsed_action = choose_monster_action(state, actor)

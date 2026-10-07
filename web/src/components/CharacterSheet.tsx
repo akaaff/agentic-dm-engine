@@ -6,6 +6,7 @@ export default function CharacterSheet({
   isCurrentTurn,
   isYou,
   color,
+  summonerName,
 }: {
   character: LiveCharacter
   isCurrentTurn: boolean
@@ -15,6 +16,8 @@ export default function CharacterSheet({
    * classes (still-blue ally, still-red enemy border, just no longer two
    * hardcoded colors baked into index.css). */
   color: string
+  /** Who conjured this creature, if it is a summon (issue #56). */
+  summonerName?: string
 }) {
   const hpPct = character.max_hp > 0 ? Math.max(0, (character.hp / character.max_hp) * 100) : 0
   // current-turn's purple highlight (an existing, more urgent "it's your
@@ -32,6 +35,7 @@ export default function CharacterSheet({
           {character.name}
           {isYou && ' (you)'}
         </strong>
+        {summonerName && <span style={{ fontSize: "0.75rem", opacity: 0.7, marginLeft: "0.4rem" }}>summoned by {summonerName}</span>}
         {isCurrentTurn && <span className="turn-badge">acting now</span>}
       </div>
       <div className="character-sheet-meta">

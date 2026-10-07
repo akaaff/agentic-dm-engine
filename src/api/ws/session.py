@@ -52,6 +52,7 @@ from src.engine.rules import (
     ac_floor_for,
     armor_ac_breakdown,
     effective_speed,
+    is_party_member,
     shield_spell_bonus,
 )
 from src.engine.srd_loader import SrdIndex, load_srd
@@ -674,7 +675,7 @@ def _combat_summaries(session: Session) -> dict[str, object]:
         return {}
     summaries: dict[str, object] = {}
     for character in session.game_state.characters.values():
-        if not character.is_pc:
+        if not is_party_member(character):
             continue
         dex_mod = ability_modifier(character.stats["DEX"])
         wis_mod = ability_modifier(character.stats["WIS"])
@@ -1003,7 +1004,7 @@ async def _autoplay_non_human_turns(session: Session) -> None:
                 raw_text="(forced end_turn after repeated invalid actions)",
             )
             forced_end_turn = True
-        elif not actor.is_pc:
+        elif not is_party_member(actor):
             parsed_action = choose_monster_action(session.game_state, actor)
         else:
             parsed_action = None

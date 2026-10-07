@@ -421,6 +421,9 @@ export default function LivePlay({
                 isCurrentTurn={gameState.turn_order[gameState.current_turn] === id}
                 isYou={mine.has(id)}
                 color={actorColors[id]}
+                summonerName={
+                  character.summoned_by ? gameState.characters[character.summoned_by]?.name : undefined
+                }
               />
             )
           })}
