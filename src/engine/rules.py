@@ -670,6 +670,11 @@ not a general singularization rule - safer than guessing at a pattern that
 might silently mismatch a class added later."""
 
 
+_CLASS_EXTRA_PROFICIENCIES: dict[str, set[str]] = {"cleric": {"heavy-armor"}}
+"""Issue #88: proficiencies the SRD gives through a class feature (here the Life
+Domain's heavy armor) rather than the class's own `proficiencies` list."""
+
+
 def class_equipment_options(cls: SrdEntry, srd: SrdIndex) -> list[str]:
     """Weapon/armor equipment indices this class is actually SRD-proficient
     with - e.g. a Wizard is proficient with exactly 5 specific weapons (not
@@ -685,6 +690,8 @@ def class_equipment_options(cls: SrdEntry, srd: SrdIndex) -> list[str]:
     *equipped* weapon/armor actually grants its proficiency bonus / avoids
     the non-proficiency penalty during play."""
     prof_indices = {p["index"] for p in cls.get("proficiencies", [])}
+    # Life Domain (issue #88): clerics also wear heavy armor.
+    prof_indices |= _CLASS_EXTRA_PROFICIENCIES.get(cls.get("index", ""), set())
     aliased_weapons = {_WEAPON_PROFICIENCY_ALIASES.get(p, p) for p in prof_indices}
 
     options: list[str] = []

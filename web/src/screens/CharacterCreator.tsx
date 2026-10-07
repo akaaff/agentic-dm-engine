@@ -780,7 +780,18 @@ export default function CharacterCreator({
                   {requiredPreparedCount === 1 ? '' : 's'} to prepare (
                   {chosenPreparedSpells.length}/{requiredPreparedCount} selected)
                 </legend>
-                {classDetail.known_spells_pool.map((spell) => (
+                {classDetail.always_prepared_spells.length > 0 && (
+                  <p className="companion-meta">
+                    Always prepared (Life Domain, not counted):{' '}
+                    {classDetail.known_spells_pool
+                      .filter((s) => classDetail.always_prepared_spells.includes(s.index))
+                      .map((s) => s.name)
+                      .join(', ')}
+                  </p>
+                )}
+                {classDetail.known_spells_pool
+                  .filter((spell) => !classDetail.always_prepared_spells.includes(spell.index))
+                  .map((spell) => (
                   <label key={spell.index} className="checkbox-row">
                     <input
                       type="checkbox"

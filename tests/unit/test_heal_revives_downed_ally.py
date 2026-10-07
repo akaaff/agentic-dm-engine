@@ -29,7 +29,7 @@ def _cleric() -> Character:
         background_index="acolyte",
         base_ability_scores={"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         chosen_skills=["skill-insight", "skill-medicine"],
-        chosen_prepared_spells=["bless", "cure-wounds", "guiding-bolt", "healing-word"],
+        chosen_prepared_spells=["guiding-bolt", "healing-word", "shield-of-faith", "sanctuary"],
         chosen_equipment=["mace"],
         position=Position(x=0, y=0),
     )

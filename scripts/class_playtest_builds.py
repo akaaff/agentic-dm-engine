@@ -55,7 +55,7 @@ BUILDS: dict[str, dict[str, Any]] = {
         "scores": {"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         "skills": ["skill-insight", "skill-medicine"],
         "equipment": ["mace", "scale-mail"],
-        "prepared": ["bless", "cure-wounds", "guiding-bolt", "healing-word"],
+        "prepared": ["guiding-bolt", "healing-word", "sanctuary", "shield-of-faith"],
     },
     "druid": {
         "name": "Fern",
