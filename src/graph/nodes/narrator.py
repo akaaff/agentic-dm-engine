@@ -55,6 +55,18 @@ def _event_line(event: Event, labels: dict[str, str] | None = None) -> str:
     # attack_roll event for any wolf was present. Spelling this one out
     # explicitly removes the ambiguity the generic "actor=.../type=..."
     # format otherwise leaves for the model to guess at.
+    # A utility spell's verdict (issue #55) is decided by the adjudicator before the narrator
+    # runs - narrate exactly this outcome, never a better or worse one.
+    if event.type == "spell_ruling":
+        outcome = {"success": "WORKED", "partial": "PARTLY WORKED", "failure": "FAILED"}[
+            str(payload.get("outcome"))
+        ]
+        ruling = payload.get("ruling")
+        return (
+            f"- {actor}'s {payload.get('spell')} {outcome}"
+            + (f": {ruling}" if ruling else "")
+            + " (this verdict is final - narrate exactly this outcome)"
+        )
     if event.type == "hazard_damage":
         return (
             f"- {actor} steps on hazardous terrain and takes "

@@ -1,0 +1,108 @@
+# Guidelines the spell adjudicator (src/graph/nodes/spell_adjudicator.py) gives the model when a
+# no-combat utility spell is cast (issue #55). One entry per spell index; ONLY the cast spell's
+# entry is sent, together with that spell's SRD text. Edit freely - what makes an attempt
+# succeed, partly work or fail is judged from this text.
+dancing-lights: Up to four torch-sized lights that move 60 ft as a bonus action. Fine for lighting a space,
+  signalling or distracting. They do no damage, carry nothing, and can't reveal invisible creatures or
+  blind anyone.
+druidcraft: 'Tiny nature effects: a forecast of the next day''s weather, a bloom opening, a harmless sensory
+  effect, lighting or snuffing a small flame. Fails for anything that does real work - damage, a large
+  fire, moving or breaking things.'
+mage-hand: 'A spectral hand within 30 ft that does simple things with light objects: open an unlocked
+  door or container, stow or retrieve an item from an open container, pour out a vial. It carries at most
+  10 lb. Success for one simple action with something light; partial if the task is fiddly but not forbidden;
+  failure for attacking, activating a magic item, lifting more than 10 lb, or anything beyond 30 ft.'
+mending: Repairs one break or tear no bigger than 1 ft in an object - a chain link, a torn cloak. Succeeds
+  for small ordinary damage; fails for large breaks, missing pieces, or anything that needs real restoration,
+  and it can't restore magic.
+message: >-
+  A whispered message to one creature within 120 ft that only it hears and can answer in a
+  whisper. Only the creatures listed in the scene are within reach: if the player names a
+  recipient who is not listed (a king in a distant city, someone miles away), the target is out
+  of range and the attempt fails - do not substitute a creature who is listed. A barrier of 1 ft
+  of stone, 1 inch of metal or 3 ft of wood or earth also blocks it.
+minor-illusion: A sound or the image of one object no bigger than a 5 ft cube - no smell or temperature,
+  and it can't move much. Anyone who studies it can see through it. Succeeds for a simple plausible sound
+  or object; it never physically affects anyone.
+prestidigitation: 'Minor tricks: a harmless sensory effect, lighting or snuffing a candle, cleaning or
+  soiling an object up to 1 cubic foot, warming, chilling or flavouring material, a small mark, a trinket.
+  Fails for anything with real impact.'
+thaumaturgy: 'Showy minor wonders: a booming voice, flickering flames, harmless tremors, odd sounds, doors
+  that fly open or shut, a change of eye colour. Can''t damage anything, and can''t open a door that is
+  locked or barred.'
+alarm: Wards a door, window or area up to a 20 ft cube for 8 hours; a mental or audible alarm sounds when
+  a creature touches or enters it. It needs a place to ward - it can't be set on something that moves.
+comprehend-languages: For an hour you understand any spoken language you hear and any written language
+  you touch (about a page a minute). It doesn't break codes or ciphers, hidden meaning, or let you speak
+  the language.
+create-or-destroy-water: Creates up to 10 gallons of clean water, or destroys that much water or fog in
+  a 30 ft cube. Plain water only - no other liquid - and it harms no one.
+detect-evil-and-good: Within 30 ft, senses whether an aberration, celestial, elemental, fey, fiend or
+  undead is present and where, and any consecrated or desecrated place. It tells you the kind, not who
+  or why. Solid barriers (1 ft stone, 1 inch metal, 3 ft wood or earth) block it.
+detect-magic: Within 30 ft, senses the presence of magic and shows a faint aura around visible magic things
+  and its school. It doesn't say what the magic does. Barriers (1 ft stone, 1 inch metal, 3 ft wood or
+  earth) block it; a magical object that isn't there can't be found.
+detect-poison-and-disease: Within 30 ft, senses poisons, poisonous creatures and diseases and their kind.
+  Solid barriers block it. It finds what is there; it doesn't cure or identify an antidote.
+disguise-self: Changes your appearance, clothes and gear for an hour, up to a foot taller or shorter.
+  A physical inspection (touch) reveals it, and it can't change your basic shape, add limbs, or alter
+  your voice.
+floating-disk: A horizontal disk, 3 ft across, that carries up to 500 lb, hovers 3 ft off the ground and
+  follows within 20 ft. Fails for more weight, or anywhere it can't follow.
+identify: Learns the properties of one object you touch - how a magic item works and what charges it has
+  - or which spells affect a creature you touch. Learns nothing about an item with no magic beyond that
+  it is ordinary.
+illusory-script: Writes a message that only the readers you name can read; to anyone else it looks like
+  unknown or meaningless writing. It lasts 10 days.
+purify-food-and-drink: Makes ordinary food and drink within a 5 ft sphere safe, removing poison and disease.
+  It does nothing for magical food or a poison already in someone's body.
+silent-image: A visual illusion of an object, creature or phenomenon up to a 15 ft cube - no sound, smell
+  or touch, and it can be moved by concentrating. A creature that touches it or studies it can see through
+  it. It never physically affects anyone.
+speak-with-animals: For 10 minutes you can understand and speak with beasts. They are limited in what
+  they know and understand, and they are not made friendly or obedient - a hostile beast may refuse to
+  talk.
+unseen-servant: An invisible, mindless force that does simple chores - fetch things, clean, mend, open
+  doors, hold a chair - within 60 ft of you for an hour. Carries about 30 lb, can't attack, and can't
+  do anything that needs judgment or skill.
+alter-self: 'Changes your form for up to an hour: breathe and swim underwater, reshape your appearance
+  (not your size by much), or grow natural weapons for unarmed strikes. Fails for forms far outside those
+  three options.'
+animal-messenger: A Tiny beast carries a message of up to 25 words to a recipient you describe. Needs
+  a Tiny beast close by; fails if the recipient is farther than the beast could travel in the time.
+arcane-lock: Magically locks a door, window, gate, chest or similar closable thing until dispelled; only
+  you and those you name can open it. It needs something lockable, and Knock or a dispel beats it.
+arcanists-magic-aura: Changes how detection magic perceives one object or creature you touch for a day
+  - mask its magic, give it a false aura, or make a mundane thing seem magical. It does not change what
+  the thing really is.
+augury: 'Asks for an omen about a course of action within the next half hour: weal, woe, both, or nothing.
+  It reads the likely immediate outcome only, not the long run, and gives no detail.'
+continual-flame: Makes a permanent, heatless, flame-like light on an object you touch. It needs an object
+  to bear it and can be covered but not extinguished.
+darkvision: Gives a creature you touch the ability to see in the dark out to 60 ft for 8 hours. It doesn't
+  help against magical darkness or reveal what is invisible.
+detect-thoughts: For up to a minute, reads the surface thoughts of creatures within 30 ft; digging deeper
+  into one target forces a Wisdom save. A creature with Intelligence 3 or less has no thoughts to read,
+  and a lead barrier blocks it.
+find-traps: Senses whether any trap is within 120 ft in line of sight - not where it is or how it works.
+  It doesn't find a trap that isn't there, and magical traps may seem like ordinary ones.
+gentle-repose: Protects one corpse from decay and from being raised as undead for 10 days. It needs a
+  corpse, and does not restore life.
+knock: Opens one stuck, barred, locked or magically held door, chest or similar thing, with a loud knock
+  audible 300 ft away. One lock or fastening per cast; it suppresses Arcane Lock for 10 minutes. It needs
+  something locked to open.
+locate-animals-or-plants: Tells you the direction and distance to the nearest beast or plant of one kind
+  you name within 5 miles. Fails if none of that kind is within range.
+locate-object: Senses the direction to a specific object you know, or the nearest of a kind, within 1000
+  ft. Running water, lead and being moved across barriers block it.
+magic-mouth: Plants a spoken message of up to 25 words in an object, triggered by a condition you set
+  that must be something seen or heard. Needs an object to hold it.
+pass-without-trace: For an hour you and companions within 30 ft gain +10 to Stealth checks and leave no
+  tracks or scent. It makes noise and light no quieter, and doesn't hide anyone from being seen.
+rope-trick: Turns a rope up to 60 ft long into a way up into an extradimensional space that holds up to
+  eight creatures for an hour. Needs a rope; creatures inside can't be seen from outside.
+see-invisibility: For an hour you see invisible creatures and objects as translucent, and can see into
+  the Ethereal Plane. It doesn't pierce illusions or darkness.
+zone-of-truth: Creates a 15 ft sphere for 10 minutes; each creature that enters and fails a Charisma save
+  can't deliberately lie there. You know who made the save, and a creature that did can be evasive.

@@ -159,6 +159,21 @@ export function formatEvent(
           : `${actorName}'s Divine Sense finds nothing within 60 ft`,
       }
     }
+    case 'spell_ruling': {
+      // The referee's verdict on a no-combat utility spell (issue #55).
+      const outcome = String(p.outcome)
+      const words = outcome === 'success' ? 'worked' : outcome === 'partial' ? 'partly worked' : 'failed'
+      const ruling = typeof p.ruling === 'string' && p.ruling ? ` - ${p.ruling}` : ''
+      return {
+        key: event.id,
+        color,
+        label: `${actorName}'s ${String(p.spell)} ${words}${ruling}`,
+        highlight: {
+          text: outcome,
+          color: outcome === 'success' ? HEAL_COLOR : outcome === 'partial' ? '#e0b030' : DAMAGE_COLOR,
+        },
+      }
+    }
     case 'summoned': {
       // A summoning spell added a creature to the fight (issue #56).
       const name = typeof p.name === 'string' ? p.name : characterName(String(p.summoned), characters)
