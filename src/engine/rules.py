@@ -401,6 +401,9 @@ class ConditionSpellSpec:
     extra_conditions: tuple[ConditionName, ...] = ()
     """More conditions applied alongside `condition` (Hideous Laughter: prone
     AND incapacitated)."""
+    detail_from_caster_mod: bool = False
+    """Condition.detail is the caster's spellcasting modifier (Heroism's per-turn
+    temporary hit points)."""
     only_monster_types: frozenset[str] | None = None
     """If set, only a monster whose SRD `type` is in the set is affected (Animal
     Friendship: beasts). Anyone else just shrugs the spell off."""
@@ -427,6 +430,13 @@ _CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     ),
     "sanctuary": ConditionSpellSpec(condition="warded", duration_rounds=10),
     "mirror-image": ConditionSpellSpec(condition="mirror_image", duration_rounds=10, detail="3"),
+    # Issue #62: Heroism ends an existing fright and blocks a new one; the temp HP at the
+    # start of each turn is in turn_engine._heroism_tick. Beacon of Hope: see
+    # condition_save_advantage, the death-save roll and turn_engine._heal_total.
+    "heroism": ConditionSpellSpec(
+        condition="heroic", duration_rounds=10, cures="frightened", detail_from_caster_mod=True
+    ),
+    "beacon-of-hope": ConditionSpellSpec(condition="beacon_of_hope", duration_rounds=10),
     "protection-from-evil-and-good": ConditionSpellSpec(
         condition="protected_from_evil", duration_rounds=100
     ),
@@ -851,6 +861,8 @@ def monster_is_immune_to_condition(
     it at all (e.g. an ooze can't be grappled or knocked prone), so callers
     should reject the attempt outright rather than let it resolve and
     silently do nothing."""
+    if condition_name == "frightened" and has_condition(target, "heroic"):
+        return True  # Heroism (issue #62)
     if target.monster_index is None:
         return False
     monster = srd.monsters.get(target.monster_index)
@@ -1394,6 +1406,12 @@ def condition_save_disadvantage(character: Character) -> bool:
     """SRD: a restrained creature has disadvantage on DEX saves specifically;
     exhaustion level 3+ gives disadvantage on every saving throw."""
     return character.exhaustion_level >= 3
+
+
+def condition_save_advantage(character: Character, ability: str) -> bool:
+    """Beacon of Hope (issue #62): advantage on Wisdom saving throws (and on death
+    saves - see turn_engine._resolve_death_save)."""
+    return ability == "WIS" and has_condition(character, "beacon_of_hope")
 
 
 def condition_check_disadvantage(character: Character) -> bool:
