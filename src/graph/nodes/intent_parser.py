@@ -583,6 +583,35 @@ def _normalize_skill_phrase(action: ParsedAction, utterance: str | None) -> Pars
     return action
 
 
+_SOCIAL_SKILLS = frozenset({"intimidation", "persuasion", "deception"})
+
+
+def _default_social_target(
+    action: ParsedAction, game_state: GameState, utterance: str | None
+) -> ParsedAction:
+    """Issue #102: "I roar at the goblin to intimidate it" came back as an Intimidation
+    check with no target, so there was nothing for it to act on. When the check names
+    no target, aim it at the enemy the player's words mention (by kind - "the goblin"),
+    or at the only enemy there is; with several and no hint it stays untargeted."""
+    if action.verb != "skill_check" or action.target:
+        return action
+    if normalize_skill_name(str(action.params.get("skill", ""))) not in _SOCIAL_SKILLS:
+        return action
+    actor = game_state.characters.get(action.actor)
+    if actor is None:
+        return action
+    enemies = [
+        c for c in game_state.characters.values() if c.is_pc != actor.is_pc and not c.is_dead
+    ]
+    words = set((utterance or action.raw_text).lower().replace(",", " ").split())
+    named = [c for c in enemies if c.name.split()[0].lower() in words]
+    pool = named or (enemies if len(enemies) == 1 else [])
+    if not pool:
+        return action
+    nearest = min(pool, key=lambda c: (distance_feet(actor.position, c.position), c.id))
+    return action.model_copy(update={"target": nearest.id})
+
+
 def _hide_as_cunning_action(action: ParsedAction, game_state: GameState) -> ParsedAction:
     """A Rogue of level 2+ with their bonus action free who says "I hide"
     (issue #84) gets Cunning Action's bonus-action Hide: it costs them
@@ -649,6 +678,7 @@ def _postprocess_action(
     action = _promote_stray_item_or_spell(action)
     action = _resolve_move_target(action, game_state)
     action = _normalize_skill_phrase(action, utterance)
+    action = _default_social_target(action, game_state, utterance)
     action = _hide_as_cunning_action(action, game_state)
     action = _default_attack_target(action, game_state)
     action = _default_self_target(action, game_state, utterance)

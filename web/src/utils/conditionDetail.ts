@@ -35,6 +35,7 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
     'Incapacitated, unaware of surroundings, drops what it’s holding and falls prone. Attacks against it have advantage and auto-crit within 5ft.',
   shielded: 'AC +5 from the Shield reaction, until the round ends.',
   mocked: 'Disadvantage on its next attack roll (Vicious Mockery).',
+  distracted: 'Disadvantage on its next attack roll - a Deception check threw it off.',
   chilled: 'Speed reduced by 10 feet (Ray of Frost).',
   guided: 'The next attack roll against it has advantage (Guiding Bolt).',
   shillelagh:
