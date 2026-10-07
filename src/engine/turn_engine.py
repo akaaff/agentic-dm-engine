@@ -151,6 +151,7 @@ from src.engine.rules import (
     condition_attack_advantage,
     condition_attack_disadvantage,
     condition_check_disadvantage,
+    condition_save_advantage,
     condition_save_disadvantage,
     condition_spell_spec,
     effective_speed,
@@ -1023,6 +1024,7 @@ def _sanctuary_blocks(
         save_bonus=_target_saving_throw_bonus(attacker, "WIS", srd) + roll_bonus,
         dc=dc,
         rng=rng,
+        advantage=condition_save_advantage(attacker, "WIS"),
         disadvantage=condition_save_disadvantage(attacker),
         lucky=has_lucky_trait(attacker),
     )
@@ -2290,6 +2292,8 @@ def _end_concentration(state: GameState, caster: Character, srd: SrdIndex) -> No
             )
         if any(c.name == "barkskin" for c in ended):
             _recompute_ac(character, srd)
+        if any(c.name == "heroic" for c in ended):
+            character.temp_hp = 0  # Heroism's temporary hit points go with it
 
 
 def _begin_concentration(
@@ -3309,7 +3313,7 @@ def _resolve_second_wind(state: GameState, actor: Character, rng: random.Random)
     _use_class_resource(actor, "second_wind")
     dice_count, dice_sides, _ = parse_dice_notation(SECOND_WIND_DICE)
     healed = min(
-        roll(dice_count, dice_sides, modifier=actor.level, rng=rng).total,
+        _heal_total(actor, dice_count, dice_sides, actor.level, rng),
         actor.max_hp - actor.hp,
     )
     actor.hp += healed
@@ -3995,6 +3999,7 @@ def _cast_save_spell_at_target(
         # Phase 9A's condition_save_disadvantage (exhaustion 3+) had no real
         # call site until now - the only saving throw previously rolled
         # (death saves) is deliberately flat/unmodified per SRD.
+        advantage=condition_save_advantage(target, params.dc_ability),
         disadvantage=condition_save_disadvantage(target),
         # Lucky (issue #23) applies to any saving throw the target makes,
         # including one forced on them by an enemy's spell - not just their
@@ -4155,6 +4160,17 @@ def _revive_if_healed(state: GameState, healer: Character, target: Character) ->
     )
 
 
+def _heal_total(
+    target: Character, dice_count: int, dice_sides: int, modifier: int, rng: random.Random
+) -> int:
+    """What a healing roll restores before the max-HP clamp. A creature under Beacon of
+    Hope (issue #62) regains the maximum - no dice are rolled for it, so a fixture's
+    RNG sequence is untouched when nobody has the spell."""
+    if has_condition(target, "beacon_of_hope"):
+        return dice_count * dice_sides + modifier
+    return roll(dice_count, dice_sides, modifier=modifier, rng=rng).total
+
+
 def _cast_heal_spell_at_target(
     state: GameState,
     actor: Character,
@@ -4166,12 +4182,9 @@ def _cast_heal_spell_at_target(
     14's use_item healing potion is the existing precedent for this
     clamp-at-max_hp shape)."""
     healed = min(
-        roll(
-            params.dice_count,
-            params.dice_sides,
-            modifier=params.ability_mod + params.bonus,
-            rng=rng,
-        ).total,
+        _heal_total(
+            target, params.dice_count, params.dice_sides, params.ability_mod + params.bonus, rng
+        ),
         target.max_hp - target.hp,
     )
     target.hp += healed
@@ -4940,6 +4953,8 @@ def _resolve_cast_spell(
         condition_detail = (
             _chosen_damage_type(action, spell) if spec.choose_damage_type else spec.detail
         )
+        if spec.detail_from_caster_mod:
+            condition_detail = str(max(0, _spellcasting_ability_mod(actor, srd)[1]))
 
     if spell_level > 0:
         remaining = actor.spell_slots.get(spell_level, 0)
@@ -5074,9 +5089,7 @@ def _resolve_use_item(
 
     actor.inventory.remove(HEALING_POTION_INDEX)
     dice_count, dice_sides, bonus = parse_dice_notation(HEALING_POTION_DICE)
-    healed = min(
-        roll(dice_count, dice_sides, modifier=bonus, rng=rng).total, actor.max_hp - actor.hp
-    )
+    healed = min(_heal_total(actor, dice_count, dice_sides, bonus, rng), actor.max_hp - actor.hp)
     actor.hp += healed
 
     state.events.append(
@@ -5120,7 +5133,13 @@ def _resolve_death_save(state: GameState, actor: Character, rng: random.Random) 
 
     # Flat d20, no modifiers, no advantage/disadvantage support - per SRD.
     # Lucky (issue #23) still applies - a death save is a saving throw.
-    result, _ = resolve_saving_throw(save_bonus=0, dc=10, rng=rng, lucky=has_lucky_trait(actor))
+    result, _ = resolve_saving_throw(
+        save_bonus=0,
+        dc=10,
+        rng=rng,
+        advantage=has_condition(actor, "beacon_of_hope"),  # issue #62
+        lucky=has_lucky_trait(actor),
+    )
     natural = result.kept[0]
 
     if natural == 20:
@@ -5310,6 +5329,9 @@ def _handle_expired_conditions(
     caster's concentration was sustaining has lapsed, that concentration is
     over too (otherwise the sheet reads "Concentrating on: Bless" forever
     after Bless fades)."""
+    for character, condition in expired:
+        if condition.name == "heroic":
+            character.temp_hp = 0  # Heroism's temporary hit points lapse with it
     if srd is not None:
         for character, condition in expired:
             if condition.name in ("barkskin", "shielded"):
@@ -5353,6 +5375,20 @@ def _stand_up_if_prone(state: GameState, actor: Character) -> None:
             payload={"condition": "prone", "reason": "stood up", "movement_cost": speed // 2},
         )
     )
+
+
+def _heroism_tick(state: GameState, actor: Character) -> None:
+    """Heroism (issue #62): at the start of the blessed creature's turn it gains
+    temporary hit points equal to the caster's spellcasting modifier, which
+    Condition.detail recorded when the spell was cast (they never stack - see
+    grant_temp_hp)."""
+    for condition in actor.conditions:
+        if condition.name != "heroic" or not condition.detail:
+            continue
+        amount = int(condition.detail)
+        caster = state.characters.get(condition.source) if condition.source else None
+        if amount > 0 and caster is not None:
+            grant_temp_hp(state, caster, actor, amount, "Heroism")
 
 
 def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -> None:
@@ -5407,6 +5443,7 @@ def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -
             next_actor.movement_used_feet = 0
             next_actor.readied_attack = None  # a readied action lasts until your next turn
             _stand_up_if_prone(state, next_actor)
+            _heroism_tick(state, next_actor)
             return
 
 

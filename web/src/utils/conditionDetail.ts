@@ -60,6 +60,8 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
   protected_from_evil:
     'Aberrations, celestials, elementals, fey, fiends, and undead have disadvantage on attack rolls against it.',
   outlined: 'Outlined in shimmering light: attack rolls against it have advantage.',
+  beacon_of_hope:
+    'Advantage on Wisdom saving throws and death saving throws, and it regains the maximum from any healing, until the spell ends.',
 }
 
 // Names that aren't a plain capitalized form of the condition id - the spell
@@ -67,6 +69,8 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
 // something to show a player.
 const CONDITION_DISPLAY_NAMES: Record<string, string> = {
   baned: 'Bane',
+  heroic: 'Heroism',
+  beacon_of_hope: 'Beacon of Hope',
   blurred: 'Blur',
   death_warded: 'Death Ward',
   stoneskinned: 'Stoneskin',
@@ -88,6 +92,8 @@ const CONDITION_DISPLAY_NAMES: Record<string, string> = {
 // conditions - reads as "affected by X" rather than "now X" in the log.
 const SPELL_EFFECT_CONDITIONS = new Set([
   'baned',
+  'heroic',
+  'beacon_of_hope',
   'blurred',
   'longstrider',
   'death_warded',
@@ -122,6 +128,9 @@ export function conditionDescription(name: string, detail?: string | null): stri
   if (name === 'energy_resistant') {
     return `Resistance to ${detail ? `${detail} ` : ''}damage - halves it, until the spell ends.`
   }
+  if (name === 'heroic') {
+    return `Immune to being frightened, and gains ${detail ?? '?'} temporary hit points at the start of each of its turns, until the spell ends.`
+  }
   if (name === 'mirror_image') {
     const n = detail ?? '?'
     return `${n} illusory duplicate(s) may absorb attacks aimed at it - fewer duplicates means they absorb less often. Each one an attack hits is destroyed.`
@@ -151,7 +160,9 @@ export function conditionLabel(condition: LiveCondition): string {
   const detail = condition.detail
     ? condition.name === 'mirror_image'
       ? `: ${condition.detail} ${condition.detail === '1' ? 'image' : 'images'}`
-      : `: ${condition.detail}`
+      : condition.name === 'heroic'
+        ? `: ${condition.detail} temp HP per turn`
+        : `: ${condition.detail}`
     : ''
   if (condition.duration_rounds == null) return `${base}${detail}`
   return `${base}${detail} (${durationText(condition.duration_rounds)} left)`
