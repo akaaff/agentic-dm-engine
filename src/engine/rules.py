@@ -302,9 +302,9 @@ def baned_penalty(character: Character, rng: random.Random) -> int:
 
 
 def normalize_skill_name(raw: str) -> str:
-    """ "Perception", "skill-perception", "Sleight of Hand" -> "perception",
+    """ "Perception", "skill-perception", "Sleight of Hand", "sleight_of_hand" -> "perception",
     "sleight-of-hand" (srd.skills' bare-index form)."""
-    return raw.strip().lower().replace(" ", "-").removeprefix("skill-")
+    return raw.strip().lower().replace(" ", "-").replace("_", "-").removeprefix("skill-")
 
 
 _AUTO_HIT_SPELLS = {"magic-missile"}
