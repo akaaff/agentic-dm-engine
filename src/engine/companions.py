@@ -45,6 +45,9 @@ class CompanionSpec(BaseModel):
     companion - Skill Versatility (issue #23), 2 skills of the author's
     choice. No vendored companion is currently half-elf, but this keeps the
     YAML spec able to author one."""
+    chosen_expertise: list[str] | None = None
+    """Required by create_character for a Rogue companion (issue #85): the 2
+    skills whose proficiency bonus is doubled."""
     chosen_spells: list[str] | None = None
     """Only meaningful (and required by create_character) for a "Spells
     Known" caster companion - Bard or Sorcerer (issue #30). Pip Larkspur
@@ -109,5 +112,6 @@ def build_companion(spec: CompanionSpec, srd: SrdIndex | None = None) -> Charact
         voice=spec.voice,
         chosen_racial_skills=spec.chosen_racial_skills,
         chosen_spells=spec.chosen_spells,
+        chosen_expertise=spec.chosen_expertise,
         chosen_prepared_spells=spec.chosen_prepared_spells,
     )

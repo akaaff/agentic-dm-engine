@@ -99,6 +99,7 @@ BUILDS: dict[str, dict[str, Any]] = {
         "race_index": "halfling",
         "scores": {"STR": 8, "DEX": 15, "CON": 13, "INT": 12, "WIS": 10, "CHA": 14},
         "skills": ["skill-stealth", "skill-sleight-of-hand", "skill-perception", "skill-deception"],
+        "expertise": ["skill-stealth", "skill-sleight-of-hand"],
         "equipment": ["shortsword", "shortbow"],
     },
     "sorcerer": {
@@ -154,4 +155,5 @@ def build(
         gender="female",
         chosen_spells=spec.get("spells"),
         chosen_prepared_spells=spec.get("prepared"),
+        chosen_expertise=spec.get("expertise"),
     )

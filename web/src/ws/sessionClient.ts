@@ -43,6 +43,7 @@ export interface LiveCharacter {
   persona: string | null
   monster_index: string | null
   skill_proficiencies: string[]
+  expertise?: string[]
   saving_throw_proficiencies: string[]
   // New for issue #30's known-spell list - normalized SRD spell indices,
   // meaningful only for a "Spells Known" caster (Bard/Sorcerer); empty for

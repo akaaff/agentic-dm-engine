@@ -154,6 +154,10 @@ class Character(BaseModel):
     """"skill-x" indices (same format as chosen_skills), populated by
     character_creation.py from chosen class skills + the background's fixed
     proficiencies - previously derived at creation time but never stored."""
+    expertise: list[str] = []
+    """Rogue Expertise (issue #85): the skills ('skill-stealth' ...) whose proficiency
+    bonus is doubled - two of the rogue's skill proficiencies, chosen at creation.
+    Read through rules.ability_check_modifier(expert=True)."""
     known_spells: list[str] = []
     """Issue #30: normalized SRD spell indices this character actually knows
     and can cast (level 1+ only - cantrips remain unrestricted, out of this
