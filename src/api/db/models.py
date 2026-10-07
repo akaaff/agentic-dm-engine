@@ -94,6 +94,10 @@ class CharacterRecord(Base):
     expertise: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
     """Rogue Expertise (issue #85) - decided at creation and needed from the first
     check of a live session, so persisted from the start."""
+    familiar: Mapped[str | None] = mapped_column(default=None)
+    """Find Familiar (issue #56): the SRD monster index of the caster's familiar form. It outlasts
+    any one fight, and a live session builds its characters from reloaded rows, so it is
+    persisted from the start."""
     known_spells: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
     """Issue #30 - populated at creation for "Spells Known" casters
     (Bard/Sorcerer). Same "a live WS session builds its GameState from a

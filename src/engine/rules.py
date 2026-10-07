@@ -1408,6 +1408,45 @@ def condition_save_disadvantage(character: Character) -> bool:
     return character.exhaustion_level >= 3
 
 
+FIND_FAMILIAR_SPELL = "Find Familiar"
+
+FAMILIAR_FORMS: dict[str, str] = {
+    "bat": "bat",
+    "cat": "cat",
+    "crab": "crab",
+    "frog": "frog",
+    "toad": "frog",
+    "hawk": "hawk",
+    "lizard": "lizard",
+    "octopus": "octopus",
+    "owl": "owl",
+    "poisonous snake": "poisonous-snake",
+    "snake": "poisonous-snake",
+    "fish": "quipper",
+    "quipper": "quipper",
+    "rat": "rat",
+    "raven": "raven",
+    "sea horse": "sea-horse",
+    "seahorse": "sea-horse",
+    "spider": "spider",
+    "weasel": "weasel",
+}
+"""The SRD's fifteen Find Familiar forms (issue #56), keyed by the words a player uses and
+mapped to the vendored monster index. Common alternate names (toad, snake, fish) are included."""
+
+
+def familiar_form_from_text(text: str) -> str | None:
+    """The one familiar form named in `text`, or None if none or several are. Longer names are
+    matched first so "poisonous snake" is not also counted as "snake" (same form either way)."""
+    lowered = text.lower()
+    found: set[str] = set()
+    for word in sorted(FAMILIAR_FORMS, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(word)}s?\b", lowered):
+            found.add(FAMILIAR_FORMS[word])
+            lowered = re.sub(rf"\b{re.escape(word)}s?\b", " ", lowered)
+    return found.pop() if len(found) == 1 else None
+
+
 def is_party_member(character: Character) -> bool:
     """A real member of the player's side: a PC or companion, not a creature a spell
     conjured for it (issue #56). `is_pc` alone means "which side"; a summoned creature
