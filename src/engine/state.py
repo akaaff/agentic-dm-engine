@@ -153,6 +153,10 @@ class Character(BaseModel):
     """The id of the creature that conjured this one (issue #56) - set only on a creature
     added mid-fight by a summoning spell (see engine/summons.py). It keeps the creature
     from being treated as a party member even though `is_pc` marks its side."""
+    familiar: str | None = None
+    """The SRD monster index of this caster's Find Familiar form (issue #56), or None.
+    A familiar outlasts any one fight, so it lives on the caster (and is persisted); each
+    encounter conjures it afresh - see encounter.place_familiar."""
     summon_spell: str | None = None
     """The spell that conjured it, so ending that spell's concentration can find it."""
     monster_index: str | None = None

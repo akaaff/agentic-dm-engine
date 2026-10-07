@@ -16,9 +16,15 @@ from pydantic import BaseModel
 
 from src.engine.events import Event
 from src.engine.position import BattleMap, Position
-from src.engine.rules import ability_modifier, monster_innate_spellcasting, normalize_spell_name
+from src.engine.rules import (
+    FIND_FAMILIAR_SPELL,
+    ability_modifier,
+    monster_innate_spellcasting,
+    normalize_spell_name,
+)
 from src.engine.srd_loader import SrdEntry, SrdIndex, load_srd
 from src.engine.state import AbilityScore, Character, GameState
+from src.engine.summons import add_combatant, find_open_square
 from src.engine.turn_order import roll_initiative
 
 DEFAULT_ENCOUNTERS_DIR = (
@@ -175,7 +181,7 @@ def build_encounter_state(
         for r in initiative_rolls
     ]
 
-    return GameState(
+    state = GameState(
         encounter_id=encounter.id,
         characters=characters,
         turn_order=turn_order,
@@ -186,3 +192,23 @@ def build_encounter_state(
         status="in_progress",
         battle_map=encounter.battle_map,
     )
+    # A familiar (issue #56) outlasts a fight: whoever has one brings it into this one too.
+    for caster in party_characters:
+        if caster.familiar:
+            place_familiar(state, caster, caster.familiar, srd)
+    return state
+
+
+def place_familiar(state: GameState, caster: Character, form: str, srd: SrdIndex) -> Character:
+    """Conjures `caster`'s familiar in the given form (an SRD monster index) onto the nearest free
+    square and adds it to the fight (see engine/summons.py). Used both when an encounter starts
+    and when the spell is cast mid-fight - in which case the caller removes any earlier
+    familiar first, so there is only ever one."""
+    template = srd.monsters.get(form)
+    if template is None:
+        raise GameStateBuildError(f"Unknown familiar form: {form}")
+    square = find_open_square(state, caster.position, set())
+    familiar = monster_to_character(template, f"{caster.id}_familiar", square)
+    familiar.name = f"{caster.name}'s {template['name'].lower()}"
+    add_combatant(state, familiar, caster, FIND_FAMILIAR_SPELL)
+    return familiar

@@ -403,7 +403,27 @@ def _action_against(
     )
 
 
+def _familiar_action(game_state: GameState, actor: Character) -> ParsedAction:
+    """A familiar can't attack (SRD), so it spends each turn on the Help action for its caster -
+    the standard way a wizard gets advantage every turn. If the caster already has a Help banked
+    (they haven't attacked yet), or is gone, it just waits; the engine's Help doesn't stack
+    anyway."""
+    caster = game_state.characters.get(actor.summoned_by or "")
+    if caster is None or caster.is_dead or caster.has_help_advantage:
+        return ParsedAction(
+            actor=actor.id, verb="end_turn", raw_text=f"{actor.name} keeps close to its master."
+        )
+    return ParsedAction(
+        actor=actor.id,
+        verb="help",
+        target=caster.id,
+        raw_text=f"{actor.name} distracts the enemy for {caster.name}.",
+    )
+
+
 def choose_monster_action(game_state: GameState, actor: Character) -> ParsedAction:
+    if actor.summon_spell == "Find Familiar":
+        return _familiar_action(game_state, actor)
     living_targets = [
         c
         for c in game_state.characters.values()

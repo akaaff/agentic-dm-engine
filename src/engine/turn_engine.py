@@ -131,11 +131,12 @@ from src.engine.character_creation import (
 )
 from src.engine.conditions import apply_condition, has_condition, remove_condition, tick_conditions
 from src.engine.dice import RollResult, roll, roll_d20
-from src.engine.encounter import monster_to_character
+from src.engine.encounter import GameStateBuildError, monster_to_character, place_familiar
 from src.engine.events import Event
 from src.engine.movement import can_afford_move, move_cost_feet
 from src.engine.position import Position, distance_feet
 from src.engine.rules import (
+    FIND_FAMILIAR_SPELL,
     AttackResult,
     ConditionSpellSpec,
     ability_check_modifier,
@@ -156,6 +157,7 @@ from src.engine.rules import (
     condition_spell_spec,
     effective_speed,
     failed_save_condition,
+    familiar_form_from_text,
     has_lucky_trait,
     has_non_proficient_armor,
     has_relentless_endurance,
@@ -211,6 +213,7 @@ from src.engine.summons import (
     add_combatant,
     dismiss_summons,
     find_open_square,
+    remove_combatant,
 )
 from src.engine.turn_order import next_turn
 
@@ -2521,6 +2524,9 @@ def _apply_damage_and_handle_downing(
 
     if not is_party_member(target):  # monsters and summoned creatures die outright
         target.is_dead = True
+        if target.summon_spell == FIND_FAMILIAR_SPELL and target.summoned_by in state.characters:
+            # It disappears, and comes back only when the spell is cast again.
+            state.characters[target.summoned_by].familiar = None
         state.events.append(
             Event(
                 round=state.round,
@@ -4223,6 +4229,7 @@ _SPECIAL_CAST_SPELLS = {
     "shield-of-faith",
     "shillelagh",
     "conjure-animals",
+    "find-familiar",
 }
 """Issue #55 spell audit: spells whose real mechanic doesn't fit any of the
 generic attack/save/heal/auto_hit/condition buckets `spell_mechanic`
@@ -4426,6 +4433,52 @@ def _resolve_shillelagh(
             actor=actor.id,
             type="spell_cast",
             payload={"spell": spell["name"], "weapon": weapon},
+        )
+    )
+
+
+def _resolve_find_familiar(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry, srd: SrdIndex
+) -> None:
+    """Find Familiar (issue #56, phase D): the caster gains a familiar in one of the SRD's fifteen
+    forms, named in the cast (`params['form']` or the caster's own words). It is stored on the
+    caster, so every later fight starts with it (encounter.place_familiar), and it is conjured
+    into this one right away. Casting again while one exists changes its form, as the spell says;
+    there is never more than one.
+
+    Simplifications: the SRD spell is a one-hour ritual cast out of combat, but this engine's
+    fights are the only place a cast happens, so it costs an action instead (and no slot, being
+    a ritual). The familiar can't attack, so monster_ai only has it take the Help action for
+    its caster (see monster_ai._familiar_action) - the engine's Help gives the helped creature
+    advantage on its next attack roll without the SRD's 'distract an enemy within 5 ft'
+    positioning. Telepathy, seeing through its eyes and delivering touch spells aren't modeled."""
+    named = action.params.get("form")
+    form = None
+    if isinstance(named, str):
+        form = familiar_form_from_text(named)
+    form = form or familiar_form_from_text(action.raw_text)
+    if form is None:
+        raise TurnEngineError(
+            f"{spell['name']} needs one form: bat, cat, crab, frog, hawk, lizard, octopus, owl, "
+            "poisonous snake, fish, rat, raven, sea horse, spider, or weasel"
+        )
+    if state.battle_map is None:
+        raise TurnEngineError("there is no battlefield to summon onto")
+    previous = state.characters.get(f"{actor.id}_familiar")
+    if previous is not None:
+        remove_combatant(state, previous.id)  # a new form replaces the old one
+    try:
+        familiar = place_familiar(state, actor, form, srd)
+    except (SummonError, GameStateBuildError) as exc:
+        raise TurnEngineError(f"{spell['name']} has nowhere to put the familiar: {exc}") from exc
+    actor.familiar = form
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "summoned": [familiar.id], "form": form},
         )
     )
 
@@ -4892,7 +4945,8 @@ def _resolve_cast_spell(
         # here too rather than being duplicated inside each resolver.
         if normalized in _SPECIAL_CAST_SPELLS:
             concentration_started = False
-            if spell_level > 0:
+            # Find Familiar is a ritual: no slot (the 10 gp of charcoal and incense isn't tracked).
+            if spell_level > 0 and normalized != "find-familiar":
                 remaining = actor.spell_slots.get(spell_level, 0)
                 if remaining <= 0:
                     raise TurnEngineError(
@@ -4910,6 +4964,8 @@ def _resolve_cast_spell(
                     _resolve_false_life(state, actor, action, spell, rng)
                 elif normalized == "shillelagh":
                     _resolve_shillelagh(state, actor, action, spell)
+                elif normalized == "find-familiar":
+                    _resolve_find_familiar(state, actor, action, spell, srd)
                 elif normalized == "conjure-animals":
                     _resolve_conjure_animals(state, actor, spell, srd)
                     concentration_started = True  # begun inside, before the beasts appear
@@ -4920,7 +4976,7 @@ def _resolve_cast_spell(
                 # slot above is spent (issue #75: Sleep naming only a corpse
                 # burned the slot) - a rejected cast must cost nothing, per
                 # resolve_action's "validate before mutating" contract.
-                if spell_level > 0:
+                if spell_level > 0 and normalized != "find-familiar":
                     actor.spell_slots[spell_level] += 1
                 raise
             if spell.get("concentration") and not concentration_started:
