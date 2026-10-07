@@ -1,5 +1,5 @@
 """Wires the per-action turn pipeline: player_agent -> intent_parser ->
-rules_engine -> narrator -> scene_image. Only rules_engine is real as of Day
+rules_engine -> spell_adjudicator -> narrator -> scene_image. Only rules_engine is real as of Day
 11 - the other four are stubs (see graph/nodes/*.py) until Days 12-15
 replace them with live Ollama/SD-Turbo calls, at which point this wiring
 shouldn't need to change at all.
@@ -26,6 +26,7 @@ from src.graph.nodes.narrator import narrator_node
 from src.graph.nodes.player_agent import player_agent_node
 from src.graph.nodes.rules_engine_node import make_rules_engine_node
 from src.graph.nodes.scene_image_node import scene_image_node
+from src.graph.nodes.spell_adjudicator import spell_adjudicator_node
 from src.graph.state_schema import GraphState
 
 
@@ -35,6 +36,7 @@ def build_graph(
     narrator_fn: Callable[[GraphState], dict[str, Any]] = narrator_node,
     player_agent_fn: Callable[[GraphState], dict[str, Any]] = player_agent_node,
     scene_image_fn: Callable[[GraphState], dict[str, Any]] = scene_image_node,
+    adjudicator_fn: Callable[[GraphState], dict[str, Any]] = spell_adjudicator_node,
 ) -> CompiledStateGraph[GraphState, Any, Any, Any]:
     """narrator_fn/player_agent_fn/scene_image_fn are overridable for tests:
     unlike intent_parser (which already skips its own LLM call whenever
@@ -65,13 +67,15 @@ def build_graph(
     # up with add_node's precise overload set the way a plain top-level
     # function reference does (mypy resolves those two shapes differently).
     graph.add_node("rules_engine", make_rules_engine_node(rng, srd))  # type: ignore[arg-type]
+    graph.add_node("spell_adjudicator", adjudicator_fn)  # type: ignore[arg-type]
     graph.add_node("narrator", narrator_fn)  # type: ignore[arg-type]
     graph.add_node("scene_image", scene_image_fn)  # type: ignore[arg-type]
 
     graph.add_edge(START, "player_agent")
     graph.add_edge("player_agent", "intent_parser")
     graph.add_edge("intent_parser", "rules_engine")
-    graph.add_edge("rules_engine", "narrator")
+    graph.add_edge("rules_engine", "spell_adjudicator")
+    graph.add_edge("spell_adjudicator", "narrator")
     graph.add_edge("narrator", "scene_image")
     graph.add_edge("scene_image", END)
 

@@ -228,6 +228,7 @@ from src.engine.synthetic_monsters import (
     animated_object_index,
 )
 from src.engine.turn_order import next_turn
+from src.engine.utility_spells import is_utility_spell
 
 _DICE_NOTATION_RE = re.compile(r"(\d+)d(\d+)([+-]\d+)?")
 
@@ -4534,6 +4535,30 @@ def _sync_undead_servants(state: GameState, caster: Character) -> None:
     ]
 
 
+def _record_utility_cast(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry, index: str
+) -> None:
+    """A no-combat utility spell (engine/utility_spells.py): the engine has no scene to
+    calculate success against, so it only logs the cast - slot and concentration are handled
+    by the caller like every other special spell - flagged `utility` with what the player
+    said they were attempting. graph/nodes/spell_adjudicator.py then has a model rule on it
+    and records a `spell_ruling` event the narrator follows."""
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={
+                "spell": spell["name"],
+                "spell_index": index,
+                "utility": True,
+                "attempt": action.raw_text,
+            },
+        )
+    )
+
+
 def _resolve_find_familiar(
     state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry, srd: SrdIndex
 ) -> None:
@@ -5141,10 +5166,14 @@ def _resolve_cast_spell(
         # generically (every real spell needs both, regardless of which
         # mechanic resolves the actual effect), so those two steps happen
         # here too rather than being duplicated inside each resolver.
-        if normalized in _SPECIAL_CAST_SPELLS:
+        if normalized in _SPECIAL_CAST_SPELLS or is_utility_spell(normalized):
             concentration_started = False
-            # Find Familiar is a ritual: no slot (the 10 gp of charcoal and incense isn't tracked).
-            if spell_level > 0 and normalized != "find-familiar":
+            # A ritual costs no slot (Find Familiar's 10 gp of charcoal and incense isn't
+            # tracked; the extra ten minutes a ritual takes doesn't apply in a fight).
+            ritual = normalized == "find-familiar" or (
+                is_utility_spell(normalized) and bool(spell.get("ritual"))
+            )
+            if spell_level > 0 and not ritual:
                 remaining = actor.spell_slots.get(spell_level, 0)
                 if remaining <= 0:
                     raise TurnEngineError(
@@ -5162,6 +5191,8 @@ def _resolve_cast_spell(
                     _resolve_false_life(state, actor, action, spell, rng)
                 elif normalized == "shillelagh":
                     _resolve_shillelagh(state, actor, action, spell)
+                elif is_utility_spell(normalized):
+                    _record_utility_cast(state, actor, action, spell, normalized)
                 elif normalized == "animate-objects":
                     _resolve_animate_objects(state, actor, action, spell, srd)
                     concentration_started = True  # begun inside, before the objects appear
@@ -5179,7 +5210,7 @@ def _resolve_cast_spell(
                 # slot above is spent (issue #75: Sleep naming only a corpse
                 # burned the slot) - a rejected cast must cost nothing, per
                 # resolve_action's "validate before mutating" contract.
-                if spell_level > 0 and normalized != "find-familiar":
+                if spell_level > 0 and not ritual:
                     actor.spell_slots[spell_level] += 1
                 raise
             if spell.get("concentration") and not concentration_started:

@@ -48,6 +48,7 @@ EventType = Literal[
     "temp_hp",
     "summoned",
     "summon_ended",
+    "spell_ruling",
 ]
 
 
