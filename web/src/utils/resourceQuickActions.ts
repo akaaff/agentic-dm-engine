@@ -44,6 +44,15 @@ export function computeResourceQuickActions(
     })
   }
 
+  if (remaining('divine_sense') > 0) {
+    actions.push({
+      key: 'divine_sense',
+      label: 'Divine Sense',
+      remaining: remaining('divine_sense'),
+      suggestedText: 'I use divine sense',
+    })
+  }
+
   if (remaining('lay_on_hands') > 0) {
     const hurt = Object.values(characters).find(
       (c) => c.is_pc && !c.is_dead && c.hp < c.max_hp,

@@ -80,7 +80,9 @@ def _lay(state: GameState, target: str | None, **params: object) -> None:
 
 
 def test_a_level_1_paladin_starts_with_a_pool_of_five() -> None:
-    assert _paladin().class_resources == {"lay_on_hands": 5}
+    resources = _paladin().class_resources
+    assert resources["lay_on_hands"] == 5
+    assert set(resources) == {"lay_on_hands", "divine_sense"}  # Divine Sense (#87) arrives with it
 
 
 def test_the_pool_grows_five_per_level() -> None:
