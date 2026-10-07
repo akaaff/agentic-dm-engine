@@ -234,3 +234,14 @@ def test_if_every_draft_fails_the_check_the_last_one_is_still_used(
 
     assert calls["n"] == 3
     assert result["narration"] == "Vex snarls (draft 3)."
+
+
+def test_a_summoned_creature_is_labelled_plainly_not_as_a_class() -> None:
+    from src.engine.encounter import monster_to_character
+    from src.engine.position import Position
+    from src.engine.srd_loader import load_srd
+
+    wolf = monster_to_character(load_srd().monsters["wolf"], "wolf_a", Position(x=0, y=0))
+    wolf.is_pc = True  # a party-side summon (see engine/summons.py)
+    wolf.summoned_by = "elara"
+    assert character_label(wolf) == wolf.name  # plain, not "... the monster"

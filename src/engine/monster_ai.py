@@ -155,9 +155,54 @@ def approach_path(
         path.append(step)
         remaining -= cost
         current = step
+    if path and (path[-1].x, path[-1].y) in ally_occupied:
+        # The greedy walk stopped in range, but on an ally's square - which can't be a
+        # final square. Found with summons: a second wolf filed in behind the first on
+        # the straight line to the target, got trimmed back out of range and never
+        # attacked. Sidestep onto a free square that is still in range, if one is
+        # affordable, before falling back to trimming.
+        taken = blocked | ally_occupied
+        last = path[-1]
+        last_cost = FEET_PER_SQUARE * (2 if terrain[last.y][last.x] == "difficult" else 1)
+        before = path[-2] if len(path) > 1 else start
+        # Prefer swerving one step early, so the path doesn't walk through the ally at all;
+        # failing that, step off it from where the walk ended.
+        sidestep = _free_square_in_range(
+            before, target, range_feet, remaining + last_cost, terrain, taken
+        )
+        if sidestep is not None:
+            path[-1] = sidestep
+        else:
+            sidestep = _free_square_in_range(current, target, range_feet, remaining, terrain, taken)
+            if sidestep is not None:
+                path.append(sidestep)
     while path and (path[-1].x, path[-1].y) in ally_occupied:
         path.pop()
     return path
+
+
+def _free_square_in_range(
+    current: Position,
+    target: Position,
+    range_feet: int,
+    remaining: int,
+    terrain: list[list[TerrainType]],
+    taken: set[tuple[int, int]],
+) -> Position | None:
+    """An adjacent square to `current` that is open, affordable with `remaining` movement
+    and within `range_feet` of `target` - the nearest such to the target, or None."""
+    options = []
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            p = Position(x=current.x + dx, y=current.y + dy)
+            if (dx, dy) == (0, 0) or not (0 <= p.y < len(terrain) and 0 <= p.x < len(terrain[p.y])):
+                continue
+            if terrain[p.y][p.x] == "wall" or (p.x, p.y) in taken:
+                continue
+            cost = FEET_PER_SQUARE * (2 if terrain[p.y][p.x] == "difficult" else 1)
+            if cost <= remaining and distance_feet(p, target) <= range_feet:
+                options.append(p)
+    return min(options, key=lambda p: (chebyshev_distance(p, target), p.y, p.x), default=None)
 
 
 def occupied_squares_by_side(

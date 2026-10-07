@@ -445,3 +445,41 @@ def test_still_attacks_a_target_in_reach_after_the_movement_is_spent() -> None:
     action = choose_monster_action(state, goblin)
 
     assert (action.verb, action.target) == ("attack", "thorin")
+
+
+def test_a_second_attacker_sidesteps_an_ally_instead_of_stopping_short() -> None:
+    """Found with summoned wolves: two creatures converging on one target along the same
+    row - the second reached range on its ally's square, was trimmed back out of range
+    and never attacked. It should step onto a free square that is still in range."""
+    from src.engine.monster_ai import approach_path
+
+    terrain = [["floor"] * 8 for _ in range(3)]
+    path = approach_path(
+        start=Position(x=1, y=0),
+        target=Position(x=6, y=0),
+        speed=50,
+        range_feet=5,
+        terrain=terrain,  # type: ignore[arg-type]
+        blocked={(6, 0)},
+        ally_occupied={(5, 0)},
+    )
+    assert path
+    end = path[-1]
+    assert (end.x, end.y) != (5, 0)
+    assert max(abs(end.x - 6), abs(end.y - 0)) == 1  # adjacent to the target
+
+
+def test_no_sidestep_is_invented_when_the_corridor_has_no_free_square() -> None:
+    from src.engine.monster_ai import approach_path
+
+    terrain = [["floor"] * 8]
+    path = approach_path(
+        start=Position(x=1, y=0),
+        target=Position(x=6, y=0),
+        speed=50,
+        range_feet=5,
+        terrain=terrain,  # type: ignore[arg-type]
+        blocked={(6, 0)},
+        ally_occupied={(5, 0)},
+    )
+    assert path[-1] == Position(x=4, y=0)  # trimmed, as before
