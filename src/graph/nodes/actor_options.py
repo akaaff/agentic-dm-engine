@@ -11,12 +11,24 @@ from src.engine.rules import class_spell_indices, spell_range_feet, weapon_range
 from src.engine.srd_loader import SrdIndex
 from src.engine.state import Character
 
+_SPELL_USAGE_HINTS = {
+    "misty-step": (
+        "teleport: set target to the creature to appear next to, or params.to {x, y} for a square"
+    ),
+    "color-spray": "set targets to the creatures in the cone",
+}
+"""How to fill in the parsed action for the few spells whose target isn't the obvious one.
+Shown only to a character who actually has the spell, next to its name, so the intent parser
+prompt doesn't carry hints for spells nobody in the scene can cast."""
+
 
 def spell_option_line(spell_index: str, srd: SrdIndex) -> str:
     spell = srd.spells.get(spell_index)
     if spell is None:
         return spell_index
-    return f"{spell['name']} ({spell_range_feet(spell)}ft)"
+    hint = _SPELL_USAGE_HINTS.get(spell_index)
+    suffix = f"; {hint}" if hint else ""
+    return f"{spell['name']} ({spell_range_feet(spell)}ft{suffix})"
 
 
 def actor_options_summary(actor: Character, srd: SrdIndex) -> str:

@@ -140,7 +140,8 @@ from src.engine.encounter import (
 )
 from src.engine.events import Event
 from src.engine.movement import can_afford_move, move_cost_feet
-from src.engine.position import Position, distance_feet
+from src.engine.position import Position, chebyshev_distance, distance_feet
+from src.engine.resting import GOODBERRY
 from src.engine.rules import (
     ANIMATE_DEAD_SPELL,
     FIND_FAMILIAR_SPELL,
@@ -914,6 +915,34 @@ def _bless_and_bane(character: Character, rng: random.Random) -> tuple[int, list
     return bless - bane, entries
 
 
+def _spend_banked_die(
+    state: GameState, character: Character, condition_name: ConditionName, rng: random.Random
+) -> int:
+    """Rolls and spends a banked d4 - Guidance's (the next ability check) or Resistance's (the
+    next saving throw), kept as a condition on the creature - and returns it, or 0 with no RNG
+    consumed if there is none. Spending it removes the condition, and if that was the last effect
+    of the caster's concentration, the concentration ends too (the same follow-up a condition
+    that runs out of time gets)."""
+    banked = next((c for c in character.conditions if c.name == condition_name), None)
+    if banked is None:
+        return 0
+    remove_condition(character, condition_name)
+    _handle_expired_conditions(state, [(character, banked)], None)
+    return roll(1, 4, rng=rng).total
+
+
+def _save_dice(
+    state: GameState, character: Character, rng: random.Random
+) -> tuple[int, list[tuple[str, int]]]:
+    """Every die added to or taken from a saving throw: Bless and Bane (see _bless_and_bane) and
+    a banked Resistance d4."""
+    bonus, entries = _bless_and_bane(character, rng)
+    spent = _spend_banked_die(state, character, "spell_resistance", rng)
+    if spent:
+        entries.append(("resistance (1d4)", spent))
+    return bonus + spent, entries
+
+
 def _consume_spell_riders(attacker: Character, target: Character) -> None:
     """Issue #97: Vicious Mockery's disadvantage lasts for the target's NEXT attack
     roll and Guiding Bolt's advantage for the next attack roll AGAINST its
@@ -1042,7 +1071,7 @@ def _sanctuary_blocks(
         except TurnEngineError:
             pass  # no spellcasting to derive a DC from - keep the fallback
 
-    roll_bonus, roll_entries = _bless_and_bane(attacker, rng)
+    roll_bonus, roll_entries = _save_dice(state, attacker, rng)
     result, success = resolve_saving_throw(
         save_bonus=_target_saving_throw_bonus(attacker, "WIS", srd) + roll_bonus,
         dc=dc,
@@ -2347,7 +2376,7 @@ def _check_concentration_break(
     # Bless (issue #57) and Bane (issue #68) apply here too - a concentration
     # save is a real saving throw, not a special case - see
     # _resolve_single_attack's identical handling.
-    roll_bonus, roll_entries = _bless_and_bane(character, rng)
+    roll_bonus, roll_entries = _save_dice(state, character, rng)
     save_bonus = _target_saving_throw_bonus(character, "CON", srd) + roll_bonus
     result, success = resolve_saving_throw(
         save_bonus=save_bonus, dc=dc, rng=rng, lucky=has_lucky_trait(character)
@@ -3051,6 +3080,8 @@ def _resolve_skill_check(
     proficient = skill_key in actor.skill_proficiencies
     expert = skill_key in actor.expertise
     modifier = ability_check_modifier(actor, ability, proficient=proficient, expert=expert)
+    guidance = _spend_banked_die(state, actor, "guidance", rng)  # Guidance's d4
+    modifier += guidance
 
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
@@ -3087,7 +3118,10 @@ def _resolve_skill_check(
                 "roll_total": result.total,
                 "natural": result.kept[0],
                 "success": success,
-                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient, expert),
+                "modifier_breakdown": [
+                    *_ability_check_breakdown(actor, ability, proficient, expert),
+                    *([("guidance (1d4)", guidance)] if guidance else []),
+                ],
                 **({"target": social_target.id} if social_target else {}),
             },
         )
@@ -4019,7 +4053,7 @@ def _cast_save_spell_at_target(
     _end_own_sanctuary(state, actor)
     # Bless (issue #57) / Bane (issue #68) - see _resolve_single_attack's
     # identical handling.
-    roll_bonus, roll_entries = _bless_and_bane(target, rng)
+    roll_bonus, roll_entries = _save_dice(state, target, rng)
     save_bonus = _target_saving_throw_bonus(target, params.dc_ability, srd) + roll_bonus
     result, success = resolve_saving_throw(
         save_bonus=save_bonus,
@@ -4247,6 +4281,10 @@ _SPECIAL_CAST_SPELLS = {
     "find-familiar",
     "animate-dead",
     "animate-objects",
+    "color-spray",
+    "misty-step",
+    "lesser-restoration",
+    "goodberry",
 }
 """Issue #55 spell audit: spells whose real mechanic doesn't fit any of the
 generic attack/save/heal/auto_hit/condition buckets `spell_mechanic`
@@ -4300,45 +4338,42 @@ damage - dropping further below 0 doesn't wake anyone up) and wake the
 target the instant it takes any damage, per SRD."""
 
 
-def _resolve_sleep_spell(
+def _resolve_hp_pool_spell(
     state: GameState,
     actor: Character,
     action: ParsedAction,
     spell: SrdEntry,
-    spell_level: int,
     rng: random.Random,
     srd: SrdIndex,
+    *,
+    dice: tuple[int, int],
+    condition: ConditionName,
+    duration_rounds: int,
+    condition_source: str,
+    is_exempt: Callable[[Character], bool],
 ) -> None:
-    """Sleep (issue #55 spell audit): structurally unlike every other spell
-    mechanic this engine resolves - no attack roll, no saving throw. Real
-    SRD: roll 5d8 as a shared "hit point pool," creatures within 20ft of a
-    chosen point fall unconscious in ascending order of their *current* HP,
-    each one's HP subtracted from the pool, until it runs out; undead and
-    charm-immune creatures are unaffected.
+    """Sleep and Color Spray (issue #55 spell audit): structurally unlike every other spell
+    mechanic this engine resolves - no attack roll, no saving throw. Real SRD: roll a shared "hit
+    point pool," creatures in the area are affected in ascending order of their *current* HP,
+    each one's HP subtracted from the pool, until it runs out; some creatures (undead for Sleep,
+    the unconscious or already-blind for Color Spray) are unaffected.
 
-    This engine has no point/AOE targeting concept (every other spell
-    targets specific character ids), so `action.targets` stands in for
-    "creatures within range of the chosen point" - a documented adaptation,
-    not the literal SRD area-of-effect. Undead/charm-immune targets in the
-    list are silently skipped (not rejected outright - a real caster
-    naming a mixed group of enemies shouldn't have the whole spell fail
-    over one immune creature, matching how a real DM would just narrate
-    "the skeleton is unaffected").
+    This engine has no point/AOE targeting concept (every other spell targets specific character
+    ids), so `action.targets` stands in for "creatures within the area" - a documented
+    adaptation, not the literal SRD area of effect. Exempt targets in the list are silently
+    skipped (not rejected outright - a real caster naming a mixed group of enemies shouldn't have
+    the whole spell fail over one immune creature, matching how a real DM would just narrate "the
+    skeleton is unaffected").
 
-    Duration 1 minute -> 10 rounds. Unlike an ordinary 0-HP unconscious
-    (which never lifts on its own), this specifically ends the instant the
-    sleeper takes ANY damage - see _apply_damage_and_handle_downing's own
-    check for _SLEEP_UNCONSCIOUS_SOURCE.
-
-    Found live: "I cast sleep on the goblins" reliably set only the
-    singular `target` field, not `targets`, even with several goblins
-    visible - the same single-vs-list ambiguity every other multi-target
-    spell already falls back for (see the generic target_ids computation
-    in _resolve_cast_spell), so this does the same rather than rejecting a
-    perfectly reasonable-sounding cast."""
+    Found live: "I cast sleep on the goblins" reliably set only the singular `target` field, not
+    `targets`, even with several goblins visible - the same single-vs-list ambiguity every other
+    multi-target spell already falls back for (see the generic target_ids computation in
+    _resolve_cast_spell), so this does the same rather than rejecting a perfectly reasonable-
+    sounding cast."""
+    name = spell["name"]
     target_ids = action.targets or ([action.target] if action.target else None)
     if not target_ids:
-        raise TurnEngineError("Sleep requires at least one target (creatures within its area)")
+        raise TurnEngineError(f"{name} requires at least one target (creatures within its area)")
 
     range_normal_feet = spell_range_feet(spell)
     candidates: list[Character] = []
@@ -4349,36 +4384,22 @@ def _resolve_sleep_spell(
         _validate_attack_target(actor, target)
         distance = distance_feet(actor.position, target.position)
         if distance > range_normal_feet:
-            raise _out_of_range_error(actor, target, distance, spell["name"], range_normal_feet)
+            raise _out_of_range_error(actor, target, distance, name, range_normal_feet)
         candidates.append(target)
 
-    _end_own_sanctuary(state, actor)  # Sleep affects enemies (issue #61)
-    pool = roll(5, 8, rng=rng).total
+    _end_own_sanctuary(state, actor)  # these affect enemies (issue #61)
+    pool = roll(dice[0], dice[1], rng=rng).total
     state.events.append(
         Event(
             round=state.round,
             turn_index=state.current_turn,
             actor=actor.id,
             type="spell_cast",
-            payload={"spell": spell["name"], "hp_pool": pool},
+            payload={"spell": name, "hp_pool": pool},
         )
     )
 
-    # Undead/charm-immune creatures are unaffected - checked directly
-    # against the vendored monster `type` field (not
-    # monster_is_undead_or_fiend, which also exempts fiends - Sleep's own
-    # SRD text only exempts undead) and the existing condition-immunity
-    # helper for charm.
-    eligible = [
-        c
-        for c in candidates
-        if not c.is_dead
-        and not (
-            c.monster_index is not None
-            and srd.monsters.get(c.monster_index, {}).get("type") == "undead"
-        )
-        and not monster_is_immune_to_condition(c, "charmed", srd)
-    ]
+    eligible = [c for c in candidates if not c.is_dead and not is_exempt(c)]
     eligible.sort(key=lambda c: c.hp)
 
     remaining = pool
@@ -4390,7 +4411,12 @@ def _resolve_sleep_spell(
         remaining -= target.hp
         apply_condition(
             target,
-            Condition(name="unconscious", duration_rounds=10, source=_SLEEP_UNCONSCIOUS_SOURCE),
+            Condition(
+                name=condition,
+                duration_rounds=duration_rounds,
+                source=condition_source,
+                spell=name,
+            ),
         )
         state.events.append(
             Event(
@@ -4398,9 +4424,286 @@ def _resolve_sleep_spell(
                 turn_index=state.current_turn,
                 actor=target.id,
                 type="condition_applied",
-                payload={"condition": "unconscious", "source": "sleep"},
+                payload={"condition": condition, "source": name.lower()},
             )
         )
+
+
+def _resolve_sleep_spell(
+    state: GameState,
+    actor: Character,
+    action: ParsedAction,
+    spell: SrdEntry,
+    spell_level: int,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """Sleep: 5d8 hit points of creatures fall unconscious for a minute (10 rounds), except
+    undead (checked against the stat block's `type`, not monster_is_undead_or_fiend, which also
+    exempts fiends - Sleep's own text only exempts undead) and anything immune to charm. Unlike
+    an ordinary 0-HP unconscious this ends the instant the sleeper takes ANY damage - see
+    _apply_damage_and_handle_downing's check for _SLEEP_UNCONSCIOUS_SOURCE."""
+    _resolve_hp_pool_spell(
+        state,
+        actor,
+        action,
+        spell,
+        rng,
+        srd,
+        dice=(5, 8),
+        condition="unconscious",
+        duration_rounds=10,
+        condition_source=_SLEEP_UNCONSCIOUS_SOURCE,
+        is_exempt=lambda c: (
+            (
+                c.monster_index is not None
+                and srd.monsters.get(c.monster_index, {}).get("type") == "undead"
+            )
+            or monster_is_immune_to_condition(c, "charmed", srd)
+        ),
+    )
+
+
+def _resolve_color_spray(
+    state: GameState,
+    actor: Character,
+    action: ParsedAction,
+    spell: SrdEntry,
+    rng: random.Random,
+    srd: SrdIndex,
+) -> None:
+    """Color Spray: 6d10 hit points of creatures are blinded until the end of the caster's next
+    turn (two round-ticks here). Creatures that are unconscious, already blind or immune to being
+    blinded are unaffected - the SRD skips them when counting off the pool."""
+    _resolve_hp_pool_spell(
+        state,
+        actor,
+        action,
+        spell,
+        rng,
+        srd,
+        dice=(6, 10),
+        condition="blinded",
+        duration_rounds=2,
+        condition_source=actor.id,
+        is_exempt=lambda c: (
+            has_condition(c, "unconscious")
+            or has_condition(c, "blinded")
+            or monster_is_immune_to_condition(c, "blinded", srd)
+        ),
+    )
+
+
+MISTY_STEP_RANGE_FEET = 30
+
+
+def _resolve_misty_step(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry
+) -> None:
+    """Misty Step: a bonus action to teleport up to 30 ft to an unoccupied square. No path or
+    movement budget is involved - and no opportunity attacks, since nothing walks away. The
+    destination is a square (`params['to']`/`params['destination']`, or the last square of a
+    `params['path']`) or a creature to appear beside (`target`): the nearest free square to that
+    creature that is within 30 ft of the caster. Teleporting out of reach of a grappler frees the
+    caster (the grappled condition is dropped). 'A space you can see' isn't checked - the engine
+    has no line of sight."""
+    if state.battle_map is None:
+        raise TurnEngineError("there is no battlefield to teleport across")
+    destination: Position | None = None
+    raw = action.params.get("to") or action.params.get("destination")
+    if raw is None and action.params.get("path"):
+        raw = action.params["path"][-1]
+    # A named creature wins over a square: asked to appear "behind the goblin", the model also
+    # fills `to` with the goblin's own (occupied) square, which would make the cast fail.
+    if action.target is None and isinstance(raw, dict) and "x" in raw and "y" in raw:
+        destination = Position(x=int(raw["x"]), y=int(raw["y"]))
+    elif action.target is not None:
+        anchor = state.characters.get(action.target)
+        if anchor is None:
+            raise TurnEngineError(f"Unknown spell target: {action.target}")
+        # The free square closest to that creature among those the caster can reach - right
+        # beside it when it is within range, as near as 30 ft allows when it is not.
+        reachable = [
+            Position(x=x, y=y)
+            for y in range(state.battle_map.height)
+            for x in range(state.battle_map.width)
+            if state.battle_map.terrain[y][x] != "wall"
+            and distance_feet(actor.position, Position(x=x, y=y)) <= MISTY_STEP_RANGE_FEET
+            and not any(
+                not c.is_dead and c.id != actor.id and c.position == Position(x=x, y=y)
+                for c in state.characters.values()
+            )
+        ]
+        if not reachable:
+            raise TurnEngineError(f"{spell['name']} has nowhere to land")
+        destination = min(
+            reachable, key=lambda p: (chebyshev_distance(p, anchor.position), p.y, p.x)
+        )
+    if destination is None:
+        raise TurnEngineError(
+            f"{spell['name']} needs a destination square or a creature to appear beside"
+        )
+
+    battle_map = state.battle_map
+    if not (0 <= destination.x < battle_map.width and 0 <= destination.y < battle_map.height):
+        raise TurnEngineError(f"{spell['name']}: ({destination.x}, {destination.y}) is off the map")
+    if battle_map.terrain[destination.y][destination.x] == "wall":
+        raise TurnEngineError(f"{spell['name']}: that square is a wall")
+    if any(
+        not c.is_dead and c.id != actor.id and c.position == destination
+        for c in state.characters.values()
+    ):
+        raise TurnEngineError(f"{spell['name']}: that square is occupied")
+    if distance_feet(actor.position, destination) > MISTY_STEP_RANGE_FEET:
+        raise TurnEngineError(
+            f"{spell['name']} reaches at most {MISTY_STEP_RANGE_FEET} ft - that square is "
+            f"{distance_feet(actor.position, destination)} ft away"
+        )
+
+    origin = actor.position
+    actor.position = destination
+    remove_condition(actor, "grappled")
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "to": {"x": destination.x, "y": destination.y}},
+        )
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="move",
+            payload={
+                "from": {"x": origin.x, "y": origin.y},
+                "to": {"x": destination.x, "y": destination.y},
+                "dashed": False,
+                "teleported": True,
+            },
+        )
+    )
+
+
+_LESSER_RESTORATION_ORDER: tuple[ConditionName, ...] = (
+    "paralyzed",
+    "blinded",
+    "deafened",
+    "poisoned",
+)
+
+
+def _resolve_lesser_restoration(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry
+) -> None:
+    """Lesser Restoration: touch a creature and end one condition - blinded, deafened, paralyzed
+    or poisoned (the SRD also lists one disease, which this engine has no model of). The caster's
+    words pick which when several are present (`poison`, `blind`, `deaf`, `paraly...`); with no
+    hint, the most disabling goes first. Naming no target means yourself. Rejected - before the
+    slot is spent - when the target has nothing it can cure."""
+    target = state.characters.get(action.target) if action.target else actor
+    if target is None:
+        raise TurnEngineError(f"Unknown spell target: {action.target}")
+    if target.is_pc != actor.is_pc:
+        raise TurnEngineError(
+            f"{actor.id} cannot cast {spell['name']} on {target.id} - not an ally"
+        )
+    distance = distance_feet(actor.position, target.position)
+    if distance > spell_range_feet(spell):
+        raise _out_of_range_error(actor, target, distance, spell["name"], spell_range_feet(spell))
+    present = [name for name in _LESSER_RESTORATION_ORDER if has_condition(target, name)]
+    if not present:
+        raise TurnEngineError(
+            f"{target.id} has no condition {spell['name']} can end (blinded, deafened, paralyzed, "
+            "poisoned)"
+        )
+    hint = f"{action.raw_text} {action.params.get('condition', '')}".lower()
+    keys: dict[ConditionName, str] = {
+        "poisoned": "poison",
+        "blinded": "blind",
+        "deafened": "deaf",
+        "paralyzed": "paraly",
+    }
+    chosen = next((n for n in present if keys[n] in hint), present[0])
+    remove_condition(target, chosen)
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "target": target.id},
+        )
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=target.id,
+            type="condition_removed",
+            payload={"condition": chosen, "spell": spell["name"], "reason": "cured"},
+        )
+    )
+
+
+GOODBERRY_COUNT = 10
+
+
+def _resolve_goodberry(state: GameState, actor: Character, spell: SrdEntry) -> None:
+    """Goodberry: conjures ten berries into the caster's inventory. Eating one is an action (the
+    `use_item` verb, see _resolve_goodberry_use) that restores a single hit point - which is the
+    SRD's own number, so it is slow healing, not a bug. The SRD's berries last 24 hours; here a
+    long rest clears them (resting.GOODBERRY)."""
+    actor.inventory.extend([GOODBERRY] * GOODBERRY_COUNT)
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "berries": GOODBERRY_COUNT},
+        )
+    )
+
+
+def _is_goodberry(item_name: str) -> bool:
+    words = item_name.strip().lower().replace("-", " ").split()
+    return any(w.startswith("goodberr") or w in ("berry", "berries") for w in words)
+
+
+def _resolve_goodberry_use(state: GameState, actor: Character, action: ParsedAction) -> None:
+    """Eating a Goodberry: one berry, one hit point, an action. Another creature within reach
+    can be fed one instead (`target`) - the SRD lets any creature use its action to eat one."""
+    eater = state.characters.get(action.target) if action.target else actor
+    if eater is None:
+        raise TurnEngineError(f"Unknown target: {action.target}")
+    if eater.is_pc != actor.is_pc:
+        raise TurnEngineError("a Goodberry can only be eaten by an ally")
+    if distance_feet(actor.position, eater.position) > 5:
+        raise TurnEngineError(f"{eater.id} is too far away to hand a berry to")
+    if GOODBERRY not in actor.inventory:
+        raise TurnEngineError(f"{actor.id} has no goodberry to eat")
+    actor.inventory.remove(GOODBERRY)
+    healed = min(1, eater.max_hp - eater.hp)
+    eater.hp += healed
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="hp_change",
+            payload={
+                "amount": healed,
+                "source": "goodberry",
+                "target": eater.id,
+                "hp_remaining": eater.hp,
+            },
+        )
+    )
+    _revive_if_healed(state, actor, eater)
 
 
 _SHILLELAGH_WEAPONS = ("club", "quarterstaff")
@@ -5193,6 +5496,14 @@ def _resolve_cast_spell(
                     _resolve_shillelagh(state, actor, action, spell)
                 elif is_utility_spell(normalized):
                     _record_utility_cast(state, actor, action, spell, normalized)
+                elif normalized == "color-spray":
+                    _resolve_color_spray(state, actor, action, spell, rng, srd)
+                elif normalized == "misty-step":
+                    _resolve_misty_step(state, actor, action, spell)
+                elif normalized == "lesser-restoration":
+                    _resolve_lesser_restoration(state, actor, action, spell)
+                elif normalized == "goodberry":
+                    _resolve_goodberry(state, actor, spell)
                 elif normalized == "animate-objects":
                     _resolve_animate_objects(state, actor, action, spell, srd)
                     concentration_started = True  # begun inside, before the objects appear
@@ -5268,7 +5579,9 @@ def _resolve_cast_spell(
     # naming anyone else is a real rules error, not something to quietly
     # redirect.
     self_only = mechanic == "condition" and spell.get("range") == "Self"
-    if not target_ids and self_only:
+    if not target_ids and (
+        self_only or (mechanic == "condition" and condition_spell_spec(spell).default_to_self)
+    ):
         target_ids = [actor.id]
     if not target_ids:
         raise TurnEngineError("cast_spell action requires a target")
@@ -5445,6 +5758,9 @@ def _resolve_use_item(
     item_name = action.item_or_spell
     if not item_name:
         raise TurnEngineError("use_item action requires item_or_spell (the item name)")
+    if _is_goodberry(item_name):
+        _resolve_goodberry_use(state, actor, action)
+        return
     if not _is_healing_potion(item_name):
         raise TurnEngineError(
             f"Don't know how to use {item_name!r} - only a healing potion "
@@ -5911,6 +6227,13 @@ def resolve_action(
             # actor's real action next. Applies to every actor - a human who
             # types "I dash" for a short hop simply keeps their action.
             _resolve_move(state, actor, action.model_copy(update={"verb": "move"}), rng, srd)
+            ends_turn = actor.is_dead or actor.hp <= 0
+        elif has_condition(actor, "expeditious_retreat") and not actor.bonus_action_used:
+            # Expeditious Retreat: Dash is a bonus action while the spell lasts, so the
+            # actor still has their action. (The cast itself used this turn's bonus
+            # action, so the first benefit is next turn.)
+            actor.bonus_action_used = True
+            _resolve_move(state, actor, action, rng, srd)
             ends_turn = actor.is_dead or actor.hp <= 0
         else:
             _resolve_move(state, actor, action, rng, srd)
