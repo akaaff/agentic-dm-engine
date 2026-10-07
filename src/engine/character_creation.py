@@ -619,6 +619,9 @@ def create_character(
     class_resources = dict(CLASS_RESOURCES_AT_LEVEL_1.get(class_index, {}))
     if class_index == "bard":
         class_resources["bardic_inspiration"] = max(1, ability_modifier(final_scores["CHA"]))
+    if class_index == "paladin":
+        # Divine Sense (issue #87): 1 + Charisma modifier uses per long rest.
+        class_resources["divine_sense"] = max(1, 1 + ability_modifier(final_scores["CHA"]))
 
     return Character(
         id=character_id,
@@ -883,6 +886,11 @@ def level_up(
     if character.class_index == "bard":
         character.class_resources["bardic_inspiration"] = max(
             1, ability_modifier(character.stats["CHA"])
+        )
+    if character.class_index == "paladin":
+        # Divine Sense (issue #87) scales with CHA, which an ASI may just have raised.
+        character.class_resources["divine_sense"] = max(
+            1, 1 + ability_modifier(character.stats["CHA"])
         )
 
     # Known-spell growth (issue #30, Bard/Sorcerer): mirrors the ASI block's

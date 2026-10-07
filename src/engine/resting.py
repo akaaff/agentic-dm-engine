@@ -39,7 +39,7 @@ _max_class_resources's output (currently "rage" and "ki") recovers on a
 long rest instead - see apply_long_rest."""
 
 
-def _max_class_resources(class_index: str | None, level: int) -> dict[str, int]:
+def _max_class_resources(class_index: str | None, level: int, cha_mod: int = 0) -> dict[str, int]:
     """Every class_resource's current max for `class_index` at `level` -
     CLASS_RESOURCES_AT_LEVEL_1's fixed value for Second Wind/Rage (a
     documented simplification: those don't scale with level in this
@@ -57,6 +57,12 @@ def _max_class_resources(class_index: str | None, level: int) -> dict[str, int]:
         resources["wild_shape"] = 2
     if class_index == "paladin":
         resources["lay_on_hands"] = LAY_ON_HANDS_PER_LEVEL * level  # a pool, not uses (#86)
+        resources["divine_sense"] = max(1, 1 + cha_mod)  # issue #87
+    if class_index == "bard":
+        # Charisma-keyed like Divine Sense, so it can't come from the flat per-level
+        # table - a long rest used to rebuild class_resources from that table alone and
+        # silently wipe a bard's Bardic Inspiration.
+        resources["bardic_inspiration"] = max(1, cha_mod)
     return resources
 
 
@@ -82,7 +88,9 @@ def apply_short_rest(party: list[Character], rng: random.Random) -> None:
     whenever available is consistent, not a new kind of simplification.
     """
     for character in party:
-        max_resources = _max_class_resources(character.class_index, character.level)
+        max_resources = _max_class_resources(
+            character.class_index, character.level, ability_modifier(character.stats["CHA"])
+        )
         for resource in _SHORT_REST_RESOURCES:
             if resource in max_resources:
                 character.class_resources[resource] = max_resources[resource]
@@ -157,6 +165,8 @@ def apply_long_rest(party: list[Character]) -> None:
         )
         character.hit_dice_remaining = character.level
         set_exhaustion_level(character, character.exhaustion_level - 1)
-        character.class_resources = _max_class_resources(character.class_index, character.level)
+        character.class_resources = _max_class_resources(
+            character.class_index, character.level, ability_modifier(character.stats["CHA"])
+        )
         character.is_raging = False
         character.used_relentless_endurance_this_rest = False

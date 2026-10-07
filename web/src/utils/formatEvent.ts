@@ -131,6 +131,20 @@ export function formatEvent(
         highlight: { text: `+${amount} HP`, color: HEAL_COLOR },
       }
     }
+    case 'divine_sense': {
+      // Paladin's Divine Sense (issue #87): who it picked up within 60 ft.
+      const detected: { id?: unknown }[] = Array.isArray(p.detected) ? p.detected : []
+      const names = detected
+        .map((d) => characterName(typeof d.id === 'string' ? d.id : '', characters))
+        .join(', ')
+      return {
+        key: event.id,
+        color,
+        label: detected.length
+          ? `${actorName}'s Divine Sense detects: ${names}`
+          : `${actorName}'s Divine Sense finds nothing within 60 ft`,
+      }
+    }
     case 'death':
       return { key: event.id, color, label: `${actorName} has fallen` }
     case 'relentless_endurance':

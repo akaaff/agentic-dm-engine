@@ -2959,6 +2959,41 @@ def _use_class_resource(actor: Character, resource: str) -> None:
     actor.class_resources[resource] = remaining - 1
 
 
+DIVINE_SENSE_RANGE_FEET = 60
+
+
+def _resolve_divine_sense(state: GameState, actor: Character, srd: SrdIndex) -> None:
+    """Paladin's Divine Sense (issue #87): an action that spends one of the 1 + CHA
+    daily uses to learn where every celestial, fiend and undead creature within
+    60 ft is. The event lists them (id and kind) for the narrator and the log. "Not
+    behind total cover" isn't modeled - this engine has no cover."""
+    if actor.class_index != "paladin":
+        raise TurnEngineError(f"{actor.id} doesn't have Divine Sense")
+    _use_class_resource(actor, "divine_sense")
+    found = []
+    for other in state.characters.values():
+        if other.is_dead or other.id == actor.id or other.monster_index is None:
+            continue
+        kind = srd.monsters.get(other.monster_index, {}).get("type")
+        if kind in ("celestial", "fiend", "undead") and (
+            distance_feet(actor.position, other.position) <= DIVINE_SENSE_RANGE_FEET
+        ):
+            found.append({"id": other.id, "kind": kind})
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="divine_sense",
+            payload={
+                "range": DIVINE_SENSE_RANGE_FEET,
+                "detected": found,
+                "uses_remaining": actor.class_resources["divine_sense"],
+            },
+        )
+    )
+
+
 def _resolve_lay_on_hands(state: GameState, actor: Character, action: ParsedAction) -> None:
     """Paladin's Lay on Hands (issue #86): a pool of 5 x level healing points
     (class_resources["lay_on_hands"]); as an action, touch a creature and spend
@@ -5235,6 +5270,8 @@ def resolve_action(
         ends_turn = _resolve_second_wind(state, actor, rng)
     elif action.verb == "lay_on_hands":
         _resolve_lay_on_hands(state, actor, action)
+    elif action.verb == "divine_sense":
+        _resolve_divine_sense(state, actor, srd)
     elif action.verb == "rage":
         ends_turn = _resolve_rage(state, actor, rng)
     elif action.verb == "equip":
