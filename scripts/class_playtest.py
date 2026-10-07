@@ -1533,12 +1533,13 @@ def static_checks(srd: SrdIndex) -> list[dict[str, Any]]:
             "no expertise field" if not has else "ok",
         )
 
-    # Class features surfaced anywhere for the player?
+    # Class features surfaced anywhere for the player? (Issue #103: listed on the class
+    # endpoint - ClassDetail.features - and shown on the creator preview and the sheet.)
+    from src.engine.class_features import level_1_features
+
     for cls in BUILDS:
-        c, _ = try_create(cls)
-        if c:
-            names = [f for f in c.model_fields if "feature" in f]
-            rec(cls, "class features list on the character", bool(names), f"fields: {names}")
+        names = [f.name for f in level_1_features(cls)]
+        rec(cls, "class features listed for the player", bool(names), f"features: {names}")
 
     # Cantrips / spell lists available per class at level 0 and 1.
     from src.engine.rules import class_spell_indices

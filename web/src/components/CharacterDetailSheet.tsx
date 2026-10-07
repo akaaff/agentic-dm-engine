@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type EquipmentSummary, type SpellSummary } from '../api/client'
+import { api, type ClassFeature, type EquipmentSummary, type SpellSummary } from '../api/client'
 import type { CombatAttackSummary, CombatSummary, LiveCharacter } from '../ws/sessionClient'
 import ConditionBadges from './ConditionBadges'
 import InfoTip from './InfoTip'
@@ -109,12 +109,14 @@ export default function CharacterDetailSheet({
   combatSummary?: CombatSummary
 }) {
   const [cantrips, setCantrips] = useState<SpellSummary[]>([])
+  const [features, setFeatures] = useState<ClassFeature[]>([])
   const [knownSpellsPool, setKnownSpellsPool] = useState<SpellSummary[]>([])
   const [equipment, setEquipment] = useState<EquipmentSummary[]>([])
 
   useEffect(() => {
     if (!character.class_index) {
       setCantrips([])
+      setFeatures([])
       setKnownSpellsPool([])
       return
     }
@@ -124,6 +126,7 @@ export default function CharacterDetailSheet({
       .then((detail) => {
         if (cancelled) return
         setCantrips(detail.cantrips)
+        setFeatures(detail.features)
         // Issue #30 - the class's real level-1 spell pool, cross-referenced
         // below against character.known_spells (which classes actually know)
         // for display detail, same "pool + this character's own picks"
@@ -302,6 +305,20 @@ export default function CharacterDetailSheet({
           unarmed strike is available (no ki cost). Unarmored Defense: AC
           already includes your WIS bonus while unarmored and shieldless.
         </p>
+      )}
+
+      {features.length > 0 && (
+        <div>
+          <strong>Class features:</strong>
+          <ul className="detail-action-list">
+            {features.map((f) => (
+              <li key={f.name}>
+                {f.name}
+                <InfoTip text={f.note ? `${f.desc} (${f.note})` : f.desc} />
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {resourceEntries.length > 0 && (
