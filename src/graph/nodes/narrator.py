@@ -20,7 +20,7 @@ def character_label(character: Character) -> str:
     prompt names someone, so a model with several similar party members can
     tell them apart and has each one's class next to the name instead of an
     opaque id."""
-    if character.is_pc and character.class_:
+    if character.is_pc and character.class_ and character.summoned_by is None:
         return f"{character.name} the {character.class_.lower()}"
     return character.name
 
@@ -177,6 +177,16 @@ def narrator_node(state: GraphState) -> dict[str, Any]:
     # occasional hallucination, same honest framing as issue #16's CJK
     # mitigation.
     cast_names = ", ".join(sorted({labels[cid] for cid in characters}))
+    # A conjured creature (issue #56) fights for its summoner's side - say so, or the
+    # narrator treats it as one more monster ("closing in on the druid").
+    for creature in characters.values():
+        if creature.summoned_by in characters:
+            summoner = characters[creature.summoned_by]
+            side = "the party" if creature.is_pc else "the enemy"
+            cast_names += (
+                f". {labels[creature.id]} was conjured by {labels[summoner.id]} "
+                f"and fights for {side}"
+            )
     prompt = load_prompt("narrator").format(events_summary=events_summary, cast_names=cast_names)
     # Retried the same way chat_english_only already retries on a CJK leak
     # (issue #16) - a real independent sample, not a deterministic failure -

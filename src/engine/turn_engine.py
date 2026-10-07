@@ -206,7 +206,12 @@ from src.engine.state import (
     GameState,
     WildShapeSnapshot,
 )
-from src.engine.summons import dismiss_summons
+from src.engine.summons import (
+    SummonError,
+    add_combatant,
+    dismiss_summons,
+    find_open_square,
+)
 from src.engine.turn_order import next_turn
 
 _DICE_NOTATION_RE = re.compile(r"(\d+)d(\d+)([+-]\d+)?")
@@ -4217,6 +4222,7 @@ _SPECIAL_CAST_SPELLS = {
     "mage-armor",
     "shield-of-faith",
     "shillelagh",
+    "conjure-animals",
 }
 """Issue #55 spell audit: spells whose real mechanic doesn't fit any of the
 generic attack/save/heal/auto_hit/condition buckets `spell_mechanic`
@@ -4422,6 +4428,69 @@ def _resolve_shillelagh(
             payload={"spell": spell["name"], "weapon": weapon},
         )
     )
+
+
+CONJURE_ANIMALS_BEAST = "dire-wolf"
+CONJURE_ANIMALS_COUNT = 2
+"""Conjure Animals (issue #56, phase B): the SRD lets the caster pick one of four
+options - 1 beast of CR 2, 2 of CR 1, 4 of CR 1/2 or 8 of CR 1/4. This engine has no
+picker for a spell's sub-choice yet (Arcane Recovery makes its choice for you the same
+way), so it always conjures the second option: two dire wolves (CR 1). Fewer, tougher
+creatures is also the option that keeps a fight's log readable - every conjured creature
+adds a turn, and each turn is a narrated beat. No upcasting exists in the engine, so the
+slot-level scaling (twice as many with a 5th-level slot) is not modeled."""
+
+
+def _resolve_conjure_animals(
+    state: GameState, actor: Character, spell: SrdEntry, srd: SrdIndex
+) -> None:
+    """Conjure Animals (issue #56, phase B): conjures CONJURE_ANIMALS_COUNT beasts onto the
+    nearest free squares to the caster (within the spell's range), friendly to the caster
+    and driven by monster_ai (it already attacks the nearest hostile, closing the distance
+    first). They last as long as the caster's concentration - ending it for any reason,
+    including casting this again, dismisses them (see _end_concentration) - and vanish
+    when they reach 0 HP (a summoned creature dies outright rather than going down).
+
+    Everything that can reject the cast is checked before anything changes, because the
+    caller refunds the slot on a TurnEngineError. Concentration is begun here, BEFORE the
+    beasts are added: starting it drops the caster's previous concentration, and for a
+    re-cast that previous spell is this same spell - beginning it afterwards would
+    dismiss the creatures just conjured."""
+    template = srd.monsters.get(CONJURE_ANIMALS_BEAST)
+    if template is None:
+        raise TurnEngineError(f"unknown monster {CONJURE_ANIMALS_BEAST!r}")
+    range_feet = spell_range_feet(spell)
+    squares: list[Position] = []
+    taken: set[tuple[int, int]] = set()
+    for _ in range(CONJURE_ANIMALS_COUNT):
+        try:
+            square = find_open_square(state, actor.position, taken)
+        except SummonError as exc:
+            raise TurnEngineError(f"{spell['name']} has nowhere to put the beasts: {exc}") from exc
+        if distance_feet(actor.position, square) > range_feet:
+            raise TurnEngineError(f"{spell['name']} has no free space within {range_feet} ft")
+        squares.append(square)
+        taken.add((square.x, square.y))
+
+    _begin_concentration(state, actor, spell["name"], srd)
+    beasts: list[Character] = []
+    for square in squares:
+        stem = f"{actor.id}_{CONJURE_ANIMALS_BEAST.replace('-', '_')}"
+        n = 1
+        while f"{stem}_{n}" in state.characters or any(b.id == f"{stem}_{n}" for b in beasts):
+            n += 1
+        beasts.append(monster_to_character(template, f"{stem}_{n}", square))
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "summoned": [b.id for b in beasts]},
+        )
+    )
+    for beast in beasts:
+        add_combatant(state, beast, actor, spell["name"])
 
 
 def _resolve_true_strike(state: GameState, actor: Character, spell: SrdEntry) -> None:
@@ -4822,6 +4891,7 @@ def _resolve_cast_spell(
         # mechanic resolves the actual effect), so those two steps happen
         # here too rather than being duplicated inside each resolver.
         if normalized in _SPECIAL_CAST_SPELLS:
+            concentration_started = False
             if spell_level > 0:
                 remaining = actor.spell_slots.get(spell_level, 0)
                 if remaining <= 0:
@@ -4840,6 +4910,9 @@ def _resolve_cast_spell(
                     _resolve_false_life(state, actor, action, spell, rng)
                 elif normalized == "shillelagh":
                     _resolve_shillelagh(state, actor, action, spell)
+                elif normalized == "conjure-animals":
+                    _resolve_conjure_animals(state, actor, spell, srd)
+                    concentration_started = True  # begun inside, before the beasts appear
                 else:  # mage-armor, shield-of-faith
                     _resolve_ac_buff_spell(state, actor, action, spell, srd)
             except TurnEngineError:
@@ -4850,7 +4923,7 @@ def _resolve_cast_spell(
                 if spell_level > 0:
                     actor.spell_slots[spell_level] += 1
                 raise
-            if spell.get("concentration"):
+            if spell.get("concentration") and not concentration_started:
                 _begin_concentration(state, actor, spell["name"], srd)
 
             if is_bonus_action:
