@@ -157,6 +157,12 @@ class Character(BaseModel):
     """The SRD monster index of this caster's Find Familiar form (issue #56), or None.
     A familiar outlasts any one fight, so it lives on the caster (and is persisted); each
     encounter conjures it afresh - see encounter.place_familiar."""
+    undead_servants: list[str] = []
+    """Animate Dead (issue #56): the SRD monster indices of the undead this caster has raised
+    and still controls. They outlast a fight, so they live on the caster (and are persisted);
+    each encounter conjures them afresh - see encounter.place_undead_servant."""
+    raised: bool = False
+    """A corpse Animate Dead has already used - it can only be raised once."""
     summon_spell: str | None = None
     """The spell that conjured it, so ending that spell's concentration can find it."""
     monster_index: str | None = None

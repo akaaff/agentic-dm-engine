@@ -998,10 +998,16 @@ async def _autoplay_non_human_turns(session: Session) -> None:
             # still fail to close the distance (blocked, or out of speed),
             # and with nothing ever mutating game_state, this while loop
             # never terminated on its own before this fallback existed.
+            # An unconscious actor can only make a death save - turn_engine rejects every
+            # other verb, end_turn included - so the breaker's own fallback has to be one.
+            # Found as an intermittent test hang: a downed companion's turn kept failing,
+            # the breaker's end_turn was rejected too, and after 60 iterations autoplay
+            # gave up silently, leaving the client waiting for a message that never came.
+            downed = actor.hp <= 0 and not actor.is_dead
             parsed_action = ParsedAction(
                 actor=current_actor_id,
-                verb="end_turn",
-                raw_text="(forced end_turn after repeated invalid actions)",
+                verb="death_save" if downed else "end_turn",
+                raw_text="(forced action after repeated invalid actions)",
             )
             forced_end_turn = True
         elif not is_party_member(actor):

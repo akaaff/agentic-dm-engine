@@ -24,7 +24,7 @@ from src.api.main import app
 from src.api.ws.session import create_session, reset_sessions
 from src.engine.actions import ParsedAction
 from src.engine.position import Position
-from src.engine.state import Character, GameState
+from src.engine.state import Character, Condition, GameState
 from src.graph.graph_builder import build_graph
 from src.graph.state_schema import GraphState
 
@@ -178,3 +178,48 @@ def test_forced_end_turn_after_repeated_invalid_actions_still_narrates_something
     # stuck retrying forever.
     final_state = state_updates[-1]
     assert final_state["turn_order"][final_state["current_turn"]] == human.id
+
+
+def test_the_breaker_makes_a_downed_companion_roll_a_death_save_instead_of_ending_its_turn() -> (
+    None
+):
+    """Found as an intermittent hang in the persistence tests: a downed companion's turn kept
+    failing, the breaker's forced end_turn was rejected too (an unconscious actor can only make a
+    death save), and autoplay gave up silently after 60 iterations - the client then waited for an
+    awaiting_input that never came."""
+    human = _human()
+    companion = _companion()
+    companion.hp = 0
+    companion.conditions.append(Condition(name="unconscious", duration_rounds=None, source="0 HP"))
+    monster = _monster()
+    game_state = GameState(
+        encounter_id="downed_breaker_test",
+        characters={c.id: c for c in (companion, human, monster)},
+        turn_order=[companion.id, human.id, monster.id],
+        current_turn=0,
+        round=1,
+    )
+    create_session(
+        "test-downed-breaker",
+        game_state,
+        human_character_ids={"tok-oen": human.id},
+        graph=build_graph(
+            narrator_fn=_stub_narrator,
+            player_agent_fn=_stub_player_agent_always_invalid,
+            scene_image_fn=_stub_scene_image,
+        ),
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws/session/test-downed-breaker?token=tok-oen") as ws:
+        for _ in range(100):  # a regression hangs here (the faulthandler timeout dumps it)
+            msg = ws.receive_json()
+            if msg["type"] == "awaiting_input":
+                assert msg["actor"] == human.id
+                break
+        else:
+            pytest.fail("autoplay never handed the turn back to the human")
+
+    assert any(e.type == "saving_throw" for e in game_state.events) or any(
+        e.actor == companion.id for e in game_state.events
+    )

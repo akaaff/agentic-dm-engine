@@ -268,10 +268,12 @@ def _autoplay_combat_encounter(
             # out of speed) now that turn_engine enforces attack range -
             # without this a stuck monster would burn the whole max_turns
             # budget retrying the same rejected attack.
+            # A downed actor can only make a death save, end_turn included being rejected.
+            downed = actor.hp <= 0 and not actor.is_dead
             parsed_action = ParsedAction(
                 actor=actor.id,
-                verb="end_turn",
-                raw_text="(forced end_turn after repeated invalid actions)",
+                verb="death_save" if downed else "end_turn",
+                raw_text="(forced action after repeated invalid actions)",
             )
         elif not is_party_member(actor):
             # Monsters (and summoned creatures) never reach player_agent/intent_parser at all - the
