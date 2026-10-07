@@ -145,6 +145,41 @@ export function formatEvent(
         label: `${actorName} ${success ? 'breaks free of the grapple' : 'fails to break free'}`,
       }
     }
+    case 'divine_sense': {
+      // Paladin's Divine Sense (issue #87): who it picked up within 60 ft.
+      const detected: { id?: unknown }[] = Array.isArray(p.detected) ? p.detected : []
+      const names = detected
+        .map((d) => characterName(typeof d.id === 'string' ? d.id : '', characters))
+        .join(', ')
+      return {
+        key: event.id,
+        color,
+        label: detected.length
+          ? `${actorName}'s Divine Sense detects: ${names}`
+          : `${actorName}'s Divine Sense finds nothing within 60 ft`,
+      }
+    }
+    case 'temp_hp': {
+      // Temporary hit points (issue #94): gained from a spell/feature, or soaked up
+      // by damage (a negative change).
+      const change = typeof p.change === 'number' ? p.change : 0
+      const target = characterName(typeof p.target === 'string' ? p.target : event.actor, characters)
+      if (change < 0) {
+        return {
+          key: event.id,
+          color,
+          label: `${target}'s temporary HP soak up damage`,
+          highlight: { text: `${change} temp HP`, color: HEAL_COLOR },
+        }
+      }
+      const source = typeof p.source === 'string' ? ` (${p.source})` : ''
+      return {
+        key: event.id,
+        color,
+        label: `${target} gains temporary HP${source}`,
+        highlight: { text: `+${change} temp HP`, color: HEAL_COLOR },
+      }
+    }
     case 'death':
       return { key: event.id, color, label: `${actorName} has fallen` }
     case 'relentless_endurance':

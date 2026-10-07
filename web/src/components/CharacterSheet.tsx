@@ -52,6 +52,7 @@ export default function CharacterSheet({
       </div>
       <div className="hp-label">
         HP {character.hp}/{character.max_hp}
+        {(character.temp_hp ?? 0) > 0 && ` (+${character.temp_hp} temp)`}
         {character.is_dead && ' - dead'}
         {!character.is_dead && character.hp <= 0 && (character.is_stable ? ' - stable' : ' - unconscious')}
       </div>

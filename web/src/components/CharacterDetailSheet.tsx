@@ -73,6 +73,8 @@ const RESOURCE_HINTS: Record<string, string> = {
   second_wind: 'Bonus action: heal 1d10 + your level, once per short or long rest.',
   lay_on_hands:
     'A pool of healing points (5 per paladin level, refilled on a long rest). As an action, touch a creature and spend any number of points to heal that many hit points.',
+  divine_sense:
+    'Action: sense the location of any celestial, fiend or undead within 60 feet. 1 + your Charisma modifier uses, refilled on a long rest.',
   rage: 'Bonus action: resistance to bludgeoning/piercing/slashing damage and bonus melee damage, until a rest.',
   ki: 'Fuels Flurry of Blows and other Monk features - regained on a short or long rest.',
   wild_shape: "Action: transform into a beast you've seen, regained on a short or long rest.",
@@ -224,7 +226,8 @@ export default function CharacterDetailSheet({
         <div className="hp-bar-fill" style={{ width: `${hpPct}%` }} />
       </div>
       <div className="hp-label">
-        HP {character.hp}/{character.max_hp} - AC {character.ac}
+        HP {character.hp}/{character.max_hp}
+        {(character.temp_hp ?? 0) > 0 && ` (+${character.temp_hp} temp)`} - AC {character.ac}
         {character.is_dead && ' - dead'}
         {!character.is_dead &&
           character.hp <= 0 &&
@@ -402,7 +405,10 @@ export default function CharacterDetailSheet({
             </li>
           )}
           {character.class_index === 'paladin' && (
-            <li>Lay on Hands (touch: spend pool points to heal)</li>
+            <>
+              <li>Lay on Hands (touch: spend pool points to heal)</li>
+              <li>Divine Sense (detect celestials, fiends and undead within 60 ft)</li>
+            </>
           )}
           {cantrips.length > 0 && (
             <li>

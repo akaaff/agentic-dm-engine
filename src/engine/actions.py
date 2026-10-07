@@ -28,6 +28,7 @@ ActionVerb = Literal[
     "shove",
     "second_wind",
     "lay_on_hands",
+    "divine_sense",
     "rage",
     "equip",
     "offhand_attack",

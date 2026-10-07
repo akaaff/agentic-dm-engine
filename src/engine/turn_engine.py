@@ -2377,6 +2377,7 @@ def _apply_damage_and_handle_downing(
     # substring-matching rationale. int() truncation matches SRD's
     # "resistance halves damage, rounded down" for the 0.5 case.
     damage = int(damage * monster_damage_multiplier(target, damage_type, srd))
+    total_damage = damage  # before temporary hit points soak any of it
 
     # Sleep (issue #55): unlike the ordinary "downed at 0 HP" unconscious,
     # which never lifts on its own, a Sleep-induced one ends the instant
@@ -2397,6 +2398,21 @@ def _apply_damage_and_handle_downing(
         if sleeping is not None:
             remove_condition(target, "unconscious")
 
+    # Temporary hit points (issue #94) absorb damage first; whatever is left reaches
+    # real HP. The concentration check and Sleep above still count the whole hit.
+    absorbed = min(target.temp_hp, damage)
+    if absorbed:
+        target.temp_hp -= absorbed
+        damage -= absorbed
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=target.id,
+                type="temp_hp",
+                payload={"target": target.id, "change": -absorbed, "temp_hp": target.temp_hp},
+            )
+        )
     actual_loss = apply_damage(target, damage)
 
     # Druid's Wild Shape (issue #24): the beast form, not the Druid's real
@@ -2485,7 +2501,7 @@ def _apply_damage_and_handle_downing(
             },
         )
     )
-    _check_concentration_break(state, target, damage, rng, srd)
+    _check_concentration_break(state, target, total_damage, rng, srd)
     if target.hp > 0 or target.is_dead:
         return
 
@@ -2500,6 +2516,7 @@ def _apply_damage_and_handle_downing(
                 payload={"killed_by": attacker.id},
             )
         )
+        _dark_ones_blessing(state, attacker)
         return
 
     if has_condition(target, "unconscious"):
@@ -2534,6 +2551,58 @@ def _apply_damage_and_handle_downing(
     # no save involved, unlike a hit that leaves you standing. Placed after
     # the unconscious event so existing event-order expectations hold.
     _end_concentration(state, target, srd)
+
+
+def grant_temp_hp(
+    state: GameState, source: Character, target: Character, amount: int, why: str
+) -> bool:
+    """Gives `target` `amount` temporary hit points (issue #94). They never stack: a
+    grant only takes effect if it is larger than what the target already has, and
+    otherwise nothing changes (returns False). Emits a `temp_hp` event."""
+    if amount <= target.temp_hp:
+        return False
+    target.temp_hp = amount
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=source.id,
+            type="temp_hp",
+            payload={"target": target.id, "change": amount, "temp_hp": amount, "source": why},
+        )
+    )
+    return True
+
+
+def _dark_ones_blessing(state: GameState, killer: Character) -> None:
+    """Warlock's Fiend patron feature (issue #91; the SRD's only patron, so every SRD
+    warlock has it): when you reduce a hostile creature to 0 hit points you gain
+    temporary hit points equal to your Charisma modifier + your warlock level
+    (minimum 1)."""
+    if killer.class_index != "warlock" or not killer.is_pc or killer.is_dead:
+        return
+    amount = max(1, ability_modifier(killer.stats["CHA"]) + killer.level)
+    grant_temp_hp(state, killer, killer, amount, "Dark One's Blessing")
+
+
+def _resolve_false_life(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry, rng: random.Random
+) -> None:
+    """False Life (issue #94): 1d4 + 4 temporary hit points on yourself. (Casting it at
+    a higher slot level isn't modeled - the engine has no upcasting.)"""
+    if action.target not in (None, actor.id):
+        raise TurnEngineError("False Life can only be cast on yourself")
+    amount = roll(1, 4, modifier=4, rng=rng).total
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "effect": "temporary hit points"},
+        )
+    )
+    grant_temp_hp(state, actor, actor, amount, spell["name"])
 
 
 def _apply_hazard_damage(state: GameState, actor: Character, position: Position) -> None:
@@ -3088,6 +3157,41 @@ def _use_class_resource(actor: Character, resource: str) -> None:
     if remaining <= 0:
         raise TurnEngineError(f"{actor.id} has no {resource.replace('_', ' ')} uses remaining")
     actor.class_resources[resource] = remaining - 1
+
+
+DIVINE_SENSE_RANGE_FEET = 60
+
+
+def _resolve_divine_sense(state: GameState, actor: Character, srd: SrdIndex) -> None:
+    """Paladin's Divine Sense (issue #87): an action that spends one of the 1 + CHA
+    daily uses to learn where every celestial, fiend and undead creature within
+    60 ft is. The event lists them (id and kind) for the narrator and the log. "Not
+    behind total cover" isn't modeled - this engine has no cover."""
+    if actor.class_index != "paladin":
+        raise TurnEngineError(f"{actor.id} doesn't have Divine Sense")
+    _use_class_resource(actor, "divine_sense")
+    found = []
+    for other in state.characters.values():
+        if other.is_dead or other.id == actor.id or other.monster_index is None:
+            continue
+        kind = srd.monsters.get(other.monster_index, {}).get("type")
+        if kind in ("celestial", "fiend", "undead") and (
+            distance_feet(actor.position, other.position) <= DIVINE_SENSE_RANGE_FEET
+        ):
+            found.append({"id": other.id, "kind": kind})
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="divine_sense",
+            payload={
+                "range": DIVINE_SENSE_RANGE_FEET,
+                "detected": found,
+                "uses_remaining": actor.class_resources["divine_sense"],
+            },
+        )
+    )
 
 
 def _resolve_lay_on_hands(state: GameState, actor: Character, action: ParsedAction) -> None:
@@ -4035,6 +4139,7 @@ def _cast_heal_spell_at_target(
 
 
 _SPECIAL_CAST_SPELLS = {
+    "false-life",
     "spare-the-dying",
     "sleep",
     "true-strike",
@@ -4660,6 +4765,8 @@ def _resolve_cast_spell(
                     _resolve_sleep_spell(state, actor, action, spell, spell_level, rng, srd)
                 elif normalized == "true-strike":
                     _resolve_true_strike(state, actor, spell)
+                elif normalized == "false-life":
+                    _resolve_false_life(state, actor, action, spell, rng)
                 elif normalized == "shillelagh":
                     _resolve_shillelagh(state, actor, action, spell)
                 else:  # mage-armor, shield-of-faith
@@ -5371,6 +5478,8 @@ def resolve_action(
         _resolve_escape_grapple(state, actor, rng, srd)
     elif action.verb == "ready":
         _resolve_ready(state, actor, action, srd)
+    elif action.verb == "divine_sense":
+        _resolve_divine_sense(state, actor, srd)
     elif action.verb == "rage":
         ends_turn = _resolve_rage(state, actor, rng)
     elif action.verb == "equip":
