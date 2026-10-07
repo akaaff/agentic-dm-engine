@@ -42,6 +42,7 @@ EventType = Literal[
     "sanctuary_blocked",
     "protection",
     "divine_sense",
+    "temp_hp",
 ]
 
 

@@ -44,6 +44,7 @@ from src.engine.rules import (
     class_spell_indices,
     effective_speed,
     is_unarmed_phrase,
+    normalize_skill_name,
     normalize_spell_name,
     spell_mechanic,
     spell_range_feet,
@@ -525,6 +526,63 @@ def _append_dropped_attack(
     return [*actions, attack]
 
 
+_SKILL_PHRASE_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("survival", r"\b(?:track|tracks|tracking|forage|foraging|navigate|trail)\b"),
+    (
+        "sleight-of-hand",
+        r"\bpick(?:ing)?\b.{0,25}\b(?:pockets?|purse)|\bpickpocket|\bpalm(?:ing)?\b"
+        r"|\bpick(?:ing)? (?:the|a) lock",
+    ),
+    (
+        "acrobatics",
+        r"\b(?:tumble|tumbling|somersault|cartwheel|flip over|keep my balance)\b",
+    ),
+    (
+        "stealth",
+        r"\b(?:sneak|creep|tiptoe|skulk)(?:s|ing)?\b.{0,20}\bpast\b"
+        r"|\bstealth check\b",
+    ),
+)
+_SKILL_PHRASES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (skill, re.compile(pattern, re.IGNORECASE)) for skill, pattern in _SKILL_PHRASE_PATTERNS
+)
+"""Issue #101: in-character phrasing the model maps to the wrong skill, or to a plain
+move. First match wins, so the order is by how specific the wording is."""
+
+
+def _normalize_skill_phrase(action: ParsedAction, utterance: str | None) -> ParsedAction:
+    """Issue #101: "I study the ground to track the goblins" came back as Perception,
+    "I pick the goblin's pocket" as Stealth, and "I tumble past the goblin" / "I make a
+    stealth check to sneak past" as a `move` toward it. When the player's own words
+    clearly name the skill, a skill_check carries it (and a move that was really a
+    sneak/tumble past someone becomes the check). Only skill_check and move/dash are
+    touched, and only on these specific phrasings."""
+    if action.verb not in ("skill_check", "move", "dash", "use_item") or not utterance:
+        return action
+    for skill, pattern in _SKILL_PHRASES:
+        if not pattern.search(utterance):
+            continue
+        if action.verb == "skill_check":
+            if normalize_skill_name(str(action.params.get("skill", ""))) == skill:
+                return action
+        elif action.verb == "use_item":
+            if skill != "sleight-of-hand":
+                continue  # "I pick his pocket" parsed as using an item called "pocket"
+        elif skill not in ("stealth", "acrobatics"):
+            continue  # a move is only ever a mis-parsed sneak/tumble, never a track/pickpocket
+        params = {k: v for k, v in action.params.items() if k != "path"}
+        params["skill"] = skill
+        return action.model_copy(
+            update={
+                "verb": "skill_check",
+                "params": params,
+                "target": None if action.verb != "skill_check" else action.target,
+                "item_or_spell": None,
+            }
+        )
+    return action
+
+
 def _hide_as_cunning_action(action: ParsedAction, game_state: GameState) -> ParsedAction:
     """A Rogue of level 2+ with their bonus action free who says "I hide"
     (issue #84) gets Cunning Action's bonus-action Hide: it costs them
@@ -590,6 +648,7 @@ def _postprocess_action(
     action = _promote_stray_target(action)
     action = _promote_stray_item_or_spell(action)
     action = _resolve_move_target(action, game_state)
+    action = _normalize_skill_phrase(action, utterance)
     action = _hide_as_cunning_action(action, game_state)
     action = _default_attack_target(action, game_state)
     action = _default_self_target(action, game_state, utterance)

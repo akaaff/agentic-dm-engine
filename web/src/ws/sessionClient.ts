@@ -25,6 +25,7 @@ export interface LiveCharacter {
   is_companion: boolean
   hp: number
   max_hp: number
+  temp_hp?: number
   ac: number
   position: { x: number; y: number }
   conditions: LiveCondition[]

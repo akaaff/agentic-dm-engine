@@ -160,6 +160,7 @@ def apply_long_rest(party: list[Character]) -> None:
     flow can actually reach, so it's left alone rather than guessed at."""
     for character in party:
         character.hp = character.max_hp
+        character.temp_hp = 0  # temporary hit points last until a long rest at most
         character.spell_slots = dict(
             SPELL_SLOTS_BY_LEVEL.get(character.class_index or "", {}).get(character.level, {})
         )
