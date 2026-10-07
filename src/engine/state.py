@@ -44,6 +44,9 @@ ConditionName = Literal[
     "shielded",
     "hidden",
     "outlined",
+    "mocked",
+    "chilled",
+    "guided",
     "shillelagh",
 ]
 """Exhaustion isn't in this list - SRD exhaustion is a leveled (0-6) effect
