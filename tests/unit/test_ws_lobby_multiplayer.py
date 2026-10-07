@@ -340,7 +340,16 @@ async def test_reconnecting_mid_session_without_eviction_resumes_with_correct_aw
             thorin_state["game_state"]["current_turn"]
         ]
         if current_actor == "thorin":
-            awaiting = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+            # Not necessarily the very next message: the connect flow's autoplay
+            # runs in worker threads now and may broadcast another state_update
+            # first - so wait for the awaiting_input itself.
+            async def _next_awaiting() -> dict[str, Any]:
+                while True:
+                    message: dict[str, Any] = json.loads(await ws.recv())
+                    if message["type"] == "awaiting_input":
+                        return message
+
+            awaiting = await asyncio.wait_for(_next_awaiting(), timeout=5)
             assert awaiting == {"type": "awaiting_input", "actor": "thorin"}
 
     session = ws_session_module._sessions[session_id]
