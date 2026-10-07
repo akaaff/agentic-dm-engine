@@ -1409,6 +1409,7 @@ def condition_save_disadvantage(character: Character) -> bool:
 
 
 FIND_FAMILIAR_SPELL = "Find Familiar"
+ANIMATE_DEAD_SPELL = "Animate Dead"
 
 FAMILIAR_FORMS: dict[str, str] = {
     "bat": "bat",

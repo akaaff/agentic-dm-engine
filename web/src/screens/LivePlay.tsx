@@ -6,7 +6,7 @@ import NarrationFeed from '../components/NarrationFeed'
 import SceneImagePanel from '../components/SceneImagePanel'
 import { buildActorColorMap } from '../utils/actorColors'
 import { computeResourceQuickActions } from '../utils/resourceQuickActions'
-import { useSessionSocket } from '../ws/sessionClient'
+import { useSessionSocket, type LiveCharacter } from '../ws/sessionClient'
 
 export default function LivePlay({
   sessionId,
@@ -43,6 +43,12 @@ export default function LivePlay({
     sendProtectionResponse,
     sendPartyChoiceResponse,
   } = useSessionSocket(sessionId)
+  // Everyone seen so far. A summoned creature can leave the fight (its spell ends) and an
+  // old log line about it would otherwise show its raw id instead of its name.
+  const [knownCharacters, setKnownCharacters] = useState<Record<string, LiveCharacter>>({})
+  if (gameState && Object.entries(gameState.characters).some(([id, c]) => knownCharacters[id] !== c)) {
+    setKnownCharacters({ ...knownCharacters, ...gameState.characters })
+  }
   const [draft, setDraft] = useState('')
   const [choiceDraft, setChoiceDraft] = useState('')
   const mine = useMemo(() => new Set(myCharacterIds), [myCharacterIds])
@@ -250,7 +256,7 @@ export default function LivePlay({
         </div>
         <NarrationFeed
           entries={narrationLog}
-          characters={gameState?.characters ?? {}}
+          characters={knownCharacters}
           actorColors={actorColors}
           debugMode={debugMode}
         />

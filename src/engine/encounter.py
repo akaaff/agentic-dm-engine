@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from src.engine.events import Event
 from src.engine.position import BattleMap, Position
 from src.engine.rules import (
+    ANIMATE_DEAD_SPELL,
     FIND_FAMILIAR_SPELL,
     ability_modifier,
     monster_innate_spellcasting,
@@ -196,7 +197,30 @@ def build_encounter_state(
     for caster in party_characters:
         if caster.familiar:
             place_familiar(state, caster, caster.familiar, srd)
+        for number, form in enumerate(caster.undead_servants, start=1):
+            place_undead_servant(state, caster, form, srd, number)
     return state
+
+
+def place_undead_servant(
+    state: GameState,
+    caster: Character,
+    form: str,
+    srd: SrdIndex,
+    number: int,
+    at: Position | None = None,
+) -> Character:
+    """Brings one of `caster`'s Animate Dead servants into the fight as the given SRD monster
+    (a zombie or skeleton), at `at` if given (the raised corpse's square) or else the nearest free
+    square to the caster. Its id is numbered so several servants stay distinct."""
+    template = srd.monsters.get(form)
+    if template is None:
+        raise GameStateBuildError(f"Unknown undead form: {form}")
+    square = at or find_open_square(state, caster.position, set())
+    servant = monster_to_character(template, f"{caster.id}_undead_{number}", square)
+    servant.name = f"{caster.name}'s {template['name'].lower()} {number}"
+    add_combatant(state, servant, caster, ANIMATE_DEAD_SPELL)
+    return servant
 
 
 def place_familiar(state: GameState, caster: Character, form: str, srd: SrdIndex) -> Character:

@@ -94,6 +94,9 @@ class CharacterRecord(Base):
     expertise: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
     """Rogue Expertise (issue #85) - decided at creation and needed from the first
     check of a live session, so persisted from the start."""
+    undead_servants: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    """Animate Dead (issue #56): the undead a caster has raised and still controls - they outlast a
+    fight, so they are persisted like the familiar."""
     familiar: Mapped[str | None] = mapped_column(default=None)
     """Find Familiar (issue #56): the SRD monster index of the caster's familiar form. It outlasts
     any one fight, and a live session builds its characters from reloaded rows, so it is
