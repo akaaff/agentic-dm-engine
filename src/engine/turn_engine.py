@@ -174,6 +174,7 @@ from src.engine.rules import (
     multiattack_sub_actions,
     normalize_skill_name,
     normalize_spell_name,
+    passive_insight,
     passive_perception,
     protected_from_evil_disadvantage,
     resolve_attack,
@@ -894,6 +895,7 @@ def _consume_spell_riders(attacker: Character, target: Character) -> None:
     roll and Guiding Bolt's advantage for the next attack roll AGAINST its
     target - each is spent by the attack that has just had it counted."""
     remove_condition(attacker, "mocked")
+    remove_condition(attacker, "distracted")
     remove_condition(target, "guided")
 
 
@@ -3026,9 +3028,14 @@ def _resolve_skill_check(
         ability in ("STR", "DEX") and has_non_proficient_armor(actor, srd)
     ) or condition_check_disadvantage(actor)
 
+    # Social checks aimed at an enemy (issue #102) are contested by its passive Insight
+    # rather than the flat default DC, and a success does something to it.
+    social_target = _social_target(state, actor, action, skill)
+    dc = passive_insight(social_target, srd) if social_target else DEFAULT_SKILL_CHECK_DC
+
     result, success = resolve_skill_check(
         modifier=modifier,
-        dc=DEFAULT_SKILL_CHECK_DC,
+        dc=dc,
         rng=rng,
         advantage=advantage,
         disadvantage=disadvantage,
@@ -3043,12 +3050,60 @@ def _resolve_skill_check(
             payload={
                 "skill": skill,
                 "ability": ability,
-                "dc": DEFAULT_SKILL_CHECK_DC,
+                "dc": dc,
                 "roll_total": result.total,
                 "natural": result.kept[0],
                 "success": success,
                 "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient, expert),
+                **({"target": social_target.id} if social_target else {}),
             },
+        )
+    )
+    if social_target is not None and success:
+        _apply_social_effect(state, actor, social_target, skill, srd)
+
+
+_SOCIAL_EFFECTS: dict[str, ConditionName] = {
+    "intimidation": "frightened",
+    "persuasion": "charmed",
+    "deception": "distracted",
+}
+"""Issue #102: what a successful social check does to its target, for one round - small
+and deterministic, giving the social half of the Bard/Barbarian/Rogue kit a mechanical
+consequence. Intimidation frightens it (disadvantage on its attacks and checks);
+Persuasion charms it (it can't attack the speaker); Deception distracts it
+(disadvantage on its next attack, like Vicious Mockery's)."""
+
+
+def _social_target(
+    state: GameState, actor: Character, action: ParsedAction, skill: str
+) -> Character | None:
+    """The living enemy a social check is aimed at, or None for any other check - an
+    ordinary check (or one at an ally, or with no target) keeps the flat default DC."""
+    if normalize_skill_name(skill) not in _SOCIAL_EFFECTS or not action.target:
+        return None
+    target = state.characters.get(action.target)
+    if target is None or target.is_dead or target.is_pc == actor.is_pc:
+        return None
+    return target
+
+
+def _apply_social_effect(
+    state: GameState, actor: Character, target: Character, skill: str, srd: SrdIndex
+) -> None:
+    condition = _SOCIAL_EFFECTS[normalize_skill_name(skill)]
+    if monster_is_immune_to_condition(target, condition, srd):
+        return  # e.g. a mindless creature can't be charmed or frightened
+    apply_condition(
+        target, Condition(name=condition, duration_rounds=1, source=actor.id, spell=skill)
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=target.id,
+            type="condition_applied",
+            payload={"condition": condition, "source": skill, "by": actor.id},
         )
     )
 

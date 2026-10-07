@@ -274,6 +274,8 @@ export function formatEvent(
     case 'skill_check': {
       const skill = typeof p.skill === 'string' ? p.skill : 'check'
       const success = p.success === true
+      // A social check aimed at an enemy (issue #102) names who it was aimed at.
+      const targetText = typeof p.target === 'string' ? ` on ${characterName(p.target, characters)}` : ''
       const natural = typeof p.natural === 'number' ? p.natural : null
       const rollTotal = typeof p.roll_total === 'number' ? p.roll_total : null
       const breakdownText = debugMode
@@ -282,7 +284,7 @@ export function formatEvent(
       return {
         key: event.id,
         color,
-        label: `${actorName}'s ${skill} check - ${success ? 'success' : 'fail'}${breakdownText}`,
+        label: `${actorName}'s ${skill} check${targetText} - ${success ? 'success' : 'fail'}${breakdownText}`,
       }
     }
     case 'grapple_attempt':

@@ -165,6 +165,18 @@ def shield_spell_bonus(character: Character) -> int:
     return 5 if has_condition(character, "shielded") else 0
 
 
+def passive_insight(character: Character, srd: SrdIndex) -> int:
+    """10 + Wisdom modifier (+ proficiency with Insight) - what a Persuasion, Deception
+    or Intimidation check against this creature has to beat (issue #102). A monster
+    uses its stat block's Insight bonus when it lists one."""
+    if character.monster_index is not None:
+        for entry in srd.monsters.get(character.monster_index, {}).get("proficiencies", []):
+            if entry.get("proficiency", {}).get("index") == "skill-insight":
+                return 10 + int(entry.get("value", 0))
+    bonus = character.proficiency_bonus if "skill-insight" in character.skill_proficiencies else 0
+    return 10 + ability_modifier(character.stats["WIS"]) + bonus
+
+
 def passive_perception(character: Character, srd: SrdIndex) -> int:
     """10 + Wisdom modifier (+ proficiency with Perception) for a PC; a
     monster's own stat-block figure (a monster has no skill list here, its
@@ -1369,6 +1381,7 @@ def condition_attack_disadvantage(actor: Character, target: Character, distance_
         or has_condition(actor, "prone")
         or has_condition(actor, "frightened")
         or has_condition(actor, "mocked")
+        or has_condition(actor, "distracted")
         or actor.exhaustion_level >= 3
         or has_condition(target, "invisible")
         or has_condition(target, "hidden")
