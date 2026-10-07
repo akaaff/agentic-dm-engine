@@ -350,6 +350,11 @@ real field would have been, with no other code path changes."""
 
 _SPELL_CLASS_OVERRIDES: dict[str, set[str]] = {
     "faerie-fire": {"bard"},
+    # Issue #91: the Fiend patron's expanded spell list (the SRD's only warlock
+    # patron) - at level 1 that is Burning Hands and Command, available to every
+    # SRD warlock on top of the class list.
+    "burning-hands": {"warlock"},
+    "command": {"warlock"},
 }
 """Live-found (Bard character creation): real SRD 5e has Faerie Fire as a
 Bard spell too, but the vendored 5e-SRD-Spells.json's own `classes` list
