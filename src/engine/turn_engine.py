@@ -121,6 +121,7 @@ from __future__ import annotations
 
 import random
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from src.engine.actions import ParsedAction
@@ -220,6 +221,11 @@ from src.engine.summons import (
     dismiss_summons,
     find_open_square,
     remove_combatant,
+)
+from src.engine.synthetic_monsters import (
+    ANIMATED_OBJECT_COST,
+    ANIMATED_OBJECT_TABLE,
+    animated_object_index,
 )
 from src.engine.turn_order import next_turn
 
@@ -4239,6 +4245,7 @@ _SPECIAL_CAST_SPELLS = {
     "conjure-animals",
     "find-familiar",
     "animate-dead",
+    "animate-objects",
 }
 """Issue #55 spell audit: spells whose real mechanic doesn't fit any of the
 generic attack/save/heal/auto_hit/condition buckets `spell_mechanic`
@@ -4584,56 +4591,157 @@ adds a turn, and each turn is a narrated beat. No upcasting exists in the engine
 slot-level scaling (twice as many with a 5th-level slot) is not modeled."""
 
 
-def _resolve_conjure_animals(
-    state: GameState, actor: Character, spell: SrdEntry, srd: SrdIndex
-) -> None:
-    """Conjure Animals (issue #56, phase B): conjures CONJURE_ANIMALS_COUNT beasts onto the
-    nearest free squares to the caster (within the spell's range), friendly to the caster
-    and driven by monster_ai (it already attacks the nearest hostile, closing the distance
-    first). They last as long as the caster's concentration - ending it for any reason,
-    including casting this again, dismisses them (see _end_concentration) - and vanish
-    when they reach 0 HP (a summoned creature dies outright rather than going down).
+def _conjure_creatures(
+    state: GameState,
+    actor: Character,
+    spell: SrdEntry,
+    srd: SrdIndex,
+    template: SrdEntry,
+    count: int,
+    stem: str,
+    what: str,
+    name_for: Callable[[int], str] | None = None,
+) -> list[Character]:
+    """The part Conjure Animals and Animate Objects share: put `count` creatures built from
+    `template` on the nearest free squares to the caster (within the spell's range), start the
+    caster's concentration, log the cast, and add them to the fight (see engine/summons.py).
+    They are friendly to the caster and driven by monster_ai (it attacks the nearest hostile,
+    closing the distance first). They last as long as the caster's concentration - ending it
+    for any reason, including casting this again, dismisses them (see _end_concentration) - and
+    vanish when they reach 0 HP (a summoned creature dies outright rather than going down).
 
     Everything that can reject the cast is checked before anything changes, because the
     caller refunds the slot on a TurnEngineError. Concentration is begun here, BEFORE the
-    beasts are added: starting it drops the caster's previous concentration, and for a
+    creatures are added: starting it drops the caster's previous concentration, and for a
     re-cast that previous spell is this same spell - beginning it afterwards would
     dismiss the creatures just conjured."""
-    template = srd.monsters.get(CONJURE_ANIMALS_BEAST)
-    if template is None:
-        raise TurnEngineError(f"unknown monster {CONJURE_ANIMALS_BEAST!r}")
     range_feet = spell_range_feet(spell)
     squares: list[Position] = []
     taken: set[tuple[int, int]] = set()
-    for _ in range(CONJURE_ANIMALS_COUNT):
+    for _ in range(count):
         try:
             square = find_open_square(state, actor.position, taken)
         except SummonError as exc:
-            raise TurnEngineError(f"{spell['name']} has nowhere to put the beasts: {exc}") from exc
+            raise TurnEngineError(f"{spell['name']} has nowhere to put the {what}: {exc}") from exc
         if distance_feet(actor.position, square) > range_feet:
             raise TurnEngineError(f"{spell['name']} has no free space within {range_feet} ft")
         squares.append(square)
         taken.add((square.x, square.y))
 
     _begin_concentration(state, actor, spell["name"], srd)
-    beasts: list[Character] = []
+    creatures: list[Character] = []
     for square in squares:
-        stem = f"{actor.id}_{CONJURE_ANIMALS_BEAST.replace('-', '_')}"
         n = 1
-        while f"{stem}_{n}" in state.characters or any(b.id == f"{stem}_{n}" for b in beasts):
+        while f"{stem}_{n}" in state.characters or any(c.id == f"{stem}_{n}" for c in creatures):
             n += 1
-        beasts.append(monster_to_character(template, f"{stem}_{n}", square))
+        creature = monster_to_character(template, f"{stem}_{n}", square)
+        if name_for is not None:
+            creature.name = name_for(n)
+        creatures.append(creature)
     state.events.append(
         Event(
             round=state.round,
             turn_index=state.current_turn,
             actor=actor.id,
             type="spell_cast",
-            payload={"spell": spell["name"], "summoned": [b.id for b in beasts]},
+            payload={"spell": spell["name"], "summoned": [c.id for c in creatures]},
         )
     )
-    for beast in beasts:
-        add_combatant(state, beast, actor, spell["name"])
+    for creature in creatures:
+        add_combatant(state, creature, actor, spell["name"])
+    return creatures
+
+
+def _resolve_conjure_animals(
+    state: GameState, actor: Character, spell: SrdEntry, srd: SrdIndex
+) -> None:
+    """Conjure Animals (issue #56, phase B): conjures CONJURE_ANIMALS_COUNT beasts - see
+    _conjure_creatures for how they are placed, driven and ended."""
+    template = srd.monsters.get(CONJURE_ANIMALS_BEAST)
+    if template is None:
+        raise TurnEngineError(f"unknown monster {CONJURE_ANIMALS_BEAST!r}")
+    _conjure_creatures(
+        state,
+        actor,
+        spell,
+        srd,
+        template,
+        CONJURE_ANIMALS_COUNT,
+        f"{actor.id}_{CONJURE_ANIMALS_BEAST.replace('-', '_')}",
+        "beasts",
+    )
+
+
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+ANIMATE_OBJECTS_DEFAULT_COUNT = 3
+
+
+def _animate_objects_choice(action: ParsedAction) -> tuple[str, int | None]:
+    """The size and (if given) number of objects an Animate Objects cast names - read from
+    `params["size"]`/`params["count"]` or found in the caster's own words, the same
+    deterministic extraction Protection from Energy and Find Familiar use. Size defaults to
+    Small; the count is None when none was named. Several different sizes in one cast aren't
+    modeled (the first one found wins)."""
+    text = " ".join(
+        str(v) for v in (action.params.get("size"), action.params.get("count"), action.raw_text)
+    ).lower()
+    size = next(
+        (s for s in ANIMATED_OBJECT_TABLE if re.search(rf"\b{s}\b", text)),
+        "small",
+    )
+    count: int | None = None
+    for token in re.findall(r"\b(?:10|[1-9]|" + "|".join(_NUMBER_WORDS) + r")\b", text):
+        count = _NUMBER_WORDS.get(token) or int(token)
+        break
+    return size, count
+
+
+def _resolve_animate_objects(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry, srd: SrdIndex
+) -> None:
+    """Animate Objects (issue #56, phase E): animates a few ordinary objects as constructs
+    whose statistics come from their size (engine/synthetic_monsters.py). Size and number come
+    from the cast (default: three Small objects); the spell's ten slots bound them - a Medium
+    object takes two, a Large four, a Huge eight - and asking for more is refused before
+    anything changes. They then behave exactly like Conjure Animals' creatures.
+
+    Simplifications: this engine has no objects in a scene, so they appear on the nearest free
+    squares to the caster rather than being picked from the furniture; the SRD's bonus-action
+    commands and 'defend yourself if given no orders' are replaced by monster_ai simply
+    fighting; and a mix of sizes in one cast isn't modeled. (This srd's version of the spell
+    is a one-action cast, so it needs no bonus action either.)"""
+    size, named_count = _animate_objects_choice(action)
+    cost = ANIMATED_OBJECT_COST[size]
+    most = 10 // cost
+    count = named_count if named_count is not None else min(ANIMATE_OBJECTS_DEFAULT_COUNT, most)
+    if count > most:
+        raise TurnEngineError(
+            f"{spell['name']} can animate at most {most} {size} object(s) (ten slots, "
+            f"{cost} each) - {count} is too many"
+        )
+    template = srd.monsters[animated_object_index(size)]
+    _conjure_creatures(
+        state,
+        actor,
+        spell,
+        srd,
+        template,
+        count,
+        f"{actor.id}_object",
+        "objects",
+        name_for=lambda n: f"{actor.name}'s animated object {n}",
+    )
 
 
 def _resolve_true_strike(state: GameState, actor: Character, spell: SrdEntry) -> None:
@@ -5054,6 +5162,9 @@ def _resolve_cast_spell(
                     _resolve_false_life(state, actor, action, spell, rng)
                 elif normalized == "shillelagh":
                     _resolve_shillelagh(state, actor, action, spell)
+                elif normalized == "animate-objects":
+                    _resolve_animate_objects(state, actor, action, spell, srd)
+                    concentration_started = True  # begun inside, before the objects appear
                 elif normalized == "animate-dead":
                     _resolve_animate_dead(state, actor, action, spell, srd)
                 elif normalized == "find-familiar":

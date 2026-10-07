@@ -16,6 +16,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from src.engine.synthetic_monsters import SYNTHETIC_MONSTERS
+
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "srd"
 
 SrdEntry = dict[str, Any]
@@ -51,7 +53,9 @@ def _load_indexed(data_dir: Path, filename: str) -> dict[str, SrdEntry]:
 @cache
 def load_srd(data_dir: Path = DEFAULT_DATA_DIR) -> SrdIndex:
     return SrdIndex(
-        monsters=_load_indexed(data_dir, "5e-SRD-Monsters.json"),
+        # The spell-defined creatures (Animate Objects) join the real stat blocks - see
+        # engine/synthetic_monsters.py. A real SRD entry always wins on an index clash.
+        monsters={**SYNTHETIC_MONSTERS, **_load_indexed(data_dir, "5e-SRD-Monsters.json")},
         spells=_load_indexed(data_dir, "5e-SRD-Spells.json"),
         equipment=_load_indexed(data_dir, "5e-SRD-Equipment.json"),
         equipment_categories=_load_indexed(data_dir, "5e-SRD-Equipment-Categories.json"),

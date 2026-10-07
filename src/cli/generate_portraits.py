@@ -237,6 +237,8 @@ def _generate_monster_portraits(pipe: FluxPipeline, srd: SrdIndex, limit: int | 
     for monster in sorted(srd.monsters.values(), key=lambda m: m["index"]):
         if limit is not None and generated >= limit:
             break
+        if monster.get("synthetic"):
+            continue  # spell-defined (Animate Objects), not an SRD monster
         out_path = MONSTER_DIR / f"{monster['index']}.png"
         if out_path.exists():
             continue
