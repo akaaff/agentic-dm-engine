@@ -389,6 +389,8 @@ export default function CharacterDetailSheet({
           <li>Disengage{character.disengaged_this_turn && ' (already used this turn)'}</li>
           <li>Help</li>
           <li>Grapple / Shove</li>
+          <li>Escape a grapple (Athletics or Acrobatics vs. the grappler)</li>
+          <li>Ready an attack (fires when an enemy comes into reach)</li>
           <li>Skill Check</li>
           <li>Use Item</li>
           <li>Stabilize a dying ally</li>

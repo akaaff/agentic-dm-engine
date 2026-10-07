@@ -121,6 +121,11 @@ class Character(BaseModel):
     ac: int
     position: Position
     conditions: list[Condition] = []
+    readied_attack: dict[str, str | None] | None = None
+    """The Ready action (issue #100): `{"target": id | None, "weapon": name | None}` - a
+    melee/ranged attack held until a hostile (the named one, if any) moves into this
+    character's reach, spending the reaction. Cleared when it fires and at the start
+    of the character's next turn."""
     spell_slots: dict[int, int] = {}
     """Spell level -> slots remaining."""
     innate_spell_uses_remaining: dict[str, int] = {}

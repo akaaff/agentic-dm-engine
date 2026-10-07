@@ -131,6 +131,20 @@ export function formatEvent(
         highlight: { text: `+${amount} HP`, color: HEAL_COLOR },
       }
     }
+    case 'ready':
+      return { key: event.id, color, label: `${actorName} readies an attack` }
+    case 'readied_attack': {
+      const target = characterName(p.target, characters)
+      return { key: event.id, color, label: `${actorName}'s readied attack triggers on ${target}` }
+    }
+    case 'grapple_escape': {
+      const success = p.success === true
+      return {
+        key: event.id,
+        color,
+        label: `${actorName} ${success ? 'breaks free of the grapple' : 'fails to break free'}`,
+      }
+    }
     case 'divine_sense': {
       // Paladin's Divine Sense (issue #87): who it picked up within 60 ft.
       const detected: { id?: unknown }[] = Array.isArray(p.detected) ? p.detected : []

@@ -41,6 +41,9 @@ EventType = Literal[
     "mirror_image",
     "sanctuary_blocked",
     "protection",
+    "grapple_escape",
+    "ready",
+    "readied_attack",
     "divine_sense",
     "temp_hp",
 ]

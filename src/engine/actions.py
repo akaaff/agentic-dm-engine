@@ -23,6 +23,8 @@ ActionVerb = Literal[
     "stabilize",
     "help",
     "grapple",
+    "escape_grapple",
+    "ready",
     "shove",
     "second_wind",
     "lay_on_hands",

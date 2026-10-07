@@ -2717,6 +2717,136 @@ def _resolve_opportunity_attacks(
             return
 
 
+def _resolve_ready(state: GameState, actor: Character, action: ParsedAction, srd: SrdIndex) -> None:
+    """The Ready action (issue #100): "I ready my sword to strike the goblin the moment
+    it comes into reach". Takes the action; holds one attack (the named `target` if
+    any, else whichever hostile arrives first, with the named weapon or the one in
+    hand) until a hostile moves into reach, when it is spent as a reaction (see
+    _fire_readied_attacks). Lasts until the readier's next turn. Only attacks can be
+    readied - the trigger is always "a hostile comes into reach"."""
+    if action.target is not None:
+        target = state.characters.get(action.target)
+        if target is None or target.is_dead or target.is_pc == actor.is_pc:
+            raise TurnEngineError("a readied attack must be aimed at a living enemy")
+    actor.readied_attack = {"target": action.target, "weapon": action.item_or_spell}
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="ready",
+            payload={"target": action.target, "weapon": action.item_or_spell},
+        )
+    )
+
+
+def _fire_readied_attacks(
+    state: GameState, mover: Character, origin: Position, rng: random.Random, srd: SrdIndex
+) -> None:
+    """After `mover` has moved: every hostile with a readied attack (and an unspent
+    reaction) whose reach `mover` has just entered - within reach now, not at
+    `origin` - makes it. Mirrors _resolve_opportunity_attacks (the engine's other
+    reaction): one reaction per round, an incapacitated reactor can't, and it stops
+    if the mover dies."""
+    for reactor in list(state.characters.values()):
+        ready = reactor.readied_attack
+        if (
+            ready is None
+            or reactor.is_dead
+            or reactor.is_pc == mover.is_pc
+            or reactor.reaction_used_this_round
+            or _is_incapacitated(reactor)
+            or (ready["target"] is not None and ready["target"] != mover.id)
+        ):
+            continue
+        weapon = ready["weapon"]
+        try:
+            params = (
+                _monster_attack_params(reactor, weapon, srd)
+                if reactor.monster_index is not None
+                else _pc_attack_params(reactor, weapon, srd)
+            )
+        except TurnEngineError:
+            continue  # the named weapon isn't usable any more - nothing to fire
+        reach = params.range_normal_feet
+        if (
+            distance_feet(reactor.position, mover.position) > reach
+            or distance_feet(reactor.position, origin) <= reach
+        ):
+            continue  # not in reach, or it already was (it has just stood there)
+        reactor.readied_attack = None
+        reactor.reaction_used_this_round = True
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=reactor.id,
+                type="readied_attack",
+                payload={"target": mover.id},
+            )
+        )
+        _resolve_single_attack(state, reactor, mover, params, rng, srd)
+        if mover.is_dead:
+            return
+
+
+def _resolve_escape_grapple(
+    state: GameState, actor: Character, rng: random.Random, srd: SrdIndex
+) -> None:
+    """Escaping a grapple (issue #100): the SRD has the grappled creature use its
+    action for an Athletics or Acrobatics check - whichever is better - contested by
+    the grappler's Athletics. On a win the `grappled` condition ends; a tie changes
+    nothing, like every contest here. A grappler that is gone, dead or helpless can't
+    hold on, so the escape is automatic."""
+    grappled = next((c for c in actor.conditions if c.name == "grappled"), None)
+    if grappled is None:
+        raise TurnEngineError(f"{actor.id} isn't grappled")
+    grappler = state.characters.get(grappled.source) if grappled.source else None
+    if grappler is None or grappler.is_dead or _is_incapacitated(grappler):
+        success, actor_total, grappler_total = True, 0, 0
+    else:
+        athletics = ability_check_modifier(
+            actor,
+            "STR",
+            proficient="skill-athletics" in actor.skill_proficiencies,
+            expert="skill-athletics" in actor.expertise,
+        )
+        acrobatics = ability_check_modifier(
+            actor,
+            "DEX",
+            proficient="skill-acrobatics" in actor.skill_proficiencies,
+            expert="skill-acrobatics" in actor.expertise,
+        )
+        actor_result, _ = resolve_skill_check(
+            modifier=max(athletics, acrobatics), dc=0, rng=rng, lucky=has_lucky_trait(actor)
+        )
+        grappler_modifier = ability_check_modifier(
+            grappler,
+            "STR",
+            proficient="skill-athletics" in grappler.skill_proficiencies,
+            expert="skill-athletics" in grappler.expertise,
+        )
+        grappler_result, _ = resolve_skill_check(modifier=grappler_modifier, dc=0, rng=rng)
+        actor_total, grappler_total = actor_result.total, grappler_result.total
+        success = actor_total > grappler_total
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="grapple_escape",
+            payload={
+                "grappler": grappler.id if grappler else None,
+                "actor_total": actor_total,
+                "grappler_total": grappler_total,
+                "success": success,
+            },
+        )
+    )
+    if success:
+        remove_condition(actor, "grappled")
+
+
 def _dash_is_unnecessary(state: GameState, actor: Character, action: ParsedAction) -> bool:
     """True if a declared dash's path fits within what a plain move could
     still cover this turn (effective speed minus movement already spent) -
@@ -2840,6 +2970,7 @@ def _resolve_move(
             },
         )
     )
+    _fire_readied_attacks(state, actor, origin, rng, srd)
 
     # Phase 9F: "hazard" terrain previously had zero mechanical effect - see
     # HAZARD_DAMAGE's docstring for the amount/flavor reasoning. Only the
@@ -5219,6 +5350,7 @@ def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -
             # follow-up attack in the same real turn must still see
             # whatever movement this character already spent this turn.
             next_actor.movement_used_feet = 0
+            next_actor.readied_attack = None  # a readied action lasts until your next turn
             _stand_up_if_prone(state, next_actor)
             return
 
@@ -5342,6 +5474,10 @@ def resolve_action(
         ends_turn = _resolve_second_wind(state, actor, rng)
     elif action.verb == "lay_on_hands":
         _resolve_lay_on_hands(state, actor, action)
+    elif action.verb == "escape_grapple":
+        _resolve_escape_grapple(state, actor, rng, srd)
+    elif action.verb == "ready":
+        _resolve_ready(state, actor, action, srd)
     elif action.verb == "divine_sense":
         _resolve_divine_sense(state, actor, srd)
     elif action.verb == "rage":
