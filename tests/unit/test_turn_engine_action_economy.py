@@ -43,7 +43,7 @@ def _cleric() -> Character:
         # WIS15 -> mod3 after Human's +1; issue #30's follow-up phase
         # requires exactly prepared_spell_count("cleric", 1, 3) == 4 real
         # level-1 Cleric spells.
-        chosen_prepared_spells=["cure-wounds", "healing-word", "bless", "shield-of-faith"],
+        chosen_prepared_spells=["healing-word", "shield-of-faith", "guiding-bolt", "sanctuary"],
     )
 
 
@@ -80,7 +80,8 @@ def test_bonus_action_spell_does_not_end_the_turn_and_a_main_action_still_can() 
     )
     resolve_action(state, heal_action, _FixedRandom([3]))  # type: ignore[arg-type]
 
-    assert state.characters["mira"].hp == 7  # 1 + 6
+    # 1 + 6 + Disciple of Life (2 + spell level 1 = 3) = 10, which is also max HP.
+    assert state.characters["mira"].hp == 10
     assert state.characters["mira"].bonus_action_used is True
     # Still Mira's turn - the bonus-action cast didn't advance it.
     assert state.turn_order[state.current_turn] == "mira"

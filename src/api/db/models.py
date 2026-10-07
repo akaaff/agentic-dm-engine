@@ -91,6 +91,9 @@ class CharacterRecord(Base):
     create_character, same as before."""
     hit_dice_remaining: Mapped[int] = mapped_column(default=1, server_default="1")
     saving_throw_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list)
+    expertise: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    """Rogue Expertise (issue #85) - decided at creation and needed from the first
+    check of a live session, so persisted from the start."""
     known_spells: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
     """Issue #30 - populated at creation for "Spells Known" casters
     (Bard/Sorcerer). Same "a live WS session builds its GameState from a

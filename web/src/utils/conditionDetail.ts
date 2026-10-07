@@ -34,6 +34,8 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
   unconscious:
     'Incapacitated, unaware of surroundings, drops what it’s holding and falls prone. Attacks against it have advantage and auto-crit within 5ft.',
   shielded: 'AC +5 from the Shield reaction, until the round ends.',
+  shillelagh:
+    'The club or quarterstaff in hand uses the spellcasting ability for melee attack and damage rolls and deals a d8, until the spell ends or the weapon is put down.',
   hidden:
     'Unseen. Attacks against it have disadvantage, and its next attack has advantage (and can Sneak Attack) - but attacking gives its position away and ends this.',
   blessed: "A d4 bonus die added to this creature's attack rolls and saving throws, until the spell ends.",

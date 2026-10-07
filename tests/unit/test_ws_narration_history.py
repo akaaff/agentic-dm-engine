@@ -150,6 +150,12 @@ def _connect(env: _Env, session_id: str, query: str = "") -> list[dict[str, Any]
             seen.append(message)
             if message["type"] == "awaiting_input":
                 return seen
+            # Unseeded dice can end the fight first; then nothing is awaited.
+            if (
+                message["type"] == "state_update"
+                and message["game_state"]["status"] != "in_progress"
+            ):
+                return seen
 
 
 def _history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

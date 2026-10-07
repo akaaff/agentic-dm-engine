@@ -55,7 +55,7 @@ BUILDS: dict[str, dict[str, Any]] = {
         "scores": {"STR": 13, "DEX": 10, "CON": 14, "INT": 8, "WIS": 15, "CHA": 12},
         "skills": ["skill-insight", "skill-medicine"],
         "equipment": ["mace", "scale-mail"],
-        "prepared": ["bless", "cure-wounds", "guiding-bolt", "healing-word"],
+        "prepared": ["guiding-bolt", "healing-word", "sanctuary", "shield-of-faith"],
     },
     "druid": {
         "name": "Fern",
@@ -99,6 +99,7 @@ BUILDS: dict[str, dict[str, Any]] = {
         "race_index": "halfling",
         "scores": {"STR": 8, "DEX": 15, "CON": 13, "INT": 12, "WIS": 10, "CHA": 14},
         "skills": ["skill-stealth", "skill-sleight-of-hand", "skill-perception", "skill-deception"],
+        "expertise": ["skill-stealth", "skill-sleight-of-hand"],
         "equipment": ["shortsword", "shortbow"],
     },
     "sorcerer": {
@@ -115,6 +116,7 @@ BUILDS: dict[str, dict[str, Any]] = {
         "scores": {"STR": 8, "DEX": 14, "CON": 13, "INT": 10, "WIS": 12, "CHA": 15},
         "skills": ["skill-arcana", "skill-intimidation"],
         "equipment": ["dagger"],
+        "spells": ["charm-person", "burning-hands"],
     },
     "wizard": {
         "name": "Elara",
@@ -154,4 +156,5 @@ def build(
         gender="female",
         chosen_spells=spec.get("spells"),
         chosen_prepared_spells=spec.get("prepared"),
+        chosen_expertise=spec.get("expertise"),
     )

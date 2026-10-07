@@ -219,10 +219,11 @@ def arcane_recovery_slot_budget(level: int) -> int:
 SPELLS_KNOWN_BY_LEVEL: dict[str, dict[int, int]] = {
     "bard": {1: 4, 2: 5, 3: 6, 4: 7, 5: 8},
     "sorcerer": {1: 2, 2: 3, 3: 4, 4: 5, 5: 6},
+    "warlock": {1: 2, 2: 3, 3: 4, 4: 5, 5: 6},
 }
-"""Issue #30: the two SRD 5.1 "Spells Known" casters (as opposed to Cleric/
-Druid/Wizard/Paladin, who *prepare* from their whole class list instead -
-see PREPARED_CASTER_CLASSES/prepared_spell_count below). Not in the
+"""Issue #30 (Warlock added by issue #91): the three SRD 5.1 "Spells Known"
+casters (as opposed to Cleric/Druid/Wizard/Paladin, who *prepare* from their whole
+class list instead - see PREPARED_CASTER_CLASSES/prepared_spell_count below). Not in the
 vendored SRD JSON any more than LEVEL_1_SPELL_SLOTS/SPELL_SLOTS_BY_LEVEL are
 (level tables live behind a separate API endpoint) - hardcoded SRD 5.1
 facts, same precedent, same levels-1-5 scope. Counts cantrips-known
@@ -250,6 +251,14 @@ def draconic_resilience_hp(class_index: str | None) -> int:
     return 1 if class_index == "sorcerer" else 0
 
 
+ALWAYS_PREPARED_SPELLS: dict[str, list[str]] = {"cleric": ["bless", "cure-wounds"]}
+"""Issue #88: the Life Domain (the SRD's only cleric domain, so every SRD cleric has
+it) always has Bless and Cure Wounds prepared - they don't count against the
+number of spells a cleric prepares (prepared_spell_count), and are added on top
+of whatever the player picks. Naming one among the picks is tolerated and
+ignored, so existing choices keep working."""
+
+
 def prepared_spell_count(class_index: str, level: int, ability_mod: int) -> int:
     """Real SRD 5.1 Prepared-caster formula: spellcasting-ability modifier +
     caster level, minimum 1. Paladin's caster level is character level // 2
@@ -261,6 +270,9 @@ def prepared_spell_count(class_index: str, level: int, ability_mod: int) -> int:
         return max(1, ability_mod + caster_level) if caster_level >= 1 else 0
     return max(1, ability_mod + level)
 
+
+EXPERTISE_CHOICES = 2
+"""Rogue's level-1 Expertise: how many skills get a doubled bonus."""
 
 VALID_FIGHTING_STYLES = {
     "archery",
@@ -328,6 +340,7 @@ def create_character(
     chosen_racial_skills: list[str] | None = None,
     chosen_spells: list[str] | None = None,
     chosen_prepared_spells: list[str] | None = None,
+    chosen_expertise: list[str] | None = None,
 ) -> Character:
     srd = srd or load_srd()
     chosen_equipment = chosen_equipment or []
@@ -423,7 +436,10 @@ def create_character(
                     f"(exactly {required_prepared_count} level-1 spells)"
                 )
             _validate_prepared_spell_choices(
-                class_index, required_prepared_count, chosen_prepared_spells, srd
+                class_index,
+                required_prepared_count,
+                _picks_beyond_domain(class_index, chosen_prepared_spells),
+                srd,
             )
         elif chosen_prepared_spells:
             raise CharacterCreationError(f"{class_index} has no spells to prepare yet at level 1")
@@ -574,6 +590,24 @@ def create_character(
         )
     )
 
+    # Rogue Expertise (issue #85): two of the rogue's skill proficiencies get
+    # a doubled proficiency bonus. (SRD also allows one skill plus thieves'
+    # tools - tool proficiencies aren't modeled anywhere in this project.)
+    expertise: list[str] = []
+    if class_index == "rogue":
+        expertise = [f"skill-{normalize_skill_name(s)}" for s in (chosen_expertise or [])]
+        if len(expertise) != EXPERTISE_CHOICES or len(set(expertise)) != EXPERTISE_CHOICES:
+            raise CharacterCreationError(
+                f"A rogue chooses exactly {EXPERTISE_CHOICES} different skills for Expertise"
+            )
+        for skill in expertise:
+            if skill not in skill_proficiencies:
+                raise CharacterCreationError(
+                    f"Expertise needs a skill the rogue is proficient in: {skill!r}"
+                )
+    elif chosen_expertise:
+        raise CharacterCreationError(f"{class_index} doesn't have Expertise")
+
     saving_throw_proficiencies: list[AbilityScore] = [
         s["index"].upper() for s in cls.get("saving_throws", [])
     ]
@@ -609,6 +643,7 @@ def create_character(
         class_=cls["name"],
         background=background["name"],
         skill_proficiencies=skill_proficiencies,
+        expertise=expertise,
         saving_throw_proficiencies=saving_throw_proficiencies,
         class_index=class_index,
         race_index=race_index,
@@ -618,7 +653,14 @@ def create_character(
         gender=gender,
         voice=voice,
         known_spells=list(chosen_spells) if chosen_spells is not None else [],
-        prepared_spells=list(chosen_prepared_spells) if chosen_prepared_spells is not None else [],
+        prepared_spells=[
+            *ALWAYS_PREPARED_SPELLS.get(class_index, []),
+            *(
+                _picks_beyond_domain(class_index, chosen_prepared_spells)
+                if chosen_prepared_spells is not None
+                else []
+            ),
+        ],
     )
 
 
@@ -682,6 +724,13 @@ def _validate_spell_choices(class_index: str, chosen_spells: list[str], srd: Srd
     for spell in chosen_spells:
         if spell not in allowed:
             raise CharacterCreationError(f"{spell} is not a valid level-1 spell for {class_index}")
+
+
+def _picks_beyond_domain(class_index: str, chosen: list[str]) -> list[str]:
+    """The prepared-spell picks that count against the limit: everything chosen
+    except the always-prepared domain spells (ALWAYS_PREPARED_SPELLS)."""
+    domain = ALWAYS_PREPARED_SPELLS.get(class_index, [])
+    return [s for s in chosen if s not in domain]
 
 
 def _validate_prepared_spell_choices(
