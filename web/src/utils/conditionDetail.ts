@@ -37,6 +37,8 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
   mocked: 'Disadvantage on its next attack roll (Vicious Mockery).',
   chilled: 'Speed reduced by 10 feet (Ray of Frost).',
   guided: 'The next attack roll against it has advantage (Guiding Bolt).',
+  shillelagh:
+    'The club or quarterstaff in hand uses the spellcasting ability for melee attack and damage rolls and deals a d8, until the spell ends or the weapon is put down.',
   hidden:
     'Unseen. Attacks against it have disadvantage, and its next attack has advantage (and can Sneak Attack) - but attacking gives its position away and ends this.',
   blessed: "A d4 bonus die added to this creature's attack rolls and saving throws, until the spell ends.",

@@ -182,9 +182,17 @@ def passive_perception(character: Character, srd: SrdIndex) -> int:
 
 
 def ability_check_modifier(
-    character: Character, ability: AbilityScore, proficient: bool = False
+    character: Character,
+    ability: AbilityScore,
+    proficient: bool = False,
+    expert: bool = False,
 ) -> int:
+    """Ability modifier plus proficiency - doubled with Expertise (issue #85,
+    `expert` implies proficient: a skill you're expert in is one you're
+    proficient in)."""
     mod = ability_modifier(character.stats[ability])
+    if expert:
+        return mod + 2 * character.proficiency_bonus
     return mod + character.proficiency_bonus if proficient else mod
 
 
@@ -342,6 +350,11 @@ real field would have been, with no other code path changes."""
 
 _SPELL_CLASS_OVERRIDES: dict[str, set[str]] = {
     "faerie-fire": {"bard"},
+    # Issue #91: the Fiend patron's expanded spell list (the SRD's only warlock
+    # patron) - at level 1 that is Burning Hands and Command, available to every
+    # SRD warlock on top of the class list.
+    "burning-hands": {"warlock"},
+    "command": {"warlock"},
 }
 """Live-found (Bard character creation): real SRD 5e has Faerie Fire as a
 Bard spell too, but the vendored 5e-SRD-Spells.json's own `classes` list
@@ -684,6 +697,11 @@ not a general singularization rule - safer than guessing at a pattern that
 might silently mismatch a class added later."""
 
 
+_CLASS_EXTRA_PROFICIENCIES: dict[str, set[str]] = {"cleric": {"heavy-armor"}}
+"""Issue #88: proficiencies the SRD gives through a class feature (here the Life
+Domain's heavy armor) rather than the class's own `proficiencies` list."""
+
+
 def class_equipment_options(cls: SrdEntry, srd: SrdIndex) -> list[str]:
     """Weapon/armor equipment indices this class is actually SRD-proficient
     with - e.g. a Wizard is proficient with exactly 5 specific weapons (not
@@ -699,6 +717,8 @@ def class_equipment_options(cls: SrdEntry, srd: SrdIndex) -> list[str]:
     *equipped* weapon/armor actually grants its proficiency bonus / avoids
     the non-proficiency penalty during play."""
     prof_indices = {p["index"] for p in cls.get("proficiencies", [])}
+    # Life Domain (issue #88): clerics also wear heavy armor.
+    prof_indices |= _CLASS_EXTRA_PROFICIENCIES.get(cls.get("index", ""), set())
     aliased_weapons = {_WEAPON_PROFICIENCY_ALIASES.get(p, p) for p in prof_indices}
 
     options: list[str] = []

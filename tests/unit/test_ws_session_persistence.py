@@ -137,6 +137,15 @@ def _connect_and_drain(
             seen.append(message)
             if message["type"] == until:
                 return seen
+            # The unseeded dice can finish the fight before the opening turns
+            # hand control to the human, and then awaiting_input never comes -
+            # a state_update showing the game over is as far as it gets.
+            if (
+                until == "awaiting_input"
+                and message["type"] == "state_update"
+                and message["game_state"]["status"] != "in_progress"
+            ):
+                return seen
 
 
 def _snapshot_in_db(env: _Env, session_id: str) -> dict[str, Any] | None:

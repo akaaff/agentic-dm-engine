@@ -474,6 +474,57 @@ def _reconcile_cast_name(action: ParsedAction, game_state: GameState) -> ParsedA
     return action
 
 
+def _default_attack_target(action: ParsedAction, game_state: GameState) -> ParsedAction:
+    """An `attack` that names no target at all (the model dropped it - issue #95's
+    "I cast shillelagh ... and bash the goblin" came back as an attack with
+    target null, rejected as "requires a target"). The player said who, or there
+    is one obvious answer: the nearest living enemy, the same default the prompt's
+    "closest" ranking already uses. Left alone when there is no enemy at all."""
+    if action.verb != "attack" or action.target or action.targets:
+        return action
+    actor = game_state.characters.get(action.actor)
+    if actor is None:
+        return action
+    enemies = [
+        c for c in game_state.characters.values() if c.is_pc != actor.is_pc and not c.is_dead
+    ]
+    if not enemies:
+        return action
+    nearest = min(enemies, key=lambda c: (distance_feet(actor.position, c.position), c.id))
+    return action.model_copy(update={"target": nearest.id})
+
+
+_FOLLOW_UP_ATTACK = re.compile(
+    r"(?:\band|\bthen|,)"
+    r"\s+(?:(?:then|i|also|just|immediately|quickly|promptly)\s+)*"
+    r"(?:bash|hit|strike|smash|swing at|attack|whack|clobber|pummel|stab|slash|chop|smite|"
+    r"punch|kick|shoot|hurl|throw)\w*\b",
+    re.IGNORECASE,
+)
+
+
+def _append_dropped_attack(
+    actions: list[ParsedAction], game_state: GameState, actor_id: str, utterance: str
+) -> list[ParsedAction]:
+    """ "I cast shillelagh on my quarterstaff and bash the goblin" usually came back
+    as just the cast (issue #95): a bonus action, so the turn stayed open and the
+    attack the player plainly asked for never happened. When the player's own
+    words follow the spell/ability with "and/then <attack verb>" and nothing in
+    the sequence ends the turn, the attack at the nearest enemy is appended (the
+    same default target a target-less attack gets). Only the first-person
+    "and bash..." shape counts - "so he can hit it" is about someone else."""
+    if not actions or not _FOLLOW_UP_ATTACK.search(utterance):
+        return actions
+    if any(not (_is_bonus_action(a) or a.verb in _TURN_PRESERVING_VERBS) for a in actions):
+        return actions  # something already uses the main action
+    attack = _default_attack_target(
+        ParsedAction(actor=actor_id, verb="attack", raw_text=utterance), game_state
+    )
+    if attack.target is None:
+        return actions
+    return [*actions, attack]
+
+
 def _hide_as_cunning_action(action: ParsedAction, game_state: GameState) -> ParsedAction:
     """A Rogue of level 2+ with their bonus action free who says "I hide"
     (issue #84) gets Cunning Action's bonus-action Hide: it costs them
@@ -540,6 +591,7 @@ def _postprocess_action(
     action = _promote_stray_item_or_spell(action)
     action = _resolve_move_target(action, game_state)
     action = _hide_as_cunning_action(action, game_state)
+    action = _default_attack_target(action, game_state)
     action = _default_self_target(action, game_state, utterance)
     action = _reconcile_cast_name(action, game_state)
     action = _normalize_unarmed_attack(action, game_state, utterance)
@@ -861,6 +913,7 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
         for a in sequence.actions
     ]
     actions = _insert_charge_move(actions, game_state, expected_actor_id, state["raw_text"])
+    actions = _append_dropped_attack(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _split_dual_wield_attacks(actions, game_state, expected_actor_id)
     actions = _expand_area_spell_targets(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _bonus_actions_first(actions)

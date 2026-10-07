@@ -47,6 +47,7 @@ def test_equip_auto_populate_still_equips_both_of_a_classs_genuine_two_daggers()
             "skill-sleight-of-hand",
             "skill-deception",
         ],
+        chosen_expertise=["skill-acrobatics", "skill-deception"],
     )
     assert character.inventory.count("dagger") == 2
     assert character.equipped_weapons == ["dagger", "dagger"]
@@ -375,6 +376,7 @@ def test_barbarian_gets_rage_uses_and_fighter_gets_second_wind_use() -> None:
             "skill-acrobatics",
             "skill-deception",
         ],
+        chosen_expertise=["skill-acrobatics", "skill-deception"],
     )
     assert fenwick.class_resources == {}
 

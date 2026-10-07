@@ -71,7 +71,9 @@ def resolve_skill_challenge(
 
     def modifier_for(character: Character) -> int:
         proficient = skill_key in character.skill_proficiencies
-        return ability_check_modifier(character, ability, proficient=proficient)
+        return ability_check_modifier(
+            character, ability, proficient=proficient, expert=skill_key in character.expertise
+        )
 
     living = [c for c in party if not c.is_dead] or party
     champion = max(living, key=modifier_for)

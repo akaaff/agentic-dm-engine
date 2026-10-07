@@ -690,7 +690,11 @@ def _pc_attack_params(
     # class-specific option, not a property of the weapon alone, so it's
     # checked here rather than folded into is_finesse itself.
     is_monk_weapon_for_actor = actor.class_index == "monk" and is_monk_weapon(weapon)
-    if is_finesse or is_monk_weapon_for_actor:
+    shillelagh_up = not is_ranged and shillelagh_weapon(actor) == weapon["index"]
+    if shillelagh_up:
+        # Shillelagh (issue #95): the spellcasting ability replaces Strength.
+        ability_label, ability_mod = _spellcasting_ability_mod(actor, srd)
+    elif is_finesse or is_monk_weapon_for_actor:
         ability_mod = max(str_mod, dex_mod)
         ability_label = "DEX" if dex_mod > str_mod else "STR"
     elif is_ranged:
@@ -738,6 +742,8 @@ def _pc_attack_params(
         # two_handed_damage, so there's no second die-count case to weigh
         # here).
         dice_sides = max(dice_sides, monk_martial_arts_die_sides(actor.level))
+    if shillelagh_up:
+        dice_sides = max(dice_sides, 8)  # "the weapon's damage die becomes a d8"
     return AttackParams(
         attack_bonus=ability_mod + prof_bonus + archery_bonus,
         damage_dice_count=dice_count,
@@ -1856,6 +1862,61 @@ def _resolve_multiattack(
             _resolve_single_attack(state, actor, target, params, rng, srd)
 
 
+def _auto_equip_for_attack(
+    state: GameState, actor: Character, weapon_name: str | None, srd: SrdIndex
+) -> None:
+    """Issue #83: attacking with a weapon the actor carries but hasn't equipped
+    ("I shoot the ogre with my shortbow", "I throw a javelin") was rejected with
+    "use 'equip' first". In 5e drawing or stowing one weapon is a free object
+    interaction folded into the attack - nobody types a separate equip. So an
+    attack that names an OWNED weapon outside the equipped set equips it first,
+    through the same _resolve_equip (one equip per turn, a legal hand
+    combination). The new weapon joins the current set when the hands allow it
+    (a second light weapon, or a one-hander beside a shield) and otherwise
+    replaces it. Anything not owned is left alone, for _pc_attack_params to
+    reject exactly as before."""
+    if not weapon_name or is_unarmed_phrase(weapon_name):
+        return
+    equipped = [item for idx in actor.equipped_weapons if (item := srd.equipment.get(idx))]
+    named = srd.equipment.get(weapon_name)
+    if (named is not None and named["index"] in actor.equipped_weapons) or (
+        _match_weapon_by_name(weapon_name, equipped) is not None
+    ):
+        return  # already in hand
+    owned = [
+        item
+        for idx in dict.fromkeys(actor.inventory)
+        if (item := srd.equipment.get(idx)) and item.get("weapon_category")
+    ]
+    wanted = (
+        named
+        if named is not None and named["index"] in {o["index"] for o in owned}
+        else _match_weapon_by_name(weapon_name, owned)
+    )
+    if wanted is None:
+        return  # not something they own - the ordinary rejection applies
+    shield = actor.equipped_shield is not None
+    combined = [*actor.equipped_weapons, wanted["index"]]
+    items = (
+        combined
+        if weapon_combo_is_legal(combined, srd.equipment, shield_equipped=shield)
+        else [wanted["index"]]
+    )
+    try:
+        _resolve_equip(
+            state,
+            actor,
+            ParsedAction(
+                actor=actor.id, verb="equip", params={"items": items}, raw_text="(draws a weapon)"
+            ),
+            srd,
+        )
+    except TurnEngineError as exc:
+        raise TurnEngineError(
+            f"{wanted['name']} isn't in hand and {exc} - equip it first, then attack next turn"
+        ) from exc
+
+
 def _resolve_attack(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> None:
@@ -1875,6 +1936,7 @@ def _resolve_attack(
         _resolve_single_attack(state, actor, target, params, rng, srd, defer_shield_choice=True)
         return
 
+    _auto_equip_for_attack(state, actor, action.item_or_spell, srd)
     params = _pc_attack_params(
         actor, action.item_or_spell, srd, smite_slot_level=action.params.get("smite_slot_level")
     )
@@ -2720,7 +2782,7 @@ def _resolve_move(
 
 
 def _ability_check_breakdown(
-    actor: Character, ability: AbilityScore, proficient: bool
+    actor: Character, ability: AbilityScore, proficient: bool, expert: bool = False
 ) -> list[tuple[str, int]]:
     """Debug-mode UI aid (issue #38), mirrors AttackParams.attack_bonus_
     breakdown's own reasoning - the named components ability_check_modifier
@@ -2731,7 +2793,11 @@ def _ability_check_breakdown(
     mod = ability_modifier(actor.stats[ability])
     return [
         (f"{ability} mod", mod),
-        ("proficiency", actor.proficiency_bonus) if proficient else ("proficiency (none)", 0),
+        ("expertise", 2 * actor.proficiency_bonus)
+        if expert
+        else ("proficiency", actor.proficiency_bonus)
+        if proficient
+        else ("proficiency (none)", 0),
     ]
 
 
@@ -2746,8 +2812,10 @@ def _resolve_skill_check(
         ability = skill_ability(skill, srd)
     except ValueError as exc:
         raise TurnEngineError(str(exc)) from exc
-    proficient = f"skill-{normalize_skill_name(skill)}" in actor.skill_proficiencies
-    modifier = ability_check_modifier(actor, ability, proficient=proficient)
+    skill_key = f"skill-{normalize_skill_name(skill)}"
+    proficient = skill_key in actor.skill_proficiencies
+    expert = skill_key in actor.expertise
+    modifier = ability_check_modifier(actor, ability, proficient=proficient, expert=expert)
 
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
@@ -2779,7 +2847,7 @@ def _resolve_skill_check(
                 "roll_total": result.total,
                 "natural": result.kept[0],
                 "success": success,
-                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient),
+                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient, expert),
             },
         )
     )
@@ -2814,7 +2882,8 @@ def _attempt_hide(state: GameState, actor: Character, rng: random.Random, srd: S
     dc = max((passive_perception(w, srd) for w in watchers), default=0)
 
     proficient = "skill-stealth" in actor.skill_proficiencies
-    modifier = ability_check_modifier(actor, "DEX", proficient=proficient)
+    expert = "skill-stealth" in actor.expertise
+    modifier = ability_check_modifier(actor, "DEX", proficient=proficient, expert=expert)
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
     armor = srd.equipment.get(actor.equipped_armor) if actor.equipped_armor else None
@@ -2845,7 +2914,7 @@ def _attempt_hide(state: GameState, actor: Character, rng: random.Random, srd: S
                 "natural": result.kept[0],
                 "success": success,
                 "hide": True,
-                "modifier_breakdown": _ability_check_breakdown(actor, "DEX", proficient),
+                "modifier_breakdown": _ability_check_breakdown(actor, "DEX", proficient, expert),
             },
         )
     )
@@ -3121,6 +3190,9 @@ def _resolve_equip(state: GameState, actor: Character, action: ParsedAction, srd
     if resolved_armor is not None or resolved_shield is not None:
         _recompute_ac(actor, srd)
 
+    held_for_shillelagh = shillelagh_weapon(actor)
+    if held_for_shillelagh is not None and held_for_shillelagh not in actor.equipped_weapons:
+        remove_condition(actor, "shillelagh")  # "the spell ends if you let go of the weapon"
     actor.equip_used_this_turn = True
     state.events.append(
         Event(
@@ -3223,19 +3295,28 @@ def _grapple_shove_contest(
     consume an extra, conditional d20, breaking this function's own fixed
     "always exactly 3 d20s" contract that callers/tests rely on."""
     actor_modifier = ability_check_modifier(
-        actor, "STR", proficient="skill-athletics" in actor.skill_proficiencies
+        actor,
+        "STR",
+        proficient="skill-athletics" in actor.skill_proficiencies,
+        expert="skill-athletics" in actor.expertise,
     )
     actor_result, _ = resolve_skill_check(modifier=actor_modifier, dc=0, rng=rng)
 
     target_athletics_modifier = ability_check_modifier(
-        target, "STR", proficient="skill-athletics" in target.skill_proficiencies
+        target,
+        "STR",
+        proficient="skill-athletics" in target.skill_proficiencies,
+        expert="skill-athletics" in target.expertise,
     )
     target_athletics_result, _ = resolve_skill_check(
         modifier=target_athletics_modifier, dc=0, rng=rng
     )
 
     target_acrobatics_modifier = ability_check_modifier(
-        target, "DEX", proficient="skill-acrobatics" in target.skill_proficiencies
+        target,
+        "DEX",
+        proficient="skill-acrobatics" in target.skill_proficiencies,
+        expert="skill-acrobatics" in target.expertise,
     )
     target_acrobatics_result, _ = resolve_skill_check(
         modifier=target_acrobatics_modifier, dc=0, rng=rng
@@ -3726,6 +3807,9 @@ class HealSpellParams:
     dice_sides: int
     ability_mod: int
     source_name: str
+    bonus: int = 0
+    """Disciple of Life (issue #88): +2 + the spell's level for a cleric's healing
+    spells; 0 for everyone else."""
 
 
 def _spell_heal_params(
@@ -3751,6 +3835,7 @@ def _spell_heal_params(
         dice_sides=int(match.group(2)),
         ability_mod=ability_mod,
         source_name=spell["name"],
+        bonus=(2 + spell_level) if actor.class_index == "cleric" else 0,
     )
 
 
@@ -3791,7 +3876,12 @@ def _cast_heal_spell_at_target(
     14's use_item healing potion is the existing precedent for this
     clamp-at-max_hp shape)."""
     healed = min(
-        roll(params.dice_count, params.dice_sides, modifier=params.ability_mod, rng=rng).total,
+        roll(
+            params.dice_count,
+            params.dice_sides,
+            modifier=params.ability_mod + params.bonus,
+            rng=rng,
+        ).total,
         target.max_hp - target.hp,
     )
     target.hp += healed
@@ -3806,13 +3896,21 @@ def _cast_heal_spell_at_target(
                 "source": params.source_name,
                 "target": target.id,
                 "hp_remaining": target.hp,
+                **({"disciple_of_life": params.bonus} if params.bonus else {}),
             },
         )
     )
     _revive_if_healed(state, actor, target)
 
 
-_SPECIAL_CAST_SPELLS = {"spare-the-dying", "sleep", "true-strike", "mage-armor", "shield-of-faith"}
+_SPECIAL_CAST_SPELLS = {
+    "spare-the-dying",
+    "sleep",
+    "true-strike",
+    "mage-armor",
+    "shield-of-faith",
+    "shillelagh",
+}
 """Issue #55 spell audit: spells whose real mechanic doesn't fit any of the
 generic attack/save/heal/auto_hit/condition buckets `spell_mechanic`
 classifies (an HP-pool targeting rule, a banked-advantage buff, a flat AC
@@ -3966,6 +4064,57 @@ def _resolve_sleep_spell(
                 payload={"condition": "unconscious", "source": "sleep"},
             )
         )
+
+
+_SHILLELAGH_WEAPONS = ("club", "quarterstaff")
+
+
+def shillelagh_weapon(actor: Character) -> str | None:
+    """The weapon index Shillelagh (issue #95) currently empowers, if the spell
+    is up (a condition whose `detail` names the weapon)."""
+    for condition in actor.conditions:
+        if condition.name == "shillelagh":
+            return condition.detail
+    return None
+
+
+def _resolve_shillelagh(
+    state: GameState, actor: Character, action: ParsedAction, spell: SrdEntry
+) -> None:
+    """Shillelagh (issue #95): a bonus action that imbues the club or
+    quarterstaff the caster is HOLDING for a minute - melee attacks with it use
+    the spellcasting ability for attack and damage and the weapon's die becomes
+    a d8 (read in _pc_attack_params). Stored as a `shillelagh` condition whose
+    `detail` is the weapon index, so it ticks down with the other timed effects,
+    is replaced if cast again (as the spell says) and shows as a badge; letting
+    go of the weapon ends it (_resolve_equip). "Becomes magical" has no
+    mechanical effect in this engine."""
+    named = (action.params.get("weapon") or action.item_or_spell or "").lower()
+    held = [w for w in actor.equipped_weapons if w in _SHILLELAGH_WEAPONS]
+    weapon = next((w for w in held if w in named), held[0] if held else None)
+    if weapon is None:
+        raise TurnEngineError(
+            f"{actor.id} must be holding a club or a quarterstaff to cast {spell['name']}"
+        )
+    apply_condition(
+        actor,
+        Condition(
+            name="shillelagh",
+            duration_rounds=10,
+            source=actor.id,
+            spell=spell["name"],
+            detail=weapon,
+        ),
+    )
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_cast",
+            payload={"spell": spell["name"], "weapon": weapon},
+        )
+    )
 
 
 def _resolve_true_strike(state: GameState, actor: Character, spell: SrdEntry) -> None:
@@ -4380,6 +4529,8 @@ def _resolve_cast_spell(
                     _resolve_sleep_spell(state, actor, action, spell, spell_level, rng, srd)
                 elif normalized == "true-strike":
                     _resolve_true_strike(state, actor, spell)
+                elif normalized == "shillelagh":
+                    _resolve_shillelagh(state, actor, action, spell)
                 else:  # mage-armor, shield-of-faith
                     _resolve_ac_buff_spell(state, actor, action, spell, srd)
             except TurnEngineError:
@@ -4754,8 +4905,10 @@ def _resolve_stabilize(
 
     skill = "medicine"
     ability = skill_ability(skill, srd)  # WIS, per SRD
-    proficient = f"skill-{normalize_skill_name(skill)}" in actor.skill_proficiencies
-    modifier = ability_check_modifier(actor, ability, proficient=proficient)
+    skill_key = f"skill-{normalize_skill_name(skill)}"
+    proficient = skill_key in actor.skill_proficiencies
+    expert = skill_key in actor.expertise
+    modifier = ability_check_modifier(actor, ability, proficient=proficient, expert=expert)
 
     advantage = actor.has_help_advantage
     actor.has_help_advantage = False
@@ -4783,7 +4936,7 @@ def _resolve_stabilize(
                 "natural": result.kept[0],
                 "success": success,
                 "target": target.id,
-                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient),
+                "modifier_breakdown": _ability_check_breakdown(actor, ability, proficient, expert),
             },
         )
     )

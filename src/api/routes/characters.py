@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from src.api.db.models import CharacterRecord
 from src.api.db.session import get_db
 from src.engine.character_creation import (
+    ALWAYS_PREPARED_SPELLS,
     PREPARED_CASTER_CLASSES,
     SPELLS_KNOWN_BY_LEVEL,
     CharacterCreationError,
@@ -104,6 +105,10 @@ class ClassDetail(ClassSummary):
     cls["starting_equipment"] entries character_creation.create_character's
     inventory-building loop reads, exposed so the wizard can show what a
     player is actually getting before they submit, not just after."""
+    always_prepared_spells: list[str] = []
+    """Issue #88: spell indices the class always has prepared on top of its picks
+    (the Life Domain's Bless and Cure Wounds for a cleric) - the wizard shows them as
+    fixed and leaves them out of the picker's count."""
     spells_known: int = 0
     """Issue #30: this class's level-1 SPELLS_KNOWN_BY_LEVEL count - >0 only
     for a "Spells Known" caster (Bard/Sorcerer). 0 for every other class,
@@ -188,6 +193,7 @@ class CreateCharacterRequest(BaseModel):
     request model never exposed it - a pre-existing gap, closed here while
     the wizard is being touched anyway for the portrait-selection fields."""
     chosen_racial_skills: list[str] | None = None
+    chosen_expertise: list[str] | None = None
     """Only meaningful (and required) for a Half-Elf - Skill Versatility
     (issue #23), 2 skills of the player's choice. create_character itself
     rejects it for any other race."""
@@ -342,6 +348,7 @@ def get_class(class_index: str) -> ClassDetail:
         equipment_options=class_equipment_options(cls, srd),
         cantrips=sorted(cantrips, key=lambda s: s.name),
         starting_equipment=_starting_equipment_items(cls.get("starting_equipment", [])),
+        always_prepared_spells=list(ALWAYS_PREPARED_SPELLS.get(class_index, [])),
         spells_known=spells_known,
         known_spells_pool=sorted(known_spells_pool, key=lambda s: s.name),
         spellcasting_ability=spellcasting_ability,
@@ -431,6 +438,7 @@ def create_character_endpoint(body: CreateCharacterRequest, db: DbSession) -> Ch
             fighting_style=body.fighting_style,
             chosen_racial_skills=body.chosen_racial_skills,
             chosen_spells=body.chosen_spells,
+            chosen_expertise=body.chosen_expertise,
             chosen_prepared_spells=body.chosen_prepared_spells,
         )
     except CharacterCreationError as exc:
@@ -468,6 +476,7 @@ def _character_to_record(character: Character) -> CharacterRecord:
         stats=dict(character.stats),
         inventory=list(character.inventory),
         skill_proficiencies=list(character.skill_proficiencies),
+        expertise=list(character.expertise),
         spell_slots={str(level): count for level, count in character.spell_slots.items()},
         conditions=[c.model_dump() for c in character.conditions],
         race_index=character.race_index,
@@ -514,6 +523,7 @@ def _record_to_character(record: CharacterRecord) -> Character:
         stats=record.stats,  # type: ignore[arg-type]
         inventory=record.inventory,
         skill_proficiencies=record.skill_proficiencies,
+        expertise=record.expertise,
         spell_slots={int(level): count for level, count in record.spell_slots.items()},
         conditions=[Condition.model_validate(c) for c in record.conditions],
         race_index=record.race_index,
