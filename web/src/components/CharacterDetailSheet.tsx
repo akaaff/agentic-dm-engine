@@ -224,7 +224,8 @@ export default function CharacterDetailSheet({
         <div className="hp-bar-fill" style={{ width: `${hpPct}%` }} />
       </div>
       <div className="hp-label">
-        HP {character.hp}/{character.max_hp} - AC {character.ac}
+        HP {character.hp}/{character.max_hp}
+        {(character.temp_hp ?? 0) > 0 && ` (+${character.temp_hp} temp)`} - AC {character.ac}
         {character.is_dead && ' - dead'}
         {!character.is_dead &&
           character.hp <= 0 &&

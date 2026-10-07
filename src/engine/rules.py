@@ -511,6 +511,13 @@ def failed_save_condition(spell: SrdEntry) -> ConditionSpellSpec | None:
     return _FAILED_SAVE_CONDITION_SPELLS.get(spell.get("index", ""))
 
 
+TEMP_HP_SPELLS = frozenset({"false-life"})
+"""Issue #94: spells whose vendored entry carries a `heal_at_slot_level` table but whose
+effect is temporary hit points, not healing - False Life (1d4 + 4). Kept out of the
+"heal" mechanic (it rejected them as an unrecognized notation) and resolved by
+their own function."""
+
+
 def spell_mechanic(spell: SrdEntry) -> str | None:
     """Classifies a spell into one of the five mechanics cast_spell
     resolves: "attack" (SRD `attack_type` present, or in
@@ -538,7 +545,7 @@ def spell_mechanic(spell: SrdEntry) -> str | None:
         return "attack"
     if spell.get("dc") or spell.get("index") in _DC_OVERRIDES:
         return "save"
-    if spell.get("heal_at_slot_level"):
+    if spell.get("heal_at_slot_level") and spell.get("index") not in TEMP_HP_SPELLS:
         return "heal"
     if spell.get("index") in _AUTO_HIT_SPELLS:
         return "auto_hit"

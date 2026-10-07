@@ -113,6 +113,11 @@ class Character(BaseModel):
     is_pc: bool
     hp: int
     max_hp: int
+    temp_hp: int = 0
+    """Temporary hit points (issue #94): a buffer that soaks damage before real HP
+    and never stacks - a new grant only replaces it if larger. Not healed by
+    healing, cleared by a long rest. Lives on the live character (and so in the
+    session snapshot), not the database: it never outlasts a rest."""
     ac: int
     position: Position
     conditions: list[Condition] = []
