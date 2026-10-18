@@ -1641,6 +1641,7 @@ def resolve_pending_bardic_choice(
     use_die: bool,
     rng: random.Random,
     srd: SrdIndex,
+    hold_for_bonus_action: bool = False,
 ) -> None:
     """Issue #53: resumes a single attack roll that paused waiting for the
     Bardic Inspiration holder's decision (see BardicChoicePending). Declining
@@ -1743,6 +1744,8 @@ def resolve_pending_bardic_choice(
     # turn (never one of the bonus-action-verb exceptions), so there's no
     # ends_turn branching to reproduce here, just the two calls themselves.
     _check_victory_defeat(state)
+    if hold_for_bonus_action and _hold_turn_for_bonus_action(state, actor, srd):
+        return
     if state.status == "in_progress":
         _advance_turn_skipping_dead(state, srd)
 
@@ -5451,6 +5454,11 @@ def _resolve_cast_spell(
         raise TurnEngineError(f"{actor.id} hasn't prepared {spell['name']}")
 
     is_bonus_action = _is_bonus_action_spell(spell)
+    if actor.turn_held_for_bonus and not is_bonus_action:
+        raise TurnEngineError(
+            f"{actor.id} has already used their action this turn - only a bonus-action spell "
+            "can still be cast"
+        )
     if is_bonus_action and actor.bonus_action_used:
         raise TurnEngineError(
             f"{actor.id} has already used their bonus action this turn - "
@@ -6114,6 +6122,7 @@ def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -
             # same actor used earlier in this real turn must not un-flag
             # their now-spent main action).
             next_actor.action_used_this_turn = False
+            next_actor.turn_held_for_bonus = False
             # Phase C: equip_used_this_turn resets on the same "turn
             # actually advances TO this character" schedule, for the same
             # reason - equip doesn't end the turn either.
@@ -6129,12 +6138,94 @@ def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -
             return
 
 
+_MAIN_ACTION_VERBS = frozenset(
+    {
+        "attack",
+        "dash",
+        "dodge",
+        "disengage",
+        "help",
+        "grapple",
+        "shove",
+        "escape_grapple",
+        "stabilize",
+        "use_item",
+        "skill_check",
+        "hide",
+        "ready",
+        "divine_sense",
+        "lay_on_hands",
+        "wild_shape",
+    }
+)
+"""Verbs that spend the main action. cast_spell is checked inside _resolve_cast_spell, since
+a bonus-action spell does not spend it."""
+
+
+def bonus_action_options(actor: Character, srd: SrdIndex) -> list[str]:
+    """What a player could still do with their bonus action right now (empty if nothing, or
+    it is already spent). Used to decide whether ending the turn after the main action would
+    throw a real option away - so it lists only things that would actually resolve: Second
+    Wind only while hurt, Rage only while not raging, a bonus-action spell only with a slot
+    left, Bardic Inspiration only with an ally to inspire."""
+    if actor.bonus_action_used or actor.is_dead or actor.hp <= 0:
+        return []
+    resources = actor.class_resources
+    options: list[str] = []
+    if (
+        actor.class_index == "fighter"
+        and resources.get("second_wind", 0) > 0
+        and actor.hp < actor.max_hp
+    ):
+        options.append("Second Wind")
+    if actor.class_index == "barbarian" and resources.get("rage", 0) > 0 and not actor.is_raging:
+        options.append("Rage")
+    if actor.class_index == "monk":
+        options.append("Martial Arts strike")
+        if resources.get("ki", 0) > 0:
+            options.append("Flurry of Blows")
+    if actor.class_index == "rogue" and actor.level >= 2:
+        options.append("Cunning Action")
+    if actor.class_index == "bard" and resources.get("bardic_inspiration", 0) > 0:
+        options.append("Bardic Inspiration")
+    if len(actor.equipped_weapons) == 2:
+        options.append("off-hand attack")
+    if actor.wild_shape_beast_index is not None:
+        options.append("revert from Wild Shape")
+    if has_condition(actor, "expeditious_retreat"):
+        options.append("Dash (Expeditious Retreat)")
+    for index in sorted({*actor.known_spells, *actor.prepared_spells}):
+        spell = srd.spells.get(index)
+        if (
+            spell is not None
+            and _is_bonus_action_spell(spell)
+            and actor.spell_slots.get(int(spell.get("level", 0)), 0) > 0
+        ):
+            options.append(str(spell["name"]))
+    return options
+
+
+def _hold_turn_for_bonus_action(state: GameState, actor: Character, srd: SrdIndex) -> bool:
+    """Keeps `actor`'s turn open after a main action when a bonus action is still usable.
+    Returns whether it did. Never holds a dead or downed actor's turn or one in a finished
+    fight."""
+    if state.status != "in_progress" or not bonus_action_options(actor, srd):
+        return False
+    actor.turn_held_for_bonus = True
+    return True
+
+
 def resolve_action(
     state: GameState,
     action: ParsedAction,
     rng: random.Random,
     srd: SrdIndex | None = None,
+    hold_for_bonus_action: bool = False,
 ) -> GameState:
+    """`hold_for_bonus_action` (a human player's turn, set by rules_engine_node): when the main
+    action would end the turn but the actor still has a usable bonus action, keep the turn open
+    instead of throwing the bonus action away - see bonus_action_options. Off by default so
+    scripted and AI turns keep ending the moment their action does."""
     srd = srd or load_srd()
 
     if not state.turn_order:
@@ -6158,6 +6249,13 @@ def resolve_action(
     # declaration) keeps working exactly as before.
     if action.verb != "death_save" and _is_incapacitated(actor):
         action = action.model_copy(update={"verb": "end_turn"})
+
+    bonus_used_before = actor.bonus_action_used
+    if actor.turn_held_for_bonus and action.verb in _MAIN_ACTION_VERBS:
+        raise TurnEngineError(
+            f"{actor.id} has already used their action this turn - they can still use a bonus "
+            "action or move, or end the turn"
+        )
 
     # Dodging protects "until the start of your next turn" - that window
     # ends right now, since this actor's next turn is the one being
@@ -6300,6 +6398,21 @@ def resolve_action(
     actor.action_used_this_turn = ends_turn if action.verb != "move" else False
 
     _check_victory_defeat(state)
+
+    if (
+        hold_for_bonus_action
+        and ends_turn
+        and action.verb not in ("end_turn", "death_save")
+        and _hold_turn_for_bonus_action(state, actor, srd)
+    ):
+        ends_turn = False
+    # A held turn has nothing left once its bonus action is spent (the action already was),
+    # so it ends by itself - the player only has to say "end turn" when they are skipping the
+    # bonus action. (Unspent movement is lost then, as it always was when an action ended a turn.)
+    if actor.turn_held_for_bonus and actor.bonus_action_used and not bonus_used_before:
+        ends_turn = True
+    if action.verb == "end_turn":
+        actor.turn_held_for_bonus = False
 
     if state.status == "in_progress" and ends_turn:
         _advance_turn_skipping_dead(state, srd)

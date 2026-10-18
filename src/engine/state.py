@@ -166,6 +166,13 @@ class Character(BaseModel):
     each encounter conjures them afresh - see encounter.place_undead_servant."""
     raised: bool = False
     """A corpse Animate Dead has already used - it can only be raised once."""
+    turn_held_for_bonus: bool = False
+    """True while a human player's turn is being kept open after their main action because
+    they still have a usable bonus action (see turn_engine.bonus_action_options): the action
+    is spent, so a second main action is refused, but they can use the bonus action, move,
+    or end the turn. Cleared when the turn advances. Deliberately NOT derived from
+    action_used_this_turn, which stays True after a turn ends and so can't tell a held turn
+    from one that merely finished."""
     summon_spell: str | None = None
     """The spell that conjured it, so ending that spell's concentration can find it."""
     monster_index: str | None = None

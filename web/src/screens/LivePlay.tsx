@@ -36,6 +36,7 @@ export default function LivePlay({
     reconnecting,
     sendPlayerAction,
     sendPlayerMove,
+    sendEndTurn,
     sendRest,
     sendContinueCampaign,
     sendBardicInspirationResponse,
@@ -390,6 +391,18 @@ export default function LivePlay({
                 respond...
               </p>
             )}
+          </div>
+        )}
+        {!partyChoice && isMyTurn && me?.turn_held_for_bonus && (
+          // The server keeps the turn open after the main action while a bonus action is
+          // still usable (otherwise it would be thrown away); this is the way out.
+          <div className="turn-held-banner">
+            <span>
+              Your action is spent - use your bonus action, or move, before the turn passes.
+            </span>
+            <button type="button" onClick={sendEndTurn}>
+              End turn
+            </button>
           </div>
         )}
         {!partyChoice && (
