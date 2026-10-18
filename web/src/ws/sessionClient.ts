@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getAccessKey } from '../api/accessKey'
 import { WS_BASE_URL } from '../api/baseUrl'
 import { getLobbyTokens } from '../api/lobbyTokens'
+import { watchAudioUntilDone } from '../utils/audioGate'
 
 // Mirrors the JSON shape of src/engine/state.py's Character/GameState -
 // only the fields the UI actually renders, not a full 1:1 port of every
@@ -504,21 +505,12 @@ export function useSessionSocket(sessionId: string) {
             // idempotent (a rejected play() promise and a later 'error'/
             // 'ended' on the same element shouldn't double-release the gate).
             const audio = new Audio(entry.audioUrl)
-            let finished = false
-            const finish = () => {
-              if (finished) return
-              finished = true
+            const finish = watchAudioUntilDone(audio, () => {
               drainTimerRef.current = null // only now release the busy gate
               lastRevealTimeRef.current = performance.now()
               scheduleDrain()
-            }
-            audio.addEventListener('ended', finish, { once: true })
-            audio.addEventListener('error', finish, { once: true })
+            })
             audio.play().catch(finish)
-            // Safety net, not the normal path: a stuck load (bad URL, a
-            // network hang) should never wedge the whole log forever - far
-            // more generous than any real narration clip should ever take.
-            window.setTimeout(finish, 20000)
             return // drainTimerRef stays non-null until finish() releases it
           }
           lastRevealTimeRef.current = performance.now()
