@@ -401,6 +401,9 @@ class ConditionSpellSpec:
     extra_conditions: tuple[ConditionName, ...] = ()
     """More conditions applied alongside `condition` (Hideous Laughter: prone
     AND incapacitated)."""
+    default_to_self: bool = False
+    """Naming no target means the caster (Guidance and Resistance: touch spells that are
+    overwhelmingly cast on yourself)."""
     detail_from_caster_mod: bool = False
     """Condition.detail is the caster's spellcasting modifier (Heroism's per-turn
     temporary hit points)."""
@@ -437,6 +440,14 @@ _CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
         condition="heroic", duration_rounds=10, cures="frightened", detail_from_caster_mod=True
     ),
     "beacon-of-hope": ConditionSpellSpec(condition="beacon_of_hope", duration_rounds=10),
+    # Banked d4s, spent by the next ability check (Guidance) or saving throw (Resistance) -
+    # see turn_engine._spend_banked_die.
+    "guidance": ConditionSpellSpec(condition="guidance", duration_rounds=10, default_to_self=True),
+    "resistance": ConditionSpellSpec(
+        condition="spell_resistance", duration_rounds=10, default_to_self=True
+    ),
+    # Dash as a bonus action - see the dash branch of turn_engine.resolve_action.
+    "expeditious-retreat": ConditionSpellSpec(condition="expeditious_retreat", duration_rounds=100),
     "protection-from-evil-and-good": ConditionSpellSpec(
         condition="protected_from_evil", duration_rounds=100
     ),

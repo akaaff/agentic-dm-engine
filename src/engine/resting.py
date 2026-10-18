@@ -137,6 +137,11 @@ def apply_short_rest(party: list[Character], rng: random.Random) -> None:
             character.hit_dice_remaining -= 1
 
 
+GOODBERRY = "goodberry"
+"""The inventory item Goodberry conjures; the SRD says the berries last 24 hours, which a
+long rest stands in for (see apply_long_rest)."""
+
+
 def apply_long_rest(party: list[Character]) -> None:
     """Full HP, full spell slots (per class_index and the character's real
     level via SPELL_SLOTS_BY_LEVEL, empty for non-casters/monsters/levels
@@ -161,6 +166,7 @@ def apply_long_rest(party: list[Character]) -> None:
     for character in party:
         character.hp = character.max_hp
         character.temp_hp = 0  # temporary hit points last until a long rest at most
+        character.inventory = [i for i in character.inventory if i != GOODBERRY]  # 24 hours
         character.spell_slots = dict(
             SPELL_SLOTS_BY_LEVEL.get(character.class_index or "", {}).get(character.level, {})
         )
