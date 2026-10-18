@@ -52,6 +52,36 @@ function formatBreakdown(natural: number | null, breakdown: unknown, total: numb
   return ` [${parts.join(' + ')}${totalText}]`
 }
 
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+}
+
+/**
+ * How the d20 was rolled, from an attack event's roll_mode / reasons: a short tag
+ * always (so a roll with advantage or disadvantage never looks like an ordinary one,
+ * and a cancelled pair says so), and the reasons behind each kind in debug mode.
+ */
+function formatRollMode(p: Record<string, unknown>, debugMode: boolean): string {
+  const advantage = stringList(p.advantage_reasons)
+  const disadvantage = stringList(p.disadvantage_reasons)
+  if (advantage.length === 0 && disadvantage.length === 0) return ''
+  const mode = p.roll_mode
+  const tag =
+    mode === 'advantage'
+      ? 'advantage'
+      : mode === 'disadvantage'
+        ? 'disadvantage'
+        : 'advantage and disadvantage cancel out'
+  if (!debugMode) return `, ${tag}`
+  if (mode === 'advantage') return `, advantage: ${advantage.join(', ')}`
+  if (mode === 'disadvantage') return `, disadvantage: ${disadvantage.join(', ')}`
+  const reasons = [
+    ...(advantage.length > 0 ? [`advantage: ${advantage.join(', ')}`] : []),
+    ...(disadvantage.length > 0 ? [`disadvantage: ${disadvantage.join(', ')}`] : []),
+  ]
+  return `, ${tag} (${reasons.join('; ')})`
+}
+
 /**
  * Formats one event into a small colored badge, or null for event types not
  * worth surfacing this way (dodge/disengage/rage/help - payload-empty or low
@@ -91,7 +121,9 @@ export function formatEvent(
       const rollTotal = typeof p.roll_total === 'number' ? p.roll_total : null
       const hit = p.hit === true
       const target = characterName(p.target, characters)
-      const naturalText = natural !== null ? ` (natural ${natural})` : ''
+      const modeText = formatRollMode(p, debugMode)
+      const naturalText =
+        natural !== null ? ` (natural ${natural}${modeText})` : modeText ? ` (${modeText.slice(2)})` : ''
       const highlight =
         natural === 20
           ? { text: 'Critical Hit!', color: CRIT_COLOR }

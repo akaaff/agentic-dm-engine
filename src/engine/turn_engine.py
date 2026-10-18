@@ -157,8 +157,8 @@ from src.engine.rules import (
     bardic_inspiration_die_sides,
     blessed_bonus,
     class_spell_indices,
-    condition_attack_advantage,
-    condition_attack_disadvantage,
+    condition_attack_advantage_reasons,
+    condition_attack_disadvantage_reasons,
     condition_check_disadvantage,
     condition_save_advantage,
     condition_save_disadvantage,
@@ -336,6 +336,8 @@ class PendingBardicChoice:
     had_advantage: bool
     smite_slot_level: int | None = None
     damage_reroll_at_or_below: int = 0
+    advantage_reasons: tuple[str, ...] = ()
+    disadvantage_reasons: tuple[str, ...] = ()
 
 
 class BardicChoicePending(Exception):  # noqa: N818 - a control-flow signal, not an error
@@ -514,6 +516,11 @@ class AttackParams:
     the SRD "finesse" property or is a ranged weapon - Sneak Attack's
     (Rogue) weapon-type requirement. Always False for monster/spell attack
     params, which Sneak Attack never applies to."""
+    advantage_reasons: tuple[str, ...] = ()
+    disadvantage_reasons: tuple[str, ...] = ()
+    """Why this roll had advantage / disadvantage, as short player-facing phrases -
+    filled in by the attack resolver once it knows (empty on freshly built params),
+    and reported on the attack event by _roll_mode_payload."""
     is_melee_str_weapon: bool = False
     """Phase 9I: only ever True from _pc_attack_params, when the weapon is
     melee and STR governs its attack roll (not finesse-as-DEX) - Rage's
@@ -1347,12 +1354,15 @@ def _resolve_single_attack(
     pack_tactics_advantage = monster_has_pack_tactics(actor, srd) and _ally_adjacent_to(
         state, actor, target
     )
-    advantage = (
-        actor.has_help_advantage
-        or condition_attack_advantage(actor, target, distance)
-        or pack_tactics_advantage
-        or actor.true_strike_advantage
-    )
+    advantage_reasons: list[str] = []
+    if actor.has_help_advantage:
+        advantage_reasons.append("helped (Help action)")
+    advantage_reasons.extend(condition_attack_advantage_reasons(actor, target, distance))
+    if pack_tactics_advantage:
+        advantage_reasons.append("Pack Tactics (ally next to target)")
+    if actor.true_strike_advantage:
+        advantage_reasons.append("True Strike")
+    advantage = bool(advantage_reasons)
     actor.has_help_advantage = False
     actor.true_strike_advantage = False
     _reveal(state, actor)  # hidden (issue #84): advantage taken above, now found out
@@ -1388,14 +1398,25 @@ def _resolve_single_attack(
             attack_bonus_breakdown=[*params.attack_bonus_breakdown, *roll_entries],
         )
 
-    disadvantage = (
-        target.is_dodging
-        or has_non_proficient_armor(actor, srd)
-        or long_range_disadvantage
-        or engaged_disadvantage
-        or condition_attack_disadvantage(actor, target, distance)
-        or protected_from_evil_disadvantage(actor, target, srd)
-        or protection is True
+    disadvantage_reasons: list[str] = []
+    if target.is_dodging:
+        disadvantage_reasons.append("target is dodging")
+    if has_non_proficient_armor(actor, srd):
+        disadvantage_reasons.append("attacker wears armor they aren't proficient with")
+    if long_range_disadvantage:
+        disadvantage_reasons.append("long range")
+    if engaged_disadvantage:
+        disadvantage_reasons.append("ranged attack with a hostile adjacent")
+    disadvantage_reasons.extend(condition_attack_disadvantage_reasons(actor, target, distance))
+    if protected_from_evil_disadvantage(actor, target, srd):
+        disadvantage_reasons.append("target is protected from evil and good")
+    if protection is True:
+        disadvantage_reasons.append("Protection fighting style")
+    disadvantage = bool(disadvantage_reasons)
+    params = replace(
+        params,
+        advantage_reasons=tuple(advantage_reasons),
+        disadvantage_reasons=tuple(disadvantage_reasons),
     )
     _consume_spell_riders(actor, target)
 
@@ -1448,6 +1469,8 @@ def _resolve_single_attack(
                     had_advantage=advantage,
                     smite_slot_level=params.smite_slot_level,
                     damage_reroll_at_or_below=params.damage_reroll_at_or_below,
+                    advantage_reasons=params.advantage_reasons,
+                    disadvantage_reasons=params.disadvantage_reasons,
                 )
             )
         # Already a hit, or a natural 1 the die couldn't have fixed anyway -
@@ -1508,6 +1531,29 @@ def _resolve_single_attack(
     )
 
 
+def _roll_mode_payload(params: AttackParams, result: AttackResult) -> dict[str, object]:
+    """How the d20 was rolled, for the attack event: the effective `roll_mode`
+    ("advantage", "disadvantage", or "normal" - which includes both kinds being
+    present, since they cancel), why each kind applied, and the dice actually
+    rolled when there were two (so a cancelled pair is visibly one roll)."""
+    has_advantage = bool(params.advantage_reasons)
+    has_disadvantage = bool(params.disadvantage_reasons)
+    if has_advantage and not has_disadvantage:
+        mode = "advantage"
+    elif has_disadvantage and not has_advantage:
+        mode = "disadvantage"
+    else:
+        mode = "normal"
+    payload: dict[str, object] = {
+        "roll_mode": mode,
+        "advantage_reasons": list(params.advantage_reasons),
+        "disadvantage_reasons": list(params.disadvantage_reasons),
+    }
+    if len(result.attack_roll.dice) > 1:
+        payload["dice_rolled"] = list(result.attack_roll.dice)
+    return payload
+
+
 def _finalize_attack_result(
     state: GameState,
     actor: Character,
@@ -1543,6 +1589,7 @@ def _finalize_attack_result(
                 "hit": result.hit,
                 "critical": result.critical,
                 "attack_bonus_breakdown": params.attack_bonus_breakdown,
+                **_roll_mode_payload(params, result),
                 **({"bardic_inspiration_die_sides": bardic_die_sides} if bardic_die_sides else {}),
             },
         )
@@ -1669,6 +1716,8 @@ def resolve_pending_bardic_choice(
         is_finesse_or_ranged=choice.is_finesse_or_ranged,
         attack_bonus_breakdown=choice.attack_bonus_breakdown,
         smite_slot_level=choice.smite_slot_level,
+        advantage_reasons=tuple(choice.advantage_reasons),
+        disadvantage_reasons=tuple(choice.disadvantage_reasons),
     )
 
     if not use_die:
@@ -3862,11 +3911,13 @@ def _cast_attack_spell_at_target(
     if _sanctuary_blocks(state, actor, target, rng, srd):
         _reveal(state, actor)
         return
-    advantage = (
-        actor.has_help_advantage
-        or condition_attack_advantage(actor, target, distance)
-        or actor.true_strike_advantage
-    )
+    advantage_reasons: list[str] = []
+    if actor.has_help_advantage:
+        advantage_reasons.append("helped (Help action)")
+    advantage_reasons.extend(condition_attack_advantage_reasons(actor, target, distance))
+    if actor.true_strike_advantage:
+        advantage_reasons.append("True Strike")
+    advantage = bool(advantage_reasons)
     actor.has_help_advantage = False
     actor.true_strike_advantage = False
     _reveal(state, actor)  # hidden (issue #84) - see _resolve_single_attack
@@ -3887,15 +3938,23 @@ def _cast_attack_spell_at_target(
             attack_bonus_breakdown=[*params.attack_bonus_breakdown, *roll_entries],
         )
 
-    disadvantage = (
-        target.is_dodging
-        or condition_attack_disadvantage(actor, target, distance)
-        or protected_from_evil_disadvantage(actor, target, srd)
-        # Issue #80: a ranged *spell* attack is a ranged attack too - same
-        # "hostile within 5ft" disadvantage _resolve_single_attack applies to
-        # weapons (it was missing here, so every cornered caster's Fire Bolt /
-        # Eldritch Blast rolled straight).
-        or (ranged and _has_adjacent_hostile(state, actor))
+    disadvantage_reasons: list[str] = []
+    if target.is_dodging:
+        disadvantage_reasons.append("target is dodging")
+    disadvantage_reasons.extend(condition_attack_disadvantage_reasons(actor, target, distance))
+    if protected_from_evil_disadvantage(actor, target, srd):
+        disadvantage_reasons.append("target is protected from evil and good")
+    # Issue #80: a ranged *spell* attack is a ranged attack too - same
+    # "hostile within 5ft" disadvantage _resolve_single_attack applies to
+    # weapons (it was missing here, so every cornered caster's Fire Bolt /
+    # Eldritch Blast rolled straight).
+    if ranged and _has_adjacent_hostile(state, actor):
+        disadvantage_reasons.append("ranged attack with a hostile adjacent")
+    disadvantage = bool(disadvantage_reasons)
+    params = replace(
+        params,
+        advantage_reasons=tuple(advantage_reasons),
+        disadvantage_reasons=tuple(disadvantage_reasons),
     )
     _consume_spell_riders(actor, target)
     # Mirror Image (issue #61) - see _resolve_single_attack's identical handling.
@@ -3933,6 +3992,7 @@ def _cast_attack_spell_at_target(
                 "hit": result.hit,
                 "critical": result.critical,
                 "attack_bonus_breakdown": params.attack_bonus_breakdown,
+                **_roll_mode_payload(params, result),
                 **({"bardic_inspiration_die_sides": bardic_die_sides} if bardic_die_sides else {}),
             },
         )
