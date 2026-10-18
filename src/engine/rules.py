@@ -1367,50 +1367,84 @@ def monster_action_range_feet(action: SrdEntry) -> tuple[int, int | None]:
 
 def condition_attack_advantage(actor: Character, target: Character, distance_feet: int) -> bool:
     """Whether `actor`'s attack against `target` has advantage purely from
-    SRD conditions. Blinded/paralyzed/petrified/restrained/stunned/
-    unconscious targets are always easier to hit; a prone target is easier
-    to hit only from melee range (SRD: ranged attacks against a prone target
-    have disadvantage instead - see condition_attack_disadvantage). An
+    conditions - see condition_attack_advantage_reasons for which ones."""
+    return bool(condition_attack_advantage_reasons(actor, target, distance_feet))
+
+
+def condition_attack_advantage_reasons(
+    actor: Character, target: Character, distance_feet: int
+) -> list[str]:
+    """Why `actor`'s attack against `target` has advantage purely from
+    SRD conditions, as short player-facing phrases (empty when none apply).
+    Blinded/paralyzed/petrified/restrained/stunned/unconscious targets are
+    always easier to hit; a prone target is easier to hit only from melee
+    range (SRD: ranged attacks against a prone target have disadvantage
+    instead - see condition_attack_disadvantage). An
     invisible or hidden actor (issue #84 - an unseen attacker, until the
     attack gives their position away) also gets advantage on their own attacks."""
-    return (
-        has_condition(actor, "invisible")
-        or has_condition(actor, "hidden")
-        or has_condition(target, "blinded")
-        or has_condition(target, "paralyzed")
-        or has_condition(target, "petrified")
-        or has_condition(target, "restrained")
-        or has_condition(target, "stunned")
-        or has_condition(target, "unconscious")
-        or has_condition(target, "guided")  # Guiding Bolt (issue #97)
+    reasons: list[str] = []
+    if has_condition(actor, "invisible"):
+        reasons.append("attacker is invisible")
+    if has_condition(actor, "hidden"):
+        reasons.append("attacker is hidden")
+    for name, text in (
+        ("blinded", "target is blinded"),
+        ("paralyzed", "target is paralyzed"),
+        ("petrified", "target is petrified"),
+        ("restrained", "target is restrained"),
+        ("stunned", "target is stunned"),
+        ("unconscious", "target is unconscious"),
+        ("guided", "target is guided (Guiding Bolt)"),  # issue #97
         # Faerie Fire (issue #96): outlined in light - attackers who can see it
         # have advantage.
-        or has_condition(target, "outlined")
-        or (has_condition(target, "prone") and distance_feet <= 5)
-    )
+        ("outlined", "target is outlined (Faerie Fire)"),
+    ):
+        if has_condition(target, name):  # type: ignore[arg-type]
+            reasons.append(text)
+    if has_condition(target, "prone") and distance_feet <= 5:
+        reasons.append("target is prone (melee range)")
+    return reasons
 
 
 def condition_attack_disadvantage(actor: Character, target: Character, distance_feet: int) -> bool:
-    """The disadvantage-side mirror of condition_attack_advantage - an
+    """Whether `actor`'s attack against `target` has disadvantage purely from
+    conditions - see condition_attack_disadvantage_reasons for which ones."""
+    return bool(condition_attack_disadvantage_reasons(actor, target, distance_feet))
+
+
+def condition_attack_disadvantage_reasons(
+    actor: Character, target: Character, distance_feet: int
+) -> list[str]:
+    """The disadvantage-side mirror of condition_attack_advantage_reasons - an
     actor's own blinded/poisoned/restrained/prone/frightened status, an
     invisible or blurred target (Blur, issue #59: "any creature has
     disadvantage on attack rolls against you"), a prone target attacked from
     beyond melee range, or exhaustion level 3+ (SRD: disadvantage on attack
     rolls and saving throws)."""
-    return (
-        has_condition(actor, "blinded")
-        or has_condition(actor, "poisoned")
-        or has_condition(actor, "restrained")
-        or has_condition(actor, "prone")
-        or has_condition(actor, "frightened")
-        or has_condition(actor, "mocked")
-        or has_condition(actor, "distracted")
-        or actor.exhaustion_level >= 3
-        or has_condition(target, "invisible")
-        or has_condition(target, "hidden")
-        or has_condition(target, "blurred")
-        or (has_condition(target, "prone") and distance_feet > 5)
-    )
+    reasons: list[str] = []
+    for name, text in (
+        ("blinded", "attacker is blinded"),
+        ("poisoned", "attacker is poisoned"),
+        ("restrained", "attacker is restrained"),
+        ("prone", "attacker is prone"),
+        ("frightened", "attacker is frightened"),
+        ("mocked", "attacker is mocked (Vicious Mockery)"),
+        ("distracted", "attacker is distracted"),
+    ):
+        if has_condition(actor, name):  # type: ignore[arg-type]
+            reasons.append(text)
+    if actor.exhaustion_level >= 3:
+        reasons.append("attacker is exhausted")
+    for name, text in (
+        ("invisible", "target is invisible"),
+        ("hidden", "target is hidden"),
+        ("blurred", "target is blurred (Blur)"),
+    ):
+        if has_condition(target, name):  # type: ignore[arg-type]
+            reasons.append(text)
+    if has_condition(target, "prone") and distance_feet > 5:
+        reasons.append("target is prone (ranged attack)")
+    return reasons
 
 
 def condition_save_disadvantage(character: Character) -> bool:
