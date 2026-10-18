@@ -8,7 +8,7 @@ lives in api/ws/session.py, not here.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from src.engine.actions import ParsedAction
 from src.engine.state import GameState
@@ -36,3 +36,7 @@ class GraphState(TypedDict):
     but nothing in turn_engine ever emits them)."""
     narration: str | None
     scene_image_url: str | None
+    hold_turn_for_bonus: NotRequired[bool]
+    """Set by the WebSocket handler for a real player's action (not a debug/scripted one): the
+    rules engine then keeps a human player's turn open after their main action while a bonus
+    action is still usable. Absent means False, so every other caller is unchanged."""

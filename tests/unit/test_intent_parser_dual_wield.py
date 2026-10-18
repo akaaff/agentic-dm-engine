@@ -12,7 +12,7 @@ from __future__ import annotations
 from src.engine.actions import ParsedAction
 from src.engine.position import Position
 from src.engine.state import Character, GameState
-from src.graph.nodes.intent_parser import _split_dual_wield_attacks
+from src.graph.nodes.intent_parser import _lone_offhand_attack, _split_dual_wield_attacks
 
 
 def _barbarian(**overrides: object) -> Character:
@@ -117,3 +117,63 @@ def test_a_single_attack_is_untouched() -> None:
     actor = _barbarian()
     single = [_attack("handaxe")]
     assert _split_dual_wield_attacks(single, _state(actor), "qaf") == single
+
+
+# --- a lone off-hand swing (live-found: "I attack with my second hand" ended the turn) ---
+
+
+def test_an_attack_naming_only_the_off_hand_weapon_becomes_an_offhand_attack() -> None:
+    actor = _barbarian()
+    out = _lone_offhand_attack([_attack("scimitar")], _state(actor), "qaf", "I swing my scimitar")
+    assert [(a.verb, a.item_or_spell, a.target) for a in out] == [
+        ("offhand_attack", None, "wolf_3")
+    ]
+
+
+def test_an_attack_naming_the_main_weapon_is_left_alone() -> None:
+    actor = _barbarian()
+    out = _lone_offhand_attack([_attack("handaxe")], _state(actor), "qaf", "I swing my handaxe")
+    assert out[0].verb == "attack"
+
+
+def test_the_players_words_alone_can_say_off_hand() -> None:
+    actor = _barbarian()
+    for words in ("I attack with my second hand", "attack with the off-hand", "other hand!"):
+        out = _lone_offhand_attack([_attack(None)], _state(actor), "qaf", words)
+        assert out[0].verb == "offhand_attack", words
+
+
+def test_off_hand_words_do_not_override_a_named_main_weapon() -> None:
+    actor = _barbarian()
+    out = _lone_offhand_attack(
+        [_attack("handaxe")], _state(actor), "qaf", "attack with handaxe, not my off hand"
+    )
+    assert out[0].verb == "attack"
+
+
+def test_only_the_first_such_attack_is_converted_and_only_once() -> None:
+    actor = _barbarian()
+    two = [_attack("scimitar"), _attack("scimitar", target="wolf_2")]
+    out = _lone_offhand_attack(two, _state(actor), "qaf", "x")
+    assert [a.verb for a in out] == ["offhand_attack", "attack"]
+    again = _lone_offhand_attack(out, _state(actor), "qaf", "x")
+    assert [a.verb for a in again] == ["offhand_attack", "attack"]
+
+
+def test_nothing_changes_without_two_weapons_or_with_the_bonus_action_spent() -> None:
+    one = _barbarian(equipped_weapons=["handaxe"])
+    assert _lone_offhand_attack([_attack("scimitar")], _state(one), "qaf", "off hand")[0].verb == (
+        "attack"
+    )
+    spent = _barbarian(bonus_action_used=True)
+    assert _lone_offhand_attack([_attack("scimitar")], _state(spent), "qaf", "x")[0].verb == (
+        "attack"
+    )
+
+
+def test_two_identical_weapons_are_not_guessed_at_from_the_name_alone() -> None:
+    actor = _barbarian(equipped_weapons=["dagger", "dagger"])
+    out = _lone_offhand_attack([_attack("dagger")], _state(actor), "qaf", "I stab")
+    assert out[0].verb == "attack"
+    said = _lone_offhand_attack([_attack(None)], _state(actor), "qaf", "stab with my off hand")
+    assert said[0].verb == "offhand_attack"

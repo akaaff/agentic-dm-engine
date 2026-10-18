@@ -11,6 +11,7 @@ from typing import Any
 
 from src.engine.actions import ParsedAction
 from src.engine.monster_ai import build_move_toward_target
+from src.engine.rules import is_party_member
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import GameState
 from src.engine.turn_engine import AttackOutOfRangeError, TurnEngineError, resolve_action
@@ -93,12 +94,21 @@ def make_rules_engine_node(
         # either the normal happy path or the out-of-range redirect's own
         # resolve_action call, correctly covers both.
         events_before = len(game_state.events)
+        # A human player's turn stays open after their main action while a bonus action is
+        # still usable (companions and monsters play on automatically).
+        acting = game_state.characters.get(action.actor)
+        hold = (
+            state.get("hold_turn_for_bonus", False)
+            and acting is not None
+            and is_party_member(acting)
+            and not acting.is_companion
+        )
         try:
-            resolve_action(game_state, action, rng, srd)
+            resolve_action(game_state, action, rng, srd, hold_for_bonus_action=hold)
         except AttackOutOfRangeError as exc:
             redirect = _redirect_out_of_range(game_state, action, exc)
             if redirect is not None:
-                resolve_action(game_state, redirect, rng, srd)
+                resolve_action(game_state, redirect, rng, srd, hold_for_bonus_action=hold)
                 for event in game_state.events[events_before:]:
                     log_mechanic(event, game_state)
                 return {"game_state": game_state}

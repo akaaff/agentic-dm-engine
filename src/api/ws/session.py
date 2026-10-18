@@ -726,7 +726,15 @@ def _resolve_and_narrate_bardic_choice(
     standalone rather than re-invoking the whole compiled graph."""
     events_before = len(session.game_state.events)
     srd = session.srd or load_srd()
-    resolve_pending_bardic_choice(session.game_state, choice, use_die, session.action_rng, srd)
+    holder = session.game_state.characters[choice.holder_id]
+    resolve_pending_bardic_choice(
+        session.game_state,
+        choice,
+        use_die,
+        session.action_rng,
+        srd,
+        hold_for_bonus_action=is_party_member(holder) and not holder.is_companion,
+    )
     narrator_state: GraphState = {
         "game_state": session.game_state,
         "raw_text": "",
@@ -1630,7 +1638,10 @@ async def _handle_client_message(
         await _send_awaiting_input(session)
         return
 
-    if msg_type in ("player_action", "player_move") and session.game_state.status == "in_progress":
+    if (
+        msg_type in ("player_action", "player_move", "end_turn")
+        and session.game_state.status == "in_progress"
+    ):
         # Issue #44: with 2+ human seats now possible, nothing before this
         # stopped one player's connection from submitting an action for
         # whoever's turn it currently is, regardless of which character(s)
@@ -1731,6 +1742,20 @@ async def _handle_client_message(
                 raw_text="click-to-move",
             )
         ]
+    elif msg_type == "end_turn":
+        # A player who is done with their turn - needed since a turn is now held open
+        # after the main action while a bonus action is still usable. The acting
+        # character is whoever's turn it is (the authorization check above already
+        # required this connection to control them).
+        if session.game_state.status != "in_progress":
+            return
+        actions_to_resolve = [
+            ParsedAction(
+                actor=session.game_state.turn_order[session.game_state.current_turn],
+                verb="end_turn",
+                raw_text="end turn",
+            )
+        ]
     elif msg_type == "debug_action":
         # Test/dev only: injects a fully-formed ParsedAction directly,
         # bypassing intent_parser's LLM call entirely (see its pre-supplied-
@@ -1784,6 +1809,9 @@ async def _handle_client_message(
             "round_before": session.game_state.round,
             "narration": None,
             "scene_image_url": None,
+            # A real player's action keeps their turn open for an unused bonus action; a
+            # debug_action is the scripted/dev override and ends turns the way it always did.
+            "hold_turn_for_bonus": msg_type != "debug_action",
         }
         try:
             result = await asyncio.to_thread(session.graph.invoke, graph_input)

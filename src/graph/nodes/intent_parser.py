@@ -821,6 +821,45 @@ def _split_dual_wield_attacks(
     return actions
 
 
+_OFFHAND_WORDS = re.compile(
+    r"\b(?:off[- ]?hand|other hand|second hand|secondary|left hand|offhand weapon)\b",
+    re.IGNORECASE,
+)
+
+
+def _lone_offhand_attack(
+    actions: list[ParsedAction], game_state: GameState, actor_id: str, utterance: str
+) -> list[ParsedAction]:
+    """Live-found: "I attack with my second hand" parsed into a plain `attack`, which spends
+    the main action and ends the turn - so the main-hand swing that should have followed was
+    lost (it only worked once both swings were named in one command, which
+    _split_dual_wield_attacks handles). When a dual-wielder's attack names the OFF-HAND weapon
+    (and not the main one), or the player's own words say off hand / second hand / other hand
+    and the attack names no weapon of its own, it is the bonus-action `offhand_attack` -
+    which, unlike `attack`, leaves the turn open for the main-hand swing. Only the first such
+    attack is converted: there is one bonus action. Already-converted lists are left alone."""
+    actor = game_state.characters.get(actor_id)
+    if (
+        actor is None
+        or len(actor.equipped_weapons) != 2
+        or actor.bonus_action_used
+        or any(a.verb == "offhand_attack" for a in actions)
+    ):
+        return actions
+    main_weapon, off_weapon = (_normalize_weapon_name(w) for w in actor.equipped_weapons)
+    says_offhand = bool(_OFFHAND_WORDS.search(utterance))
+    for i, action in enumerate(actions):
+        if action.verb != "attack":
+            continue
+        named = _normalize_weapon_name(action.item_or_spell)
+        names_off_only = bool(named) and named == off_weapon and named != main_weapon
+        names_nothing_known = not named or named not in (main_weapon, off_weapon)
+        if names_off_only or (says_offhand and names_nothing_known):
+            converted = action.model_copy(update={"verb": "offhand_attack", "item_or_spell": None})
+            return [*actions[:i], converted, *actions[i + 1 :]]
+    return actions
+
+
 _ALL_WORDS = frozenset({"all", "every", "each", "everyone", "everything", "everybody"})
 
 
@@ -1031,6 +1070,7 @@ def parse_intent_sequence(state: GraphState) -> list[ParsedAction]:
     actions = _insert_charge_move(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _append_dropped_attack(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _split_dual_wield_attacks(actions, game_state, expected_actor_id)
+    actions = _lone_offhand_attack(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _expand_area_spell_targets(actions, game_state, expected_actor_id, state["raw_text"])
     actions = _bonus_actions_first(actions)
     if not actions:

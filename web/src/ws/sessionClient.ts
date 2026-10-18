@@ -65,6 +65,9 @@ export interface LiveCharacter {
   // (movement, not the action). See Character.action_used_this_turn's own
   // docstring in state.py.
   action_used_this_turn: boolean
+  // True while the server keeps this player's turn open after their main action because a
+  // bonus action is still usable - the turn doesn't pass until they use it or end the turn.
+  turn_held_for_bonus: boolean
   disengaged_this_turn: boolean
   reaction_used_this_round: boolean
   class_index: string | null
@@ -797,6 +800,14 @@ export function useSessionSocket(sessionId: string) {
     setError(null)
   }
 
+  // Ends the acting character's turn, for a player who is done with a turn the server is
+  // holding open for an unused bonus action. Like sendPlayerAction it hands the turn back.
+  function sendEndTurn() {
+    wsRef.current?.send(JSON.stringify({ type: 'end_turn' }))
+    setAwaitingActor(null)
+    setError(null)
+  }
+
   // Party-wide, not turn-based (issue #28) - only reachable between
   // encounters (gameState.status === 'victory'), so unlike sendPlayerAction/
   // sendPlayerMove these don't touch awaitingActor at all.
@@ -871,6 +882,7 @@ export function useSessionSocket(sessionId: string) {
     reconnecting,
     sendPlayerAction,
     sendPlayerMove,
+    sendEndTurn,
     sendRest,
     sendContinueCampaign,
     sendBardicInspirationResponse,
