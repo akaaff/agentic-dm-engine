@@ -16,6 +16,7 @@ function and one new dispatch branch, not touching any call site.
 from __future__ import annotations
 
 import logging
+import threading
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -54,6 +55,11 @@ def _has_enough_vram(min_free_bytes: int) -> bool:
     return free_bytes >= min_free_bytes
 
 
+_LOAD_LOCK = threading.Lock()
+"""Held around the cached loader: `@cache` alone lets two threads that both miss run the
+body twice (found live: two concurrent loads on the first narration lines)."""
+
+
 @cache
 def _load_kokoro_pipeline() -> KPipeline | None:
     """@cache'd so this only ever runs once per process (Kokoro's own load
@@ -63,26 +69,43 @@ def _load_kokoro_pipeline() -> KPipeline | None:
     call would wrongly skip every generation after the first, since the
     caching allocator holds onto what it already grabbed - see that
     function's own docstring for the full Day-16 story this mirrors).
-    Returns None (never raises) on missing CUDA, insufficient VRAM, or the
-    `kokoro` package/its `espeak-ng` phonemizer dependency not being
-    available - all degrade to "skip this line's audio", not a crash."""
-    if not _has_enough_vram(KOKORO_MIN_FREE_VRAM_BYTES):
-        logger.warning("Not enough free VRAM for the Kokoro pipeline - narration audio disabled")
-        return None
+    Falls back to the CPU when the GPU is missing or short on free memory,
+    instead of switching narration off: Kokoro-82M is small enough that the CPU
+    makes audio about 2.5x faster than real time (measured: 2.9 s for a 7.5 s line,
+    after a ~13 s one-time load). This was found live - the scene-image model
+    loads first, takes most of a 10 GB card, and the old behaviour then disabled
+    voiceover for the rest of the process, with only a log warning to say why.
+    Returns None (never raises) if the `kokoro` package or its `espeak-ng`
+    phonemizer dependency isn't available - that degrades to "skip this line's
+    audio", not a crash."""
+    device = "cuda" if _has_enough_vram(KOKORO_MIN_FREE_VRAM_BYTES) else "cpu"
+    if device == "cpu":
+        logger.warning(
+            "Not enough free VRAM for the Kokoro pipeline - narration will run on the CPU"
+        )
     try:
         from kokoro import KPipeline
     except Exception:
         logger.exception("Failed to import kokoro - narration audio disabled")
         return None
     try:
-        return KPipeline(lang_code="a")
+        pipeline = KPipeline(lang_code="a", device=device, repo_id="hexgrad/Kokoro-82M")
+        # Loading another diffusers/transformers model flips torch's *global* default dtype
+        # to half precision for the duration of its load. Two threads were found doing
+        # exactly that at once (the scene-image model and this one, on the first turn),
+        # which built Kokoro's weights in half precision and made every later call fail
+        # with "mat1 and mat2 must have the same dtype, but got Float and Half". Kokoro
+        # is float32, so put it back whatever the default was at construction.
+        pipeline.model.float()
+        return pipeline
     except Exception:
         logger.exception("Failed to load the Kokoro pipeline - narration audio disabled")
         return None
 
 
 def _synthesize_kokoro(text: str, voice: str, output_path: Path) -> Path | None:
-    pipeline = _load_kokoro_pipeline()
+    with _LOAD_LOCK:
+        pipeline = _load_kokoro_pipeline()
     if pipeline is None:
         return None
     try:
