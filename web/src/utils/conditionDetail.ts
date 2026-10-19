@@ -1,4 +1,4 @@
-import type { LiveCondition } from '../ws/sessionClient'
+import type { LiveCharacter, LiveCondition } from '../ws/sessionClient'
 
 // Condensed from the real SRD condition text (data/srd/5e-SRD-Conditions.json)
 // - this is a closed, SRD-fixed vocabulary that never changes with game
@@ -195,4 +195,89 @@ const EXHAUSTION_LEVEL_EFFECTS: Record<number, string> = {
 export function exhaustionDescription(level: number): string {
   const thisLevel = EXHAUSTION_LEVEL_EFFECTS[level] ?? ''
   return `${thisLevel} Earlier levels' effects still apply too. A long rest (with food and drink) reduces this by 1.`
+}
+
+export interface CharacterEffect {
+  key: string
+  label: string
+  description: string
+}
+
+/**
+ * Effects a character has that are not in `conditions` - the engine keeps these as fields
+ * on the character itself (a banked die, a one-shot advantage, an AC spell, a stance), so
+ * they never got a badge. Each says how long it lasts in its label, since most have no
+ * timer: they end when used, when the next turn starts, or when a rest clears them.
+ * Concentration and Wild Shape are included so the compact party cards show them too.
+ */
+export function characterEffects(character: LiveCharacter): CharacterEffect[] {
+  const effects: CharacterEffect[] = []
+  if (character.bardic_inspiration_die) {
+    effects.push({
+      key: 'bardic_inspiration',
+      label: `Bardic Inspiration (d${character.bardic_inspiration_die}, until used)`,
+      description: `Roll a d${character.bardic_inspiration_die} and add it to the next attack roll. Used up by that attack; there is no time limit.`,
+    })
+  }
+  if (character.has_help_advantage) {
+    effects.push({
+      key: 'helped',
+      label: 'Helped (next roll)',
+      description: 'An ally helped: advantage on the next attack or skill check, then it is used up.',
+    })
+  }
+  if (character.true_strike_advantage) {
+    effects.push({
+      key: 'true_strike',
+      label: 'True Strike (next attack)',
+      description: 'Advantage on the next attack roll, then it is used up.',
+    })
+  }
+  if (character.mage_armor_active) {
+    effects.push({
+      key: 'mage_armor',
+      label: 'Mage Armor',
+      description:
+        'While unarmored, AC is 13 + DEX modifier. No timer is modeled; it applies for as long as the character stays unarmored.',
+    })
+  }
+  if (character.temporary_ac_bonus > 0) {
+    effects.push({
+      key: 'ac_bonus',
+      label: `AC +${character.temporary_ac_bonus} (spell)`,
+      description: `A spell (Shield of Faith) adds ${character.temporary_ac_bonus} to AC while the caster keeps concentrating.`,
+    })
+  }
+  if (character.is_dodging) {
+    effects.push({
+      key: 'dodging',
+      label: 'Dodging (until next turn)',
+      description: 'Attacks against it have disadvantage until the start of its next turn.',
+    })
+  }
+  if (character.is_raging) {
+    effects.push({
+      key: 'raging',
+      label: 'Raging (until rest)',
+      description:
+        'Resistance to bludgeoning, piercing and slashing damage and bonus melee damage. The real one-minute limit is not modeled; it lasts until a rest.',
+    })
+  }
+  if (character.wild_shape_beast_index) {
+    effects.push({
+      key: 'wild_shape',
+      label: `Wild Shape: ${character.wild_shape_beast_index.replace(/-/g, ' ')}`,
+      description:
+        'Transformed into a beast: uses its stat block until reverted (a bonus action) or reduced to 0 HP.',
+    })
+  }
+  if (character.concentrating_on) {
+    effects.push({
+      key: 'concentrating',
+      label: `Concentrating: ${character.concentrating_on}`,
+      description:
+        'Sustaining a spell. Taking damage forces a Constitution save and failing it, casting another concentration spell, or going unconscious ends it, along with its effects.',
+    })
+  }
+  return effects
 }
