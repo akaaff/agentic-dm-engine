@@ -813,6 +813,12 @@ button.secondary {
   background: #e08585;
 }
 
+/* One-off effects kept on the character itself (a banked die, a stance, concentration) -
+   a different color from conditions so a buff doesn't read like a status ailment. */
+.condition-badge-effect {
+  background: #8fd3a8;
+}
+
 .condition-badge .info-tip-icon {
   color: inherit;
   opacity: 0.75;

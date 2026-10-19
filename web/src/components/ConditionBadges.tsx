@@ -1,6 +1,11 @@
 import type { LiveCharacter } from '../ws/sessionClient'
 import InfoTip from './InfoTip'
-import { conditionDescription, conditionLabel, exhaustionDescription } from '../utils/conditionDetail'
+import {
+  characterEffects,
+  conditionDescription,
+  conditionLabel,
+  exhaustionDescription,
+} from '../utils/conditionDetail'
 
 /** Active effects on a character - conditions (blinded, blessed, etc, each
  * with a real duration) plus exhaustion (tracked separately, see
@@ -9,7 +14,9 @@ import { conditionDescription, conditionLabel, exhaustionDescription } from '../
  * alike) and CharacterDetailSheet.tsx (the player's own full sheet), so the
  * two don't carry two slowly-drifting copies of the same rendering. */
 export default function ConditionBadges({ character }: { character: LiveCharacter }) {
-  if (character.conditions.length === 0 && character.exhaustion_level === 0) return null
+  const effects = characterEffects(character)
+  if (character.conditions.length === 0 && character.exhaustion_level === 0 && effects.length === 0)
+    return null
 
   return (
     <div className="condition-badges">
@@ -22,6 +29,12 @@ export default function ConditionBadges({ character }: { character: LiveCharacte
           </span>
         )
       })}
+      {effects.map((effect) => (
+        <span className="condition-badge condition-badge-effect" key={effect.key}>
+          {effect.label}
+          <InfoTip text={effect.description} />
+        </span>
+      ))}
       {character.exhaustion_level > 0 && (
         <span className="condition-badge condition-badge-exhaustion">
           Exhaustion {character.exhaustion_level}
