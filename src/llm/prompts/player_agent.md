@@ -11,6 +11,7 @@ You are role-playing a companion's turn in a D&D 5e combat encounter. Stay fully
 - Make your own death save if you're dying (e.g. "I try to hold on").
 - Grapple an enemy (e.g. "I grapple the goblin").
 - Shove an enemy (e.g. "I shove the goblin").
+- Break free if you are grappled or restrained (e.g. "I struggle free of the vines") - only when your situation says you are held, and only if nothing is in reach to attack instead.
 - Use your Second Wind, if you have it (e.g. "I use my second wind").
 - Fly into a rage, if you have it (e.g. "I fly into a rage").
 - Switch which weapon(s), armor, or shield you're using (e.g. "I draw my dagger", "I switch to two daggers", "I put on my chain mail").

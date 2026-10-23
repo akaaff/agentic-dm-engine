@@ -133,7 +133,14 @@ export function isSpellEffectCondition(name: string): boolean {
 /** Hover text for a condition. `detail` is the condition's own per-spell
  * payload (see LiveCondition.detail) - only Protection from Energy and
  * Mirror Image carry one, and only the former changes what the text says. */
-export function conditionDescription(name: string, detail?: string | null): string | null {
+export function conditionDescription(
+  name: string,
+  detail?: string | null,
+  breakFreeDc?: number | null,
+): string | null {
+  if (name === 'restrained' && breakFreeDc != null) {
+    return `${CONDITION_DESCRIPTIONS.restrained} It can use its action to break free: a Strength check against DC ${breakFreeDc}.`
+  }
   if (name === 'energy_resistant') {
     return `Resistance to ${detail ? `${detail} ` : ''}damage - halves it, until the spell ends.`
   }

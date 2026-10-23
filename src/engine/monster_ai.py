@@ -372,6 +372,19 @@ def _action_against(
         ally_squares,
     )
     if not path:
+        if remaining_speed <= 0 and any(
+            c.name == "restrained" and c.break_free_dc is not None for c in actor.conditions
+        ):
+            # Held by Entangle with nothing in reach: spend the action trying to break free
+            # instead of idling (it still attacks first whenever something is in reach).
+            return (
+                ParsedAction(
+                    actor=actor.id,
+                    verb="escape_grapple",
+                    raw_text=f"{actor.name} strains against the restraining plants.",
+                ),
+                False,
+            )
         if remaining_speed <= 0:
             # Issue #106: the monster already spent its movement (or can't move
             # at all) and nothing is in reach. An attack here is certain to be

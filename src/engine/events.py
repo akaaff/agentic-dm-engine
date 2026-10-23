@@ -42,6 +42,7 @@ EventType = Literal[
     "sanctuary_blocked",
     "protection",
     "grapple_escape",
+    "restraint_escape",
     "ready",
     "readied_attack",
     "divine_sense",

@@ -17,6 +17,8 @@ export interface LiveCondition {
   // Optional: an SRD condition or an older payload simply doesn't have them.
   spell?: string | null
   detail?: string | null
+  // On a restraint the creature can try to shake off (Entangle): the Strength check DC.
+  break_free_dc?: number | null
 }
 
 export interface LiveCharacter {

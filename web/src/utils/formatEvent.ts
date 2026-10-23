@@ -290,6 +290,22 @@ export function formatEvent(
         label: `${actorName} ${success ? 'breaks free of the grapple' : 'fails to break free'}`,
       }
     }
+    case 'restraint_escape': {
+      // A creature spending its action to shake off Entangle and the like: Strength check vs DC.
+      const success = p.success === true
+      const natural = typeof p.natural === 'number' ? p.natural : null
+      const rollTotal = typeof p.roll_total === 'number' ? p.roll_total : null
+      const dcText = typeof p.dc === 'number' ? ` vs DC ${p.dc}` : ''
+      const naturalText = natural !== null ? ` (natural ${natural})` : ''
+      const breakdownText = debugMode
+        ? formatBreakdown(natural, p.modifier_breakdown, rollTotal)
+        : ''
+      return {
+        key: event.id,
+        color,
+        label: `${actorName} ${success ? 'breaks free of the restraint' : 'fails to break free'}${dcText}${naturalText}${breakdownText}`,
+      }
+    }
     case 'divine_sense': {
       // Paladin's Divine Sense (issue #87): who it picked up within 60 ft.
       const detected: { id?: unknown }[] = Array.isArray(p.detected) ? p.detected : []

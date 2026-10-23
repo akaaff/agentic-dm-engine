@@ -3085,9 +3085,44 @@ def _resolve_escape_grapple(
     the grappler's Athletics. On a win the `grappled` condition ends; a tie changes
     nothing, like every contest here. A grappler that is gone, dead or helpless can't
     hold on, so the escape is automatic."""
+    restraint = next(
+        (c for c in actor.conditions if c.name == "restrained" and c.break_free_dc is not None),
+        None,
+    )
+    if restraint is not None and restraint.break_free_dc is not None:
+        # Entangle: "a creature restrained by the plants can use its action to make a
+        # Strength check against your spell save DC. On a success, it frees itself."
+        # A plain Strength check - no Athletics proficiency, the SRD says Strength.
+        modifier = ability_modifier(actor.stats["STR"])
+        roll_result, success = resolve_skill_check(
+            modifier=modifier,
+            dc=restraint.break_free_dc,
+            rng=rng,
+            disadvantage=condition_check_disadvantage(actor),
+            lucky=has_lucky_trait(actor),
+        )
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=actor.id,
+                type="restraint_escape",
+                payload={
+                    "spell": restraint.spell,
+                    "dc": restraint.break_free_dc,
+                    "natural": roll_result.kept[0],
+                    "roll_total": roll_result.total,
+                    "success": success,
+                    "modifier_breakdown": [("STR mod", modifier)],
+                },
+            )
+        )
+        if success:
+            remove_condition(actor, "restrained")
+        return
     grappled = next((c for c in actor.conditions if c.name == "grappled"), None)
     if grappled is None:
-        raise TurnEngineError(f"{actor.id} isn't grappled")
+        raise TurnEngineError(f"{actor.id} isn't grappled or restrained")
     grappler = state.characters.get(grappled.source) if grappled.source else None
     if grappler is None or grappler.is_dead or _is_incapacitated(grappler):
         success, actor_total, grappler_total = True, 0, 0
@@ -3206,6 +3241,10 @@ def _resolve_move(
     # same turn only gets whatever's left of the budget, not a fresh one.
     remaining_budget = max(0, total_budget - actor.movement_used_feet)
 
+    if base_speed == 0 and has_condition(actor, "restrained"):
+        raise TurnEngineError(
+            f"{actor.id} is restrained and can't move - break free first (or end the effect)"
+        )
     if not can_afford_move(remaining_budget, full_path, state.battle_map.terrain):
         cost = move_cost_feet(full_path, state.battle_map.terrain)
         raise TurnEngineError(
@@ -4351,6 +4390,9 @@ def _cast_save_spell_at_target(
                     duration_rounds=spec.duration_rounds,
                     source=actor.id,
                     spell=params.source_name,
+                    break_free_dc=(
+                        params.dc if spec.break_free and condition_name == spec.condition else None
+                    ),
                 ),
             )
             state.events.append(
