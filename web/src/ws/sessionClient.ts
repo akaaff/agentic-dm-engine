@@ -106,6 +106,12 @@ export interface LiveCharacter {
   // from "Wild Shape available" without re-deriving it from class_resources
   // alone (a Druid can have wild_shape uses left while already shaped).
   wild_shape_beast_index: string | null
+  // One-off effects that live on the character itself rather than in `conditions` -
+  // shown as badges by characterEffects (utils/conditionDetail.ts).
+  bardic_inspiration_die: number | null
+  true_strike_advantage: boolean
+  mage_armor_active: boolean
+  temporary_ac_bonus: number
 }
 
 // Proactive UX ask, not tied to a bug: the character sheet's AC/attack

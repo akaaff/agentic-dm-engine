@@ -573,7 +573,63 @@ def _match_weapon_by_name(weapon_name: str, candidates: list[SrdEntry]) -> SrdEn
         item_words = set(item["name"].lower().replace("-", " ").replace(",", " ").split())
         if item_words and item_words <= words:
             return item
-    return None
+    fuzzy = _fuzzy_weapon_matches(weapon_name, candidates)
+    return fuzzy[0] if len(fuzzy) == 1 else None
+
+
+_WEAPON_NAME_FILLER = frozenset(
+    {
+        "my", "the", "a", "an", "with", "of", "your", "his", "her", "their", "its", "and", "to",
+        "hand", "hands", "weapon", "main", "off", "left", "right", "second", "primary",
+        "trusty", "good", "old", "own",
+    }
+)  # fmt: skip
+"""Words that say nothing about WHICH weapon - "hand" in particular, which is also part of
+"Crossbow, hand" and would otherwise make "my left hand" match it."""
+
+
+def _weapon_words(text: str) -> list[str]:
+    return re.findall(r"[a-z]+", text.lower())
+
+
+def _fuzzy_weapon_matches(weapon_name: str, candidates: list[SrdEntry]) -> list[SrdEntry]:
+    """Equipped (or owned) weapons the text could be referring to when it isn't a full
+    name: "crossbow" for "Crossbow, hand", "sword" for "Longsword" or "Greatsword". A
+    meaningful word in the text matches a weapon when it equals one of the weapon's own
+    words or sits inside one (so "sword" is in "longsword"; the reverse - "hand" in
+    "handaxe" - is deliberately not a match). The best-scoring weapons are returned, one
+    per SRD index, so the caller can tell a single clear answer from a tie ("sword" with
+    both a longsword and a shortsword in hand). Never used for a text that is itself a
+    real SRD item: naming "crossbow-light" while holding "crossbow-hand" is a different
+    weapon, not a vague reference to this one."""
+    tokens = _weapon_words(weapon_name)
+    spoken = set(tokens)
+    if any(
+        set(_weapon_words(item["name"])) == spoken
+        for item in load_srd().equipment.values()
+        if item.get("weapon_category")
+    ):
+        return []  # a complete weapon name, in any word order ("light crossbow")
+    wanted = []
+    for token in tokens:
+        if token in _WEAPON_NAME_FILLER:
+            continue
+        # a plain plural ("swords") names the same thing as its singular
+        singular = token[:-1] if token.endswith("s") and len(token) > 3 else token
+        if len(singular) >= 3:
+            wanted.append(singular)
+    if not wanted:
+        return []
+    scored: list[tuple[int, SrdEntry]] = []
+    for item in candidates:
+        item_words = _weapon_words(item["name"])
+        score = sum(1 for w in wanted if any(w == iw or w in iw for iw in item_words))
+        if score:
+            scored.append((score, item))
+    if not scored:
+        return []
+    best = max(score for score, _ in scored)
+    return list({item["index"]: item for score, item in scored if score == best}.values())
 
 
 def _named(*entries: tuple[str, int]) -> list[tuple[str, int]]:
@@ -666,6 +722,11 @@ def _pc_attack_params(
                 # nothing real was named at all - naming an actual
                 # different weapon you're not holding still rejects.
                 weapon = equipped[0]
+            elif len(tied := _fuzzy_weapon_matches(weapon_index, equipped)) > 1:
+                raise TurnEngineError(
+                    f"{weapon_index!r} could mean "
+                    f"{' or '.join(item['name'] for item in tied)} - name which one to attack with"
+                )
             else:
                 equipped_names = ", ".join(item["name"] for item in equipped) or "nothing (unarmed)"
                 raise TurnEngineError(
