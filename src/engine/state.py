@@ -90,6 +90,10 @@ class Condition(BaseModel):
     going unconscious) - a concentration spell's effect used to outlive its
     caster's concentration, since only the `concentrating_on` label was ever
     cleared, never what it had applied to anyone."""
+    break_free_dc: int | None = None
+    """Set on a `restrained` condition that the restrained creature may try to shake off with
+    its action (Entangle): a Strength check against this DC - the caster's spell save DC at
+    the moment of casting. None for a restraint with no such check."""
     detail: str | None = None
     """Free-form per-spell payload the condition's own mechanic reads back -
     the damage type Protection from Energy was cast against, Mirror Image's

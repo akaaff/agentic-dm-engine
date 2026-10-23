@@ -415,6 +415,9 @@ class ConditionSpellSpec:
     detail_from_caster_mod: bool = False
     """Condition.detail is the caster's spellcasting modifier (Heroism's per-turn
     temporary hit points)."""
+    break_free: bool = False
+    """The target may use its action for a Strength check against the caster's save DC to end
+    the condition (Entangle). The DC is recorded on the Condition as break_free_dc."""
     only_monster_types: frozenset[str] | None = None
     """If set, only a monster whose SRD `type` is in the set is affected (Animal
     Friendship: beasts). Anyone else just shrugs the spell off."""
@@ -498,7 +501,7 @@ _FAILED_SAVE_CONDITION_SPELLS: dict[str, ConditionSpellSpec] = {
     "hideous-laughter": ConditionSpellSpec(
         condition="incapacitated", duration_rounds=10, extra_conditions=("prone",)
     ),
-    "entangle": ConditionSpellSpec(condition="restrained", duration_rounds=10),
+    "entangle": ConditionSpellSpec(condition="restrained", duration_rounds=10, break_free=True),
     "faerie-fire": ConditionSpellSpec(condition="outlined", duration_rounds=10),
     "grease": ConditionSpellSpec(condition="prone", duration_rounds=None),
     # Command's real effect is one of several one-word orders for a single
@@ -1530,8 +1533,13 @@ def effective_speed(character: Character) -> int:
     (issue #59) adds 10 feet; then grappled or exhaustion level 5+ reduces
     the result to 0, and exhaustion level 2+ halves it (SRD rounds down,
     matching plain integer division) - the penalties apply to the boosted
-    total, so they compose rather than the bonus overriding them."""
-    if has_condition(character, "grappled") or character.exhaustion_level >= 5:
+    total, so they compose rather than the bonus overriding them. Restrained also
+    sets speed to 0 (SRD) - it was documented that way in the UI but never applied."""
+    if (
+        has_condition(character, "grappled")
+        or has_condition(character, "restrained")
+        or character.exhaustion_level >= 5
+    ):
         return 0
     speed = character.speed + (10 if has_condition(character, "longstrider") else 0)
     if has_condition(character, "chilled"):

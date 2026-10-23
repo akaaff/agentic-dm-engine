@@ -43,6 +43,17 @@ def actor_options_summary(actor: Character, srd: SrdIndex) -> str:
     project), not invented or guessed."""
     lines = []
 
+    restraint = next(
+        (c for c in actor.conditions if c.name == "restrained" and c.break_free_dc is not None),
+        None,
+    )
+    if restraint is not None:
+        lines.append(
+            f"You are RESTRAINED ({restraint.spell or 'a spell'}): you cannot move. You can still "
+            f"attack what is in reach, or use your action to break free (a Strength check against "
+            f"DC {restraint.break_free_dc}) - say you struggle free"
+        )
+
     if actor.equipped_weapons:
         weapon_bits = []
         for index in actor.equipped_weapons:
