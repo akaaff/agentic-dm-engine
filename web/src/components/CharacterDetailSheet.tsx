@@ -277,11 +277,6 @@ export default function CharacterDetailSheet({
       </table>
 
       <ConditionBadges character={character} />
-      {character.concentrating_on && (
-        <p>
-          <strong>Concentrating on:</strong> {character.concentrating_on}
-        </p>
-      )}
       {character.fighting_style && (
         <p>
           <strong>Fighting Style:</strong>{' '}
@@ -291,7 +286,6 @@ export default function CharacterDetailSheet({
             .join(' ')}
         </p>
       )}
-      {character.is_raging && <p className="race-bonus-badge">Raging</p>}
       {character.class_index === 'monk' && (
         // Issue #36: Martial Arts/Unarmored Defense are correctly applied
         // under the hood from level 1 (see _pc_attack_params's Monk branch
