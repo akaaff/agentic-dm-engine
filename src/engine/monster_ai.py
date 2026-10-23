@@ -271,7 +271,7 @@ def build_move_toward_target(
         target.position,
         remaining_budget,
         5,
-        game_state.battle_map.terrain,
+        game_state.movement_terrain(),
         hostile_squares,
         ally_squares,
     )
@@ -367,7 +367,7 @@ def _action_against(
         target.position,
         remaining_speed,
         range_feet,
-        game_state.battle_map.terrain,
+        game_state.movement_terrain(),
         hostile_squares,
         ally_squares,
     )

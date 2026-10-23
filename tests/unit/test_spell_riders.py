@@ -189,5 +189,10 @@ def test_the_push_stops_at_another_creature() -> None:
     state = _state(wizard)
     blocker = monster_to_character(load_srd().monsters["goblin"], "goblin_2", Position(x=3, y=0))
     state.characters[blocker.id] = blocker
-    resolve_action(state, _cast("thunderwave"), _FixedRandom([1, 3, 4]))  # type: ignore[arg-type]
+    # The cube now catches the blocker too (it stands inside it): its own save and damage follow.
+    resolve_action(
+        state,
+        _cast("thunderwave"),
+        _FixedRandom([1, 3, 4, 20, 3, 4]),  # type: ignore[arg-type]
+    )
     assert state.characters["goblin_1"].position == Position(x=2, y=0)

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from src.engine.actions import ParsedAction
 from src.engine.events import Event
-from src.engine.position import BattleMap, Position
+from src.engine.position import BattleMap, Position, TerrainType
 
 ConditionName = Literal[
     "blinded",
@@ -450,6 +450,24 @@ class Character(BaseModel):
     removing it would undo."""
 
 
+class EffectArea(BaseModel):
+    """A lasting patch of the battle map a spell changed - Entangle's grasping weeds and
+    Grease's slick floor turn their squares into difficult terrain for as long as they last.
+    Lives on GameState (not in the static BattleMap, which is authored data) so it is saved
+    with the session, sent to the client to be drawn on the grid, and removed again when the
+    spell ends."""
+
+    id: str
+    spell: str
+    caster_id: str
+    cells: list[Position]
+    terrain: Literal["difficult"] = "difficult"
+    duration_rounds: int | None = None
+    """Rounds left; None lasts until removed. Counted down once per round."""
+    concentration: bool = False
+    """Ends with the caster's concentration on `spell`."""
+
+
 class GameState(BaseModel):
     encounter_id: str
     characters: dict[str, Character]
@@ -462,3 +480,19 @@ class GameState(BaseModel):
     battle_map: BattleMap | None = None
     """None for non-combat scenes (narrative_beat/roleplay); set by
     encounter.build_encounter_state for combat scenes."""
+    effect_areas: list[EffectArea] = []
+    """Lasting spell areas on the map (see EffectArea)."""
+
+    def movement_terrain(self) -> list[list[TerrainType]]:
+        """The terrain grid movement should be priced against: the authored map with every
+        lasting spell area laid over it (a wall or hazard square keeps its own type - only
+        plain floor becomes difficult). Walls, hazards and the like still read
+        `battle_map.terrain` directly; only movement cost and pathing need the overlay."""
+        assert self.battle_map is not None, "movement_terrain needs a battle map"
+        grid = [list(row) for row in self.battle_map.terrain]
+        for area in self.effect_areas:
+            for cell in area.cells:
+                if 0 <= cell.y < len(grid) and 0 <= cell.x < len(grid[cell.y]):
+                    if grid[cell.y][cell.x] == "floor":
+                        grid[cell.y][cell.x] = area.terrain
+        return grid

@@ -125,6 +125,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from src.engine.actions import ParsedAction
+from src.engine.areas import Occupant, Placement, area_spec, place_area
 from src.engine.character_creation import (
     PREPARED_CASTER_CLASSES,
     SPELLS_KNOWN_BY_LEVEL,
@@ -213,6 +214,7 @@ from src.engine.state import (
     Character,
     Condition,
     ConditionName,
+    EffectArea,
     GameState,
     WildShapeSnapshot,
 )
@@ -2529,6 +2531,7 @@ def _end_concentration(state: GameState, caster: Character, srd: SrdIndex) -> No
         return
     caster.concentrating_on = None
     dismiss_summons(state, caster.id, spell_name)
+    _remove_effect_areas(state, caster.id, spell_name, reason="concentration ended")
     for character in state.characters.values():
         ended = [c for c in character.conditions if c.source == caster.id and c.spell == spell_name]
         if not ended:
@@ -3184,7 +3187,7 @@ def _dash_is_unnecessary(state: GameState, actor: Character, action: ParsedActio
         steps = [Position(x=p["x"], y=p["y"]) for p in raw_path]
     except (KeyError, TypeError):
         return False
-    cost = move_cost_feet([actor.position, *steps], state.battle_map.terrain)
+    cost = move_cost_feet([actor.position, *steps], state.movement_terrain())
     if cost is None:
         return False
     return cost <= max(0, effective_speed(actor) - actor.movement_used_feet)
@@ -3245,12 +3248,12 @@ def _resolve_move(
         raise TurnEngineError(
             f"{actor.id} is restrained and can't move - break free first (or end the effect)"
         )
-    if not can_afford_move(remaining_budget, full_path, state.battle_map.terrain):
-        cost = move_cost_feet(full_path, state.battle_map.terrain)
+    if not can_afford_move(remaining_budget, full_path, state.movement_terrain()):
+        cost = move_cost_feet(full_path, state.movement_terrain())
         raise TurnEngineError(
             f"{actor.id} cannot afford this move (cost={cost}, speed budget={remaining_budget})"
         )
-    actor.movement_used_feet += move_cost_feet(full_path, state.battle_map.terrain) or 0
+    actor.movement_used_feet += move_cost_feet(full_path, state.movement_terrain()) or 0
 
     destination = steps[-1]
     occupant = next(
@@ -4661,23 +4664,41 @@ def _resolve_hp_pool_spell(
     _resolve_cast_spell), so this does the same rather than rejecting a perfectly reasonable-
     sounding cast."""
     name = spell["name"]
-    target_ids = action.targets or ([action.target] if action.target else None)
-    if not target_ids:
-        raise TurnEngineError(f"{name} requires at least one target (creatures within its area)")
-
-    range_normal_feet = spell_range_feet(spell)
     candidates: list[Character] = []
-    for target_id in target_ids:
-        target = state.characters.get(target_id)
-        if target is None:
-            raise TurnEngineError(f"Unknown spell target: {target_id}")
-        _validate_attack_target(actor, target)
-        distance = distance_feet(actor.position, target.position)
-        if distance > range_normal_feet:
-            raise _out_of_range_error(actor, target, distance, name, range_normal_feet)
-        candidates.append(target)
+    area_plan = _plan_area_cast(
+        state,
+        actor,
+        spell,
+        action,
+        f"{name} requires at least one target (creatures within its area)",
+    )
+    if area_plan is not None:
+        # Whoever stands in the area is caught, allies included.
+        for caught_id in area_plan.caught:
+            caught = state.characters[caught_id]
+            if caught.is_pc != actor.is_pc:
+                _validate_attack_target(actor, caught)
+            candidates.append(caught)
+    else:
+        target_ids = action.targets or ([action.target] if action.target else None)
+        if not target_ids:
+            raise TurnEngineError(
+                f"{name} requires at least one target (creatures within its area)"
+            )
+        range_normal_feet = spell_range_feet(spell)
+        for target_id in target_ids:
+            target = state.characters.get(target_id)
+            if target is None:
+                raise TurnEngineError(f"Unknown spell target: {target_id}")
+            _validate_attack_target(actor, target)
+            distance = distance_feet(actor.position, target.position)
+            if distance > range_normal_feet:
+                raise _out_of_range_error(actor, target, distance, name, range_normal_feet)
+            candidates.append(target)
 
     _end_own_sanctuary(state, actor)  # these affect enemies (issue #61)
+    if area_plan is not None:
+        _announce_area(state, actor, spell, area_plan)
     pool = roll(dice[0], dice[1], rng=rng).total
     state.events.append(
         Event(
@@ -5700,6 +5721,179 @@ def _castable_spells_hint(actor: Character, srd: SrdIndex) -> str:
     return f" (you can cast: {', '.join(names)})" if names else ""
 
 
+_AREA_TERRAIN_SPELLS: dict[str, tuple[int, bool]] = {
+    # spell index -> (rounds it lasts, ends with the caster's concentration). Both turn their
+    # whole area into difficult terrain (SRD: Entangle's grasping weeds, Grease's slick floor).
+    "entangle": (10, True),
+    "grease": (10, False),
+}
+
+
+def _explicit_area_origin(state: GameState, action: ParsedAction) -> Position | None:
+    """A square the player chose for the area: `params.origin` {x, y} (what clicking on the grid
+    sends), or `params.centered_on` a creature id ("entangle centered on goblin 2")."""
+    params = action.params or {}
+    raw = params.get("origin")
+    if isinstance(raw, dict) and isinstance(raw.get("x"), int) and isinstance(raw.get("y"), int):
+        return Position(x=raw["x"], y=raw["y"])
+    anchor = params.get("centered_on")
+    if isinstance(anchor, str) and anchor in state.characters:
+        return state.characters[anchor].position
+    return None
+
+
+def _plan_area_cast(
+    state: GameState,
+    actor: Character,
+    spell: SrdEntry,
+    action: ParsedAction,
+    missing_target_message: str = "cast_spell action requires a target",
+) -> Placement | None:
+    """Where an area spell goes and who it catches, or None when the spell has no area or the
+    scene has no battle map (the old "creatures you named" behavior then still applies).
+
+    The player's chosen square is used as given; otherwise the engine picks the placement that
+    catches the creatures they named (and as few unnamed allies as it can) - the same thing the
+    click-to-place UI will do by hand. Everyone inside is affected, allies included. Raises
+    before anything is spent: an out-of-range target gets the usual out-of-range error (so a
+    companion is walked closer), anything else says the area can't catch what was named."""
+    spec = area_spec(spell)
+    if spec is None or state.battle_map is None:
+        return None
+    battle_map = state.battle_map
+    hint_ids = [i for i in (action.targets or ([action.target] if action.target else [])) if i]
+    for hint_id in hint_ids:
+        if hint_id not in state.characters:
+            raise TurnEngineError(f"Unknown spell target: {hint_id}")
+        if state.characters[hint_id].is_dead:
+            raise TurnEngineError(f"{hint_id} is already dead")
+    explicit = _explicit_area_origin(state, action)
+    if explicit is None and not hint_ids:
+        raise TurnEngineError(missing_target_message)
+
+    name = spell["name"]
+    reach = spell_range_feet(spell)
+    if explicit is not None and not spec.from_caster:
+        inside = 0 <= explicit.x < battle_map.width and 0 <= explicit.y < battle_map.height
+        if not inside or distance_feet(actor.position, explicit) > reach:
+            raise TurnEngineError(
+                f"({explicit.x}, {explicit.y}) is out of range for {name} (max {reach}ft)"
+            )
+
+    occupants = [
+        Occupant(
+            id=c.id,
+            position=c.position,
+            ally=c.is_pc == actor.is_pc,
+            named=c.id in hint_ids,
+        )
+        for c in state.characters.values()
+        if not c.is_dead and c.id != actor.id
+    ]
+    placement = place_area(
+        spec,
+        actor.position,
+        reach,
+        battle_map.width,
+        battle_map.height,
+        occupants,
+        blocked=lambda x, y: battle_map.terrain[y][x] == "wall",
+        explicit_origin=explicit,
+    )
+    if placement is not None and (explicit is not None or placement.caught):
+        return placement
+    nearest = min(
+        (state.characters[i] for i in hint_ids),
+        key=lambda c: distance_feet(actor.position, c.position),
+    )
+    distance = distance_feet(actor.position, nearest.position)
+    if distance > reach:
+        raise _out_of_range_error(actor, nearest, distance, name, reach)
+    raise TurnEngineError(
+        f"No placement of {name} within range catches "
+        f"{', '.join(state.characters[i].name for i in hint_ids)}"
+    )
+
+
+def _announce_area(
+    state: GameState, actor: Character, spell: SrdEntry, placement: Placement
+) -> None:
+    """The area itself, as an event: where it landed and who is inside it. For a spell that
+    reshapes the ground (Entangle, Grease) this also lays the lasting EffectArea on the map."""
+    spec = area_spec(spell)
+    assert spec is not None
+    name = spell["name"]
+    terrain = _AREA_TERRAIN_SPELLS.get(normalize_spell_name(name))
+    state.events.append(
+        Event(
+            round=state.round,
+            turn_index=state.current_turn,
+            actor=actor.id,
+            type="spell_area",
+            payload={
+                "spell": name,
+                "shape": spec.shape,
+                "size_feet": spec.size_feet,
+                "origin": {"x": placement.origin.x, "y": placement.origin.y},
+                "cells": [[c.x, c.y] for c in placement.cells],
+                "caught": placement.caught,
+                "allies_caught": placement.allies_caught,
+                "terrain": "difficult" if terrain else None,
+            },
+        )
+    )
+    if terrain is not None:
+        rounds, concentration = terrain
+        # One patch per caster and spell: casting it again moves it.
+        state.effect_areas = [
+            a for a in state.effect_areas if not (a.caster_id == actor.id and a.spell == name)
+        ]
+        state.effect_areas.append(
+            EffectArea(
+                id=f"{actor.id}:{normalize_spell_name(name)}",
+                spell=name,
+                caster_id=actor.id,
+                cells=list(placement.cells),
+                duration_rounds=rounds,
+                concentration=concentration,
+            )
+        )
+
+
+def _remove_effect_areas(
+    state: GameState, caster_id: str, spell: str | None = None, reason: str = "ended"
+) -> None:
+    """Takes a caster's lasting areas off the map (all of them, or one spell's)."""
+    ended = [
+        a
+        for a in state.effect_areas
+        if a.caster_id == caster_id and (spell is None or a.spell == spell)
+    ]
+    if not ended:
+        return
+    state.effect_areas = [a for a in state.effect_areas if a not in ended]
+    for area in ended:
+        state.events.append(
+            Event(
+                round=state.round,
+                turn_index=state.current_turn,
+                actor=caster_id,
+                type="effect_area_ended",
+                payload={"spell": area.spell, "reason": reason},
+            )
+        )
+
+
+def _tick_effect_areas(state: GameState) -> None:
+    """Counts a round off every timed area; the ones that run out come off the map."""
+    for area in list(state.effect_areas):
+        if area.duration_rounds is None:
+            continue
+        area.duration_rounds -= 1
+        if area.duration_rounds <= 0:
+            _remove_effect_areas(state, area.caster_id, area.spell, reason="expired")
+
+
 def _resolve_cast_spell(
     state: GameState, actor: Character, action: ParsedAction, rng: random.Random, srd: SrdIndex
 ) -> bool:
@@ -5867,6 +6061,11 @@ def _resolve_cast_spell(
         target_ids = (
             action.targets if action.targets else ([action.target] if action.target else None)
         )
+    # An area spell (Entangle, Burning Hands, Faerie Fire...) catches whoever stands in its
+    # area, not whoever was named: the named creatures only steer where it goes.
+    area_plan = _plan_area_cast(state, actor, spell, action) if mechanic == "save" else None
+    if area_plan is not None:
+        target_ids = list(area_plan.caught)
     # A Self-range buff (Blur, Divine Favor, Mirror Image) can only ever
     # affect its caster: naming no target means "myself" (found live, same as
     # Mage Armor: "I cast mage armor on myself" left `target` unset - the
@@ -5878,11 +6077,11 @@ def _resolve_cast_spell(
         self_only or (mechanic == "condition" and condition_spell_spec(spell).default_to_self)
     ):
         target_ids = [actor.id]
-    if not target_ids:
+    if not target_ids and area_plan is None:
         raise TurnEngineError("cast_spell action requires a target")
 
     targets: list[Character] = []
-    for target_id in target_ids:
+    for target_id in target_ids or []:
         target = state.characters.get(target_id)
         if target is None:
             raise TurnEngineError(f"Unknown spell target: {target_id}")
@@ -5908,12 +6107,15 @@ def _resolve_cast_spell(
                 # Marking the dead would waste the slot and, worse, drop the
                 # caster's current concentration for nothing.
                 raise TurnEngineError(f"{target.id} is already dead")
-        if mechanic not in ("heal", "condition"):
+        if mechanic not in ("heal", "condition") and not (
+            area_plan is not None and target.is_pc == actor.is_pc
+        ):
+            # (an ally standing inside an area is simply caught by it - friendly fire is real)
             _validate_attack_target(actor, target)
         targets.append(target)
 
     range_normal_feet = spell_range_feet(spell)
-    for target in targets:
+    for target in targets if area_plan is None else []:
         distance = distance_feet(actor.position, target.position)
         if distance > range_normal_feet:
             raise _out_of_range_error(actor, target, distance, spell["name"], range_normal_feet)
@@ -5960,6 +6162,8 @@ def _resolve_cast_spell(
             )
     elif mechanic == "save":
         save_params = _spell_save_params(actor, spell, spell_level, srd)
+        if area_plan is not None:
+            _announce_area(state, actor, spell, area_plan)
         for target in targets:
             _cast_save_spell_at_target(state, actor, target, save_params, rng, srd)
     elif mechanic == "auto_hit":
@@ -6386,6 +6590,7 @@ def _advance_turn_skipping_dead(state: GameState, srd: SrdIndex | None = None) -
                 # this engine models) is a per-round resource, not per-turn.
                 character.reaction_used_this_round = False
             _handle_expired_conditions(state, expired, srd)
+            _tick_effect_areas(state)
         state.current_turn = next_index
         state.round = next_round
         # Sneak Attack is once per *turn* (issue #81) - and a turn is anyone's,

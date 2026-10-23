@@ -43,6 +43,8 @@ EventType = Literal[
     "protection",
     "grapple_escape",
     "restraint_escape",
+    "spell_area",
+    "effect_area_ended",
     "ready",
     "readied_attack",
     "divine_sense",
