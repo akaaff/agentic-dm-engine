@@ -345,6 +345,22 @@ export default function CharacterDetailSheet({
         </div>
       )}
 
+      {cantrips.length > 0 && (
+        // Cantrips used to appear only in the one-line "Available actions" summary below, with no
+        // description - unlike Known/Prepared spells, which each get a list with a hover tip.
+        <div>
+          <strong>Cantrips:</strong>
+          <ul className="detail-action-list">
+            {cantrips.map((c) => (
+              <li key={c.index}>
+                {nameWithSpellDetail(c)}
+                <InfoTip text={c.desc.trim()} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {knownSpells.length > 0 && (
         <div>
           <strong>Known spells:</strong>
