@@ -338,6 +338,7 @@ class PendingBardicChoice:
     damage_reroll_at_or_below: int = 0
     advantage_reasons: tuple[str, ...] = ()
     disadvantage_reasons: tuple[str, ...] = ()
+    damage_bonus_breakdown: tuple[tuple[str, int], ...] = ()
 
 
 class BardicChoicePending(Exception):  # noqa: N818 - a control-flow signal, not an error
@@ -516,6 +517,11 @@ class AttackParams:
     the SRD "finesse" property or is a ranged weapon - Sneak Attack's
     (Rogue) weapon-type requirement. Always False for monster/spell attack
     params, which Sneak Attack never applies to."""
+    damage_bonus_breakdown: list[tuple[str, int]] = field(default_factory=list)
+    """The named parts of `damage_bonus` (ability modifier, Dueling, Rage, ...) for the
+    damage breakdown on the attack event. Optional: _damage_bonus_entries tops up any
+    difference with a plain "bonus" line, so a builder that sets only damage_bonus
+    still sums correctly."""
     advantage_reasons: tuple[str, ...] = ()
     disadvantage_reasons: tuple[str, ...] = ()
     """Why this roll had advantage / disadvantage, as short player-facing phrases -
@@ -568,6 +574,21 @@ def _match_weapon_by_name(weapon_name: str, candidates: list[SrdEntry]) -> SrdEn
         if item_words and item_words <= words:
             return item
     return None
+
+
+def _named(*entries: tuple[str, int]) -> list[tuple[str, int]]:
+    """The non-zero named parts of a bonus, in order."""
+    return [(label, value) for label, value in entries if value]
+
+
+def _damage_bonus_entries(params: AttackParams) -> list[tuple[str, int]]:
+    """params.damage_bonus as named parts that sum exactly to it: the builder's own
+    breakdown, plus a plain "bonus" line for anything it didn't name."""
+    entries = list(params.damage_bonus_breakdown)
+    missing = params.damage_bonus - sum(value for _, value in entries)
+    if missing:
+        entries.append(("bonus", missing))
+    return entries
 
 
 def _pc_attack_params(
@@ -672,6 +693,10 @@ def _pc_attack_params(
                 damage_dice_count=1,
                 damage_dice_sides=monk_martial_arts_die_sides(actor.level),
                 damage_bonus=(monk_mod if include_ability_damage_bonus else 0) + rage_bonus,
+                damage_bonus_breakdown=_named(
+                    (f"{monk_ability} mod", monk_mod if include_ability_damage_bonus else 0),
+                    ("Rage", rage_bonus),
+                ),
                 damage_type="bludgeoning",
                 source_name="unarmed strike",
                 range_normal_feet=5,
@@ -690,6 +715,11 @@ def _pc_attack_params(
             damage_dice_count=0,
             damage_dice_sides=4,
             damage_bonus=(str_mod if include_ability_damage_bonus else 0) + 1 + rage_bonus,
+            damage_bonus_breakdown=_named(
+                ("STR mod", str_mod if include_ability_damage_bonus else 0),
+                ("unarmed strike", 1),
+                ("Rage", rage_bonus),
+            ),
             damage_type="bludgeoning",
             source_name="unarmed strike",
             range_normal_feet=5,
@@ -785,6 +815,12 @@ def _pc_attack_params(
         + notation_bonus
         + dueling_bonus
         + rage_bonus,
+        damage_bonus_breakdown=_named(
+            (f"{ability_label} mod", ability_mod if include_ability_damage_bonus else 0),
+            ("weapon bonus", notation_bonus),
+            ("Dueling", dueling_bonus),
+            ("Rage", rage_bonus),
+        ),
         damage_type=weapon["damage"]["damage_type"]["index"],
         source_name=weapon["name"],
         range_normal_feet=range_normal_feet,
@@ -1247,18 +1283,26 @@ def _has_adjacent_hostile(state: GameState, actor: Character) -> bool:
     )
 
 
-def _ally_adjacent_to(state: GameState, attacker: Character, target: Character) -> bool:
-    """True if any living ally of `attacker` (same `is_pc`, excluding
-    `attacker` and `target` themselves) is within 5ft of `target` - Sneak
-    Attack's (Phase 9I, Rogue) alternate trigger alongside advantage."""
-    return any(
-        other.id != attacker.id
-        and other.id != target.id
-        and not other.is_dead
-        and other.is_pc == attacker.is_pc
-        and distance_feet(target.position, other.position) <= 5
-        for other in state.characters.values()
+def _adjacent_ally(state: GameState, attacker: Character, target: Character) -> Character | None:
+    """A living ally of `attacker` (same `is_pc`, excluding `attacker` and `target`
+    themselves) within 5ft of `target`, or None - Sneak Attack's (Phase 9I, Rogue)
+    alternate trigger alongside advantage, and Pack Tactics'."""
+    return next(
+        (
+            other
+            for other in state.characters.values()
+            if other.id != attacker.id
+            and other.id != target.id
+            and not other.is_dead
+            and other.is_pc == attacker.is_pc
+            and distance_feet(target.position, other.position) <= 5
+        ),
+        None,
     )
+
+
+def _ally_adjacent_to(state: GameState, attacker: Character, target: Character) -> bool:
+    return _adjacent_ally(state, attacker, target) is not None
 
 
 def _resolve_single_attack(
@@ -1471,6 +1515,7 @@ def _resolve_single_attack(
                     damage_reroll_at_or_below=params.damage_reroll_at_or_below,
                     advantage_reasons=params.advantage_reasons,
                     disadvantage_reasons=params.disadvantage_reasons,
+                    damage_bonus_breakdown=tuple(params.damage_bonus_breakdown),
                 )
             )
         # Already a hit, or a natural 1 the die couldn't have fixed anyway -
@@ -1529,6 +1574,23 @@ def _resolve_single_attack(
         rng,
         srd,
     )
+
+
+def _damage_breakdown(
+    params: AttackParams, result: AttackResult, riders: list[tuple[str, int]]
+) -> list[tuple[str, int]]:
+    """The named parts of a hit's damage that sum to result.damage: the dice (doubled
+    on a critical), the flat bonuses, and any rider dice (Sneak Attack, Smite, ...)."""
+    entries: list[tuple[str, int]] = []
+    if params.damage_dice_count and result.damage_dice_total is not None:
+        count = params.damage_dice_count * (2 if result.critical else 1)
+        label = f"{params.source_name} {count}d{params.damage_dice_sides}"
+        entries.append(
+            (label + (" (critical)" if result.critical else ""), result.damage_dice_total)
+        )
+    entries.extend(_damage_bonus_entries(params))
+    entries.extend(riders)
+    return entries
 
 
 def _roll_mode_payload(params: AttackParams, result: AttackResult) -> dict[str, object]:
@@ -1601,18 +1663,38 @@ def _finalize_attack_result(
     # into AttackParams, since its dice size (d6) generally differs from
     # the weapon's own) and doubled on a crit exactly like resolve_attack
     # already doubles the weapon's own dice.
-    if (
-        result.hit
-        and actor.class_index == "rogue"
-        and params.is_finesse_or_ranged
-        and not actor.sneak_attack_used_this_turn
-        and (advantage or _ally_adjacent_to(state, actor, target))
-    ):
-        actor.sneak_attack_used_this_turn = True
-        sneak_dice = 2 if result.critical else 1
-        sneak_damage = roll(sneak_dice, 6, modifier=0, rng=rng).total
-        result = replace(result, damage=(result.damage or 0) + sneak_damage)
-        state.events[-1].payload["sneak_attack_damage"] = sneak_damage
+    rider_entries: list[tuple[str, int]] = []
+    if result.hit and actor.class_index == "rogue":
+        # Why it did or didn't apply goes on the event, so "how did that one-shot?"
+        # and "why no sneak attack?" are both answerable from the log.
+        helper = _adjacent_ally(state, actor, target)
+        triggers = [
+            *(["advantage on the roll"] if advantage else []),
+            *([f"{helper.name} is next to the target"] if helper is not None else []),
+        ]
+        if not params.is_finesse_or_ranged:
+            skipped = "the weapon isn't finesse or ranged"
+        elif actor.sneak_attack_used_this_turn:
+            skipped = "already used this turn"
+        elif not triggers:
+            skipped = "no advantage and no ally next to the target"
+        else:
+            skipped = None
+        if skipped is None:
+            actor.sneak_attack_used_this_turn = True
+            sneak_dice = 2 if result.critical else 1
+            sneak_damage = roll(sneak_dice, 6, modifier=0, rng=rng).total
+            result = replace(result, damage=(result.damage or 0) + sneak_damage)
+            state.events[-1].payload["sneak_attack_damage"] = sneak_damage
+            state.events[-1].payload["sneak_attack"] = {
+                "applied": True,
+                "dice": f"{sneak_dice}d6",
+                "damage": sneak_damage,
+                "triggers": triggers,
+            }
+            rider_entries.append((f"Sneak Attack {sneak_dice}d6", sneak_damage))
+        else:
+            state.events[-1].payload["sneak_attack"] = {"applied": False, "reason": skipped}
 
     # Divine Smite (issue #21, Paladin): declared upfront on the attack (see
     # ParsedAction.params's docstring for why - this engine has no
@@ -1639,6 +1721,7 @@ def _finalize_attack_result(
         smite_damage = roll(smite_dice, 8, modifier=0, rng=rng).total
         result = replace(result, damage=(result.damage or 0) + smite_damage)
         state.events[-1].payload["divine_smite_damage"] = smite_damage
+        rider_entries.append((f"Divine Smite {smite_dice}d8", smite_damage))
 
     # Divine Favor (issue #58): "your weapon attacks deal an extra 1d4
     # radiant damage on a hit" - banked on the caster (a condition, so the
@@ -1649,9 +1732,11 @@ def _finalize_attack_result(
     # halve the whole hit - the same documented simplification Smite already
     # makes. Dice double on a crit, like theirs.
     if result.hit and has_condition(actor, "divine_favor"):
-        favor_damage = roll(2 if result.critical else 1, 4, modifier=0, rng=rng).total
+        favor_dice = 2 if result.critical else 1
+        favor_damage = roll(favor_dice, 4, modifier=0, rng=rng).total
         result = replace(result, damage=(result.damage or 0) + favor_damage)
         state.events[-1].payload["divine_favor_damage"] = favor_damage
+        rider_entries.append((f"Divine Favor {favor_dice}d4", favor_damage))
 
     # Hunter's Mark (issue #58): "you deal an extra 1d6 damage to the target
     # whenever you hit it with a weapon attack". The mark lives on the
@@ -1663,11 +1748,16 @@ def _finalize_attack_result(
     if result.hit and any(
         c.name == "hunters_marked" and c.source == actor.id for c in target.conditions
     ):
-        mark_damage = roll(2 if result.critical else 1, 6, modifier=0, rng=rng).total
+        mark_dice = 2 if result.critical else 1
+        mark_damage = roll(mark_dice, 6, modifier=0, rng=rng).total
         result = replace(result, damage=(result.damage or 0) + mark_damage)
         state.events[-1].payload["hunters_mark_damage"] = mark_damage
+        rider_entries.append((f"Hunter's Mark {mark_dice}d6", mark_damage))
 
     if result.hit and result.damage is not None:
+        state.events[-1].payload["damage_breakdown"] = _damage_breakdown(
+            params, result, rider_entries
+        )
         _apply_damage_and_handle_downing(
             state, actor, target, result.damage, params.damage_type, rng, srd
         )
@@ -1718,6 +1808,9 @@ def resolve_pending_bardic_choice(
         smite_slot_level=choice.smite_slot_level,
         advantage_reasons=tuple(choice.advantage_reasons),
         disadvantage_reasons=tuple(choice.disadvantage_reasons),
+        damage_bonus_breakdown=[
+            (str(label), int(value)) for label, value in choice.damage_bonus_breakdown
+        ],
     )
 
     if not use_die:
@@ -1771,6 +1864,7 @@ def resolve_pending_bardic_choice(
                 critical=critical,
                 damage=max(0, damage_roll.total),
                 damage_type=choice.damage_type,
+                damage_dice_total=damage_roll.total - damage_roll.modifier,
             )
         _finalize_attack_result(
             state,
@@ -2479,15 +2573,25 @@ def _apply_damage_and_handle_downing(
     # Energy/Poison) joins Rage here. SRD resistance never stacks, so any
     # number of sources halves once - a raging, stoneskinned Barbarian takes
     # half, not a quarter.
+    rolled_damage = damage
+    adjustments: list[str] = []
     rage_resists = target.is_raging and damage_type in _RAGE_RESISTANT_DAMAGE_TYPES
     if rage_resists or spell_damage_resistance(target, damage_type):
         damage //= 2
+        adjustments.append(f"resistance to {damage_type} (halved)")
     # Issue #18: a monster's own SRD resistances/immunities/vulnerabilities
     # - always a 1.0 no-op for a PC/companion target, see
     # rules.monster_damage_multiplier's own docstring for the free-text
     # substring-matching rationale. int() truncation matches SRD's
     # "resistance halves damage, rounded down" for the 0.5 case.
-    damage = int(damage * monster_damage_multiplier(target, damage_type, srd))
+    multiplier = monster_damage_multiplier(target, damage_type, srd)
+    damage = int(damage * multiplier)
+    if multiplier == 0:
+        adjustments.append(f"immune to {damage_type}")
+    elif multiplier < 1:
+        adjustments.append(f"resistant to {damage_type} (halved)")
+    elif multiplier > 1:
+        adjustments.append(f"vulnerable to {damage_type} (doubled)")
     total_damage = damage  # before temporary hit points soak any of it
 
     # Sleep (issue #55): unlike the ordinary "downed at 0 HP" unconscious,
@@ -2513,6 +2617,7 @@ def _apply_damage_and_handle_downing(
     # real HP. The concentration check and Sleep above still count the whole hit.
     absorbed = min(target.temp_hp, damage)
     if absorbed:
+        adjustments.append(f"{absorbed} absorbed by temporary hit points")
         target.temp_hp -= absorbed
         damage -= absorbed
         state.events.append(
@@ -2524,7 +2629,10 @@ def _apply_damage_and_handle_downing(
                 payload={"target": target.id, "change": -absorbed, "temp_hp": target.temp_hp},
             )
         )
+    hp_before = target.hp
     actual_loss = apply_damage(target, damage)
+    if damage > hp_before:
+        adjustments.append(f"only {hp_before} HP left to lose")
 
     # Druid's Wild Shape (issue #24): the beast form, not the Druid's real
     # body, just hit 0 HP - force a revert (SRD: "you revert if you drop to
@@ -2609,6 +2717,8 @@ def _apply_damage_and_handle_downing(
                 "amount": actual_loss,
                 "damage_type": damage_type,
                 "target_hp_remaining": target.hp,
+                # Only when the hit was changed on the way in: what was dealt and why it differs.
+                **({"rolled": rolled_damage, "adjustments": adjustments} if adjustments else {}),
             },
         )
     )
@@ -3989,11 +4099,18 @@ def _cast_attack_spell_at_target(
                 "target": target.id,
                 "spell_level": spell_level,
                 "roll_total": result.attack_roll.total,
+                "natural": result.attack_roll.kept[0],
+                "target_ac": target.ac,
                 "hit": result.hit,
                 "critical": result.critical,
                 "attack_bonus_breakdown": params.attack_bonus_breakdown,
                 **_roll_mode_payload(params, result),
                 **({"bardic_inspiration_die_sides": bardic_die_sides} if bardic_die_sides else {}),
+                **(
+                    {"damage_breakdown": _damage_breakdown(params, result, [])}
+                    if result.hit and result.damage is not None
+                    else {}
+                ),
             },
         )
     )
@@ -4197,6 +4314,7 @@ def _cast_save_spell_at_target(
         params.damage_dice_count, params.damage_dice_sides, modifier=params.damage_bonus, rng=rng
     )
     damage = max(0, damage_roll.total)
+    rolled_damage = damage
     if success:
         if params.dc_success == "none":
             return
@@ -4213,6 +4331,12 @@ def _cast_save_spell_at_target(
                 "target": target.id,
                 "save_success": success,
                 "damage": damage,
+                # What the dice made before a successful save halved it.
+                "damage_rolled": rolled_damage,
+                "damage_dice": (
+                    f"{params.damage_dice_count}d{params.damage_dice_sides}"
+                    + (f"{params.damage_bonus:+d}" if params.damage_bonus else "")
+                ),
             },
         )
     )
