@@ -2,6 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import CharacterDetailSheet from '../components/CharacterDetailSheet'
 import CharacterSheet from '../components/CharacterSheet'
 import CombatGrid from '../components/CombatGrid'
+import { effectAreaTitle } from '../utils/effectAreas'
 import NarrationFeed from '../components/NarrationFeed'
 import SceneImagePanel from '../components/SceneImagePanel'
 import { buildActorColorMap } from '../utils/actorColors'
@@ -250,11 +251,21 @@ export default function LivePlay({
               canMove={isMyTurn}
               onMoveTo={sendPlayerMove}
               actorColors={actorColors}
+              effectAreas={gameState.effect_areas ?? []}
             />
           ) : (
             <SceneImagePanel url={sceneImageUrl} />
           )}
         </div>
+        {showCombatGrid && (gameState?.effect_areas ?? []).length > 0 && (
+          // The grid draws these; this says what they are and how long they last, since the
+          // hover text on a small square is easy to miss.
+          <ul className="effect-area-legend">
+            {(gameState?.effect_areas ?? []).map((area) => (
+              <li key={area.id}>{effectAreaTitle(area, gameState?.characters ?? {})}</li>
+            ))}
+          </ul>
+        )}
         <NarrationFeed
           entries={narrationLog}
           characters={knownCharacters}

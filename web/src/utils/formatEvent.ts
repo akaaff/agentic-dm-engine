@@ -206,6 +206,33 @@ export function formatEvent(
         label: `${actorName} casts ${spell}${targetText.replace(' at ', ' on ')}`,
       }
     }
+    case 'spell_area': {
+      // Where an area spell landed and who was inside it (allies included).
+      const spell = typeof p.spell === 'string' ? p.spell : 'a spell'
+      const names = (ids: unknown) =>
+        Array.isArray(ids) ? ids.map((id) => characterName(id, characters)) : []
+      const caught = names(p.caught)
+      const allies = names(p.allies_caught)
+      const squares = Array.isArray(p.cells) ? p.cells.length : null
+      const where =
+        p.origin && typeof p.origin === 'object'
+          ? ` at (${(p.origin as { x: number }).x}, ${(p.origin as { y: number }).y})`
+          : ''
+      const catches = caught.length > 0 ? ` - catches ${caught.join(', ')}` : ' - catches no one'
+      const friendly = allies.length > 0 ? ` (including ${allies.join(', ')} on the caster's side)` : ''
+      const terrain = p.terrain === 'difficult' ? ', leaving difficult terrain' : ''
+      const size = debugMode && squares !== null ? ` [${squares} squares${where}]` : ''
+      return {
+        key: event.id,
+        color,
+        label: `${actorName}'s ${spell} spreads${terrain}${catches}${friendly}${size}`,
+      }
+    }
+    case 'effect_area_ended': {
+      const spell = typeof p.spell === 'string' ? p.spell : 'the spell'
+      const reason = typeof p.reason === 'string' ? ` (${p.reason})` : ''
+      return { key: event.id, color, label: `${actorName}'s ${spell} fades from the ground${reason}` }
+    }
     case 'initiative_rolled': {
       const natural = typeof p.natural === 'number' ? p.natural : null
       const modifier = typeof p.modifier === 'number' ? p.modifier : null

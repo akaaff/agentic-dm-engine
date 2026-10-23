@@ -123,7 +123,13 @@ def test_call_lightning_now_resolves_as_a_real_save_spell() -> None:
         raw_text="I cast call lightning at goblin_1",
     )
     # saving throw roll (fails low), damage dice (3d10 -> 5,5,5 = 15, clamped at goblin's HP).
-    resolve_action(state, action, _FixedRandom([1, 5, 5, 5]))  # type: ignore[arg-type]
+    # The strike's 5 ft radius also catches the goblin standing beside the target, so a second
+    # save and damage roll follow.
+    resolve_action(
+        state,
+        action,
+        _FixedRandom([1, 5, 5, 5, 20, 2, 2, 2]),  # type: ignore[arg-type]
+    )
     events = [e for e in state.events if e.type == "saving_throw"]
     assert events, "expected a real saving_throw event, not a rejection"
     assert goblin.hp < hp_before

@@ -1,5 +1,11 @@
 import { useState } from 'react'
-import type { LiveBattleMap, LiveCharacter, TerrainType } from '../ws/sessionClient'
+import type {
+  LiveBattleMap,
+  LiveCharacter,
+  LiveEffectArea,
+  TerrainType,
+} from '../ws/sessionClient'
+import { effectAreaTitle } from '../utils/effectAreas'
 import { portraitUrl } from '../utils/portraits'
 
 const CELL_SIZE = 40
@@ -68,6 +74,7 @@ export default function CombatGrid({
   canMove,
   onMoveTo,
   actorColors,
+  effectAreas = [],
 }: {
   battleMap: LiveBattleMap
   characters: Record<string, LiveCharacter>
@@ -77,6 +84,8 @@ export default function CombatGrid({
   canMove: boolean
   onMoveTo: (to: { x: number; y: number }) => void
   actorColors: Record<string, string>
+  /** Lasting spell areas to draw over the terrain (Entangle, Grease). */
+  effectAreas?: LiveEffectArea[]
 }) {
   const width = battleMap.width * CELL_SIZE
   const height = battleMap.height * CELL_SIZE
@@ -96,6 +105,12 @@ export default function CombatGrid({
         <clipPath id="token-clip">
           <circle cx={0} cy={0} r={TOKEN_RADIUS} />
         </clipPath>
+        {/* Diagonal vines over a spell's area, so it reads as "something is growing here" and
+            not just another shade of the difficult-terrain brown. */}
+        <pattern id="effect-area-hatch" width={8} height={8} patternUnits="userSpaceOnUse">
+          <rect width={8} height={8} fill="rgba(76, 175, 80, 0.30)" />
+          <path d="M-2,2 l4,-4 M0,8 l8,-8 M6,10 l4,-4" stroke="rgba(139, 214, 116, 0.75)" strokeWidth={1.5} />
+        </pattern>
       </defs>
       {battleMap.terrain.map((row, y) =>
         row.map((terrain, x) => (
@@ -112,6 +127,23 @@ export default function CombatGrid({
           />
         )),
       )}
+      {effectAreas.map((area) => (
+        <g key={area.id} className="effect-area" pointerEvents="none">
+          <title>{effectAreaTitle(area, characters)}</title>
+          {area.cells.map((cell) => (
+            <rect
+              key={`${cell.x},${cell.y}`}
+              x={cell.x * CELL_SIZE}
+              y={cell.y * CELL_SIZE}
+              width={CELL_SIZE}
+              height={CELL_SIZE}
+              fill="url(#effect-area-hatch)"
+              stroke="rgba(139, 214, 116, 0.55)"
+              strokeDasharray="3 3"
+            />
+          ))}
+        </g>
+      ))}
       {Object.values(characters).map((character) => {
         if (character.is_dead) return null
         const cx = character.position.x * CELL_SIZE + CELL_SIZE / 2

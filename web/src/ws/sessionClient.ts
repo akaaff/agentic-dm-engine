@@ -212,6 +212,18 @@ export interface LiveEvent {
   narrated: boolean
 }
 
+// A lasting patch of the map a spell changed (Entangle's weeds, Grease): drawn on the grid
+// and priced into movement as difficult terrain until it ends.
+export interface LiveEffectArea {
+  id: string
+  spell: string
+  caster_id: string
+  cells: { x: number; y: number }[]
+  terrain: 'difficult'
+  duration_rounds: number | null
+  concentration: boolean
+}
+
 export interface LiveGameState {
   encounter_id: string
   characters: Record<string, LiveCharacter>
@@ -220,6 +232,8 @@ export interface LiveGameState {
   round: number
   status: 'in_progress' | 'victory' | 'defeat' | 'aborted'
   battle_map: LiveBattleMap | null
+  // Absent in an older saved payload.
+  effect_areas?: LiveEffectArea[]
   events: LiveEvent[]
 }
 

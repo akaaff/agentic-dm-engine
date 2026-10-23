@@ -76,6 +76,9 @@ def test_save_spell_deals_full_damage_on_a_failed_save() -> None:
     # (no half) since the save failed - kills the goblin (7 HP) outright.
     state = _build_demo_state(_INITIATIVE)
     state.current_turn = state.turn_order.index("elrond")
+    # The cone is real geometry now: goblin_2 stands right beside goblin_1 and would be
+    # caught too, so move it out of reach to keep this a single-target mechanics test.
+    state.characters["goblin_2"].position = Position(x=4, y=0)  # outside the cone
 
     action = ParsedAction(
         actor="elrond",
@@ -102,6 +105,7 @@ def test_save_spell_deals_half_damage_rounded_down_on_a_successful_save() -> Non
     # 4.5 or 5 - proves the rounding direction, not just "some" halving.
     state = _build_demo_state(_INITIATIVE)
     state.current_turn = state.turn_order.index("elrond")
+    state.characters["goblin_2"].position = Position(x=4, y=0)  # outside the cone
 
     action = ParsedAction(
         actor="elrond",
@@ -191,11 +195,12 @@ def test_heal_spell_is_capped_at_max_hp() -> None:
 def test_multi_target_spell_hits_three_targets_independently() -> None:
     # A 3rd goblin, added directly to the demo encounter's state (which only
     # spawns two) so a single cast can hit three independent targets. Placed
-    # 5ft from Elrond, same as goblin_1/goblin_2 already are.
+    # Placed so one 15ft cone from Elrond (1,2) can catch all three: the geometry is real,
+    # so a goblin behind him (the old (0,2)) could never share a cone with the other two.
     state = _build_demo_state(_INITIATIVE)
     state.current_turn = state.turn_order.index("elrond")
     srd = load_srd()
-    goblin_3 = monster_to_character(srd.monsters["goblin"], "goblin_3", Position(x=0, y=2))
+    goblin_3 = monster_to_character(srd.monsters["goblin"], "goblin_3", Position(x=3, y=2))
     state.characters["goblin_3"] = goblin_3
     state.turn_order.append("goblin_3")
 
@@ -387,6 +392,7 @@ def test_burning_hands_reaches_a_target_in_its_15ft_cone() -> None:
     state = _build_demo_state(_INITIATIVE)
     state.current_turn = state.turn_order.index("elrond")
     state.characters["elrond"].position = Position(x=0, y=0)
+    state.characters["goblin_2"].position = Position(x=4, y=2)  # outside the cone
 
     resolve_action(
         state,

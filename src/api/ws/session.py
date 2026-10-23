@@ -1729,7 +1729,7 @@ async def _handle_client_message(
                 destination,
                 remaining_budget,
                 0,
-                session.game_state.battle_map.terrain,
+                session.game_state.movement_terrain(),
                 hostile_squares,
                 ally_squares,
             )
