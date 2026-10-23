@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import CharacterDetailSheet from '../components/CharacterDetailSheet'
 import CharacterSheet from '../components/CharacterSheet'
 import CombatGrid from '../components/CombatGrid'
@@ -40,6 +40,10 @@ export default function LivePlay({
     sendEndTurn,
     sendRest,
     sendContinueCampaign,
+    sendAreaPreview,
+    sendAreaResponse,
+    areaRequest,
+    areaPreview,
     sendBardicInspirationResponse,
     sendShieldResponse,
     sendProtectionResponse,
@@ -114,6 +118,22 @@ export default function LivePlay({
     () => (isMyTurn && me && characters ? computeResourceQuickActions(me, characters) : []),
     [isMyTurn, me, characters],
   )
+
+  // Click-to-place: this player's own area spell is waiting for them to pick a square.
+  const placingArea = Boolean(areaRequest && mine.has(areaRequest.actor))
+  // Asking the server about every pixel the mouse crosses would be noise: only when the hovered
+  // square actually changes.
+  const lastPreviewCell = useRef('')
+  useEffect(() => {
+    // A new placement starts fresh: hovering the square last previewed must preview again.
+    if (!areaRequest) lastPreviewCell.current = ''
+  }, [areaRequest])
+  function previewArea(cell: { x: number; y: number }) {
+    const key = `${cell.x},${cell.y}`
+    if (key === lastPreviewCell.current) return
+    lastPreviewCell.current = key
+    sendAreaPreview(cell)
+  }
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -252,6 +272,16 @@ export default function LivePlay({
               onMoveTo={sendPlayerMove}
               actorColors={actorColors}
               effectAreas={gameState.effect_areas ?? []}
+              areaPlacement={
+                placingArea && areaRequest
+                  ? {
+                      request: areaRequest,
+                      preview: areaPreview,
+                      onHover: previewArea,
+                      onPick: (cell) => sendAreaResponse({ origin: cell }),
+                    }
+                  : undefined
+              }
             />
           ) : (
             <SceneImagePanel url={sceneImageUrl} />
@@ -352,6 +382,51 @@ export default function LivePlay({
             {characters?.[shieldOffer.target]?.name ?? shieldOffer.target} is deciding whether to
             cast Shield...
           </p>
+        )}
+        {areaRequest && (
+          <div className="area-placement-panel">
+            {placingArea ? (
+              <>
+                <p>
+                  <strong>Place {areaRequest.spell}:</strong> click a square on the map
+                  {areaRequest.from_caster
+                    ? ' to aim it'
+                    : ` (reach ${areaRequest.range_feet} ft, ${areaRequest.size_feet}-ft ${areaRequest.shape})`}
+                  .
+                </p>
+                {areaPreview?.error ? (
+                  <p className="wizard-error">{areaPreview.error}</p>
+                ) : (
+                  <p>
+                    {areaPreview && areaPreview.caught.length > 0
+                      ? `Catches: ${areaPreview.caught.map((id) => characters?.[id]?.name ?? id).join(', ')}.`
+                      : 'Catches no one.'}
+                    {areaPreview && areaPreview.allies_caught.length > 0 && (
+                      <strong className="area-warning">
+                        {' '}
+                        Warning: this also catches your side (
+                        {areaPreview.allies_caught.map((id) => characters?.[id]?.name ?? id).join(', ')}
+                        )!
+                      </strong>
+                    )}
+                  </p>
+                )}
+                <div className="area-placement-actions">
+                  <button type="button" onClick={() => sendAreaResponse({ auto: true })}>
+                    Let the game place it
+                  </button>
+                  <button type="button" onClick={() => sendAreaResponse({ cancel: true })}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="companion-meta">
+                {characters?.[areaRequest.actor]?.name ?? areaRequest.actor} is choosing where to
+                cast {areaRequest.spell}...
+              </p>
+            )}
+          </div>
         )}
         {resourceQuickActions.length > 0 && (
           // Issue #27: a prominent, actionable callout - not the passive

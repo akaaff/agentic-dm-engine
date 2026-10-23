@@ -863,6 +863,34 @@ button.secondary {
   vertical-align: -0.05rem;
 }
 
+.grid-cell.placing:hover {
+  stroke: #b388ff;
+  stroke-width: 2;
+}
+
+.area-placement-panel {
+  border: 1px solid #b388ff;
+  border-radius: 6px;
+  background: rgba(179, 136, 255, 0.1);
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.area-placement-panel p {
+  margin: 0.2rem 0;
+}
+
+.area-placement-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.area-warning {
+  color: #ffb300;
+}
+
 .grid-cell.clickable {
   cursor: pointer;
 }
