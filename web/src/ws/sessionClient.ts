@@ -212,6 +212,27 @@ export interface LiveEvent {
   narrated: boolean
 }
 
+// Click-to-place: an area spell stops to ask where it should land. `suggested` is where the game
+// would put it on its own; area_preview_result answers "what would an origin cover" for a hovered
+// square (or says why it can't be used).
+export interface AreaPlacement {
+  origin: { x: number; y: number }
+  cells: [number, number][]
+  caught: string[]
+  allies_caught: string[]
+  error?: string
+}
+
+export interface AreaRequest {
+  actor: string
+  spell: string
+  shape: string
+  size_feet: number
+  range_feet: number
+  from_caster: boolean
+  suggested: AreaPlacement
+}
+
 // A lasting patch of the map a spell changed (Entangle's weeds, Grease): drawn on the grid
 // and priced into movement as difficult terrain until it ends.
 export interface LiveEffectArea {
@@ -281,6 +302,9 @@ type ServerMessage =
   // sendBardicInspirationResponse and the server's own authorization
   // check).
   | ({ type: 'bardic_inspiration_offer' } & BardicInspirationOffer)
+  | ({ type: 'area_request' } & AreaRequest)
+  | ({ type: 'area_preview_result' } & AreaPlacement)
+  | { type: 'area_resolved' }
   // Issue #93: the Shield reaction offer - broadcast to everyone, answerable
   // only by the connection controlling `target`.
   | ({ type: 'shield_offer' } & ShieldOffer)
@@ -411,6 +435,8 @@ export function useSessionSocket(sessionId: string) {
   const [awaitingActor, setAwaitingActor] = useState<string | null>(null)
   const [bardicOffer, setBardicOffer] = useState<BardicInspirationOffer | null>(null)
   const [shieldOffer, setShieldOffer] = useState<ShieldOffer | null>(null)
+  const [areaRequest, setAreaRequest] = useState<AreaRequest | null>(null)
+  const [areaPreview, setAreaPreview] = useState<AreaPlacement | null>(null)
   const [protectionOffer, setProtectionOffer] = useState<ProtectionOffer | null>(null)
   const [partyChoice, setPartyChoice] = useState<PartyChoiceOffer | null>(null)
   const [campaignComplete, setCampaignComplete] = useState(false)
@@ -469,6 +495,8 @@ export function useSessionSocket(sessionId: string) {
     setShieldOffer(null)
     setProtectionOffer(null)
     setPartyChoice(null)
+    setAreaRequest(null)
+    setAreaPreview(null)
 
     // Paces the queue by real elapsed time since the last reveal, not by
     // whether the queue happened to look empty at the instant a new entry
@@ -586,6 +614,8 @@ export function useSessionSocket(sessionId: string) {
         setShieldOffer(null)
         setProtectionOffer(null)
         setPartyChoice(null)
+        setAreaRequest(null)
+        setAreaPreview(null)
         setDisconnectedActors([])
       }
       // Issue #42: a plain WebSocket can't carry a custom header, so the
@@ -757,6 +787,17 @@ export function useSessionSocket(sessionId: string) {
           case 'shield_offer':
             setShieldOffer(message)
             break
+          case 'area_request':
+            setAreaRequest(message)
+            setAreaPreview(message.suggested)
+            break
+          case 'area_preview_result':
+            setAreaPreview(message)
+            break
+          case 'area_resolved':
+            setAreaRequest(null)
+            setAreaPreview(null)
+            break
           case 'protection_offer':
             setProtectionOffer(message)
             break
@@ -845,6 +886,21 @@ export function useSessionSocket(sessionId: string) {
     setError(null)
   }
 
+  // Click-to-place: asks what an area would cover with its origin on a hovered square.
+  function sendAreaPreview(origin: { x: number; y: number }) {
+    wsRef.current?.send(JSON.stringify({ type: 'area_preview', origin }))
+  }
+
+  // Places the held-back area spell on a square, lets the game place it ({ auto: true }), or
+  // drops it ({ cancel: true }). Not cleared locally: the server's area_resolved does that, or
+  // re-sends the request when the square can't be used.
+  function sendAreaResponse(
+    answer: { origin: { x: number; y: number } } | { auto: true } | { cancel: true },
+  ) {
+    wsRef.current?.send(JSON.stringify({ type: 'area_response', ...answer }))
+    setError(null)
+  }
+
   // Issue #92: answers a protection_offer.
   function sendProtectionResponse(use: boolean) {
     wsRef.current?.send(JSON.stringify({ type: 'protection_response', use }))
@@ -890,10 +946,14 @@ export function useSessionSocket(sessionId: string) {
     shieldOffer,
     protectionOffer,
     partyChoice,
+    areaRequest,
+    areaPreview,
     campaignComplete,
     error,
     connected,
     reconnecting,
+    sendAreaPreview,
+    sendAreaResponse,
     sendPlayerAction,
     sendPlayerMove,
     sendEndTurn,

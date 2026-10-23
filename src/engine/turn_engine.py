@@ -5815,6 +5815,33 @@ def _plan_area_cast(
     )
 
 
+def spell_uses_area_placement(spell: SrdEntry) -> bool:
+    """Whether casting this spell goes through the area planner (so the player can choose where
+    it lands): an SRD area plus a save mechanic, or one of the HP-pool spells."""
+    if area_spec(spell) is None:
+        return False
+    return spell_mechanic(spell) == "save" or spell.get("index") in ("sleep", "color-spray")
+
+
+def preview_area_cast(
+    state: GameState, actor_id: str, action: ParsedAction, origin: Position
+) -> Placement:
+    """What an area spell would cover if its origin were `origin` - the live preview behind
+    click-to-place. Read-only; raises TurnEngineError for a square the cast could not use (out
+    of range, off the map), exactly as the real cast would."""
+    srd = load_srd()
+    actor = state.characters[actor_id]
+    spell = srd.spells.get(normalize_spell_name(action.item_or_spell or ""))
+    if spell is None or not spell_uses_area_placement(spell):
+        raise TurnEngineError("That spell has no area to place")
+    probe = action.model_copy(
+        update={"params": {**(action.params or {}), "origin": {"x": origin.x, "y": origin.y}}}
+    )
+    placement = _plan_area_cast(state, actor, spell, probe)
+    assert placement is not None  # the spell has an area and the scene has a map
+    return placement
+
+
 def _announce_area(
     state: GameState, actor: Character, spell: SrdEntry, placement: Placement
 ) -> None:

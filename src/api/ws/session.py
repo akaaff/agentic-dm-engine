@@ -40,6 +40,7 @@ from src.audiogen.service import MEDIA_URL_PREFIX as AUDIO_MEDIA_URL_PREFIX
 from src.audiogen.service import generate_narration_audio
 from src.cli.play import build_demo_encounter, build_demo_party
 from src.engine.actions import ParsedAction
+from src.engine.areas import Placement, area_spec
 from src.engine.campaign import Campaign, Scene, load_campaign
 from src.engine.campaign_runner import advance_to_next_encounter
 from src.engine.companions import build_companion, load_companion_spec_by_character_id
@@ -53,7 +54,9 @@ from src.engine.rules import (
     armor_ac_breakdown,
     effective_speed,
     is_party_member,
+    normalize_spell_name,
     shield_spell_bonus,
+    spell_range_feet,
 )
 from src.engine.srd_loader import SrdIndex, load_srd
 from src.engine.state import Character, GameState
@@ -66,9 +69,12 @@ from src.engine.turn_engine import (
     ShieldChoicePending,
     TurnEngineError,
     current_attack_summaries,
+    preview_area_cast,
+    resolve_action,
     resolve_pending_bardic_choice,
     resolve_pending_protection_choice,
     resolve_pending_shield_choice,
+    spell_uses_area_placement,
 )
 from src.graph.graph_builder import build_graph
 from src.graph.nodes.intent_parser import parse_intent_sequence
@@ -108,6 +114,20 @@ class PendingPartyChoice:
     scene_id: str
     situation: str
     responses: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class PendingAreaChoice:
+    """A parsed area-spell cast held back until its caster picks the square (see
+    Session.pending_area_choice). `remaining` is whatever else the same utterance asked for,
+    resolved after the cast; `request` is the area_request message, kept so a reconnecting client
+    can be shown it again."""
+
+    actor_id: str
+    action: ParsedAction
+    remaining: list[ParsedAction]
+    hold: bool
+    request: dict[str, object]
 
 
 @dataclass
@@ -222,6 +242,11 @@ class Session:
     fighter's human to answer a protection_offer - cleared by the
     protection_response that resumes it. In memory only, like
     pending_shield_choice."""
+    pending_area_choice: PendingAreaChoice | None = None
+    """Click-to-place: set while a human's area spell (Entangle, Burning Hands...) is waiting for
+    them to choose where it lands (an area_request message) - cleared by the area_response that
+    places it or cancels. Nothing about the cast is applied until then, so a restart simply loses
+    the pause: the turn is still theirs and they cast again. In memory only."""
     pending_party_choice: PendingPartyChoice | None = None
     """Story-adaptive-encounters Phase 2: set the instant the campaign's
     chain-walk stops at a party_choice scene (see _start_party_choice) -
@@ -915,6 +940,8 @@ async def _send_pending_offers(session: Session, websocket: WebSocket) -> None:
         await websocket.send_json(
             _party_choice_offer_message(session, session.pending_party_choice)
         )
+    if session.pending_area_choice is not None:
+        await websocket.send_json(session.pending_area_choice.request)
 
 
 def _state_update_message(session: Session) -> dict[str, object]:
@@ -1638,6 +1665,95 @@ async def _handle_client_message(
         await _send_awaiting_input(session)
         return
 
+    if msg_type == "area_preview":
+        # Click-to-place: the grid asks what an area would cover with its origin on a hovered
+        # square. Read-only, answered only to the asker, and only while a placement is pending.
+        placing = session.pending_area_choice
+        origin = _origin_from(raw.get("origin"))
+        if (
+            placing is None
+            or origin is None
+            or placing.actor_id not in connection.controlled_character_ids
+        ):
+            return
+        try:
+            placement = preview_area_cast(
+                session.game_state, placing.actor_id, placing.action, origin
+            )
+        except TurnEngineError as exc:
+            await websocket.send_json(
+                {
+                    "type": "area_preview_result",
+                    "origin": {"x": origin.x, "y": origin.y},
+                    "error": str(exc),
+                }
+            )
+            return
+        await websocket.send_json({"type": "area_preview_result", **_placement_payload(placement)})
+        return
+
+    if msg_type == "area_response":
+        placing = session.pending_area_choice
+        if placing is None:
+            await websocket.send_json({"type": "error", "detail": "No area placement is pending."})
+            return
+        if placing.actor_id not in connection.controlled_character_ids:
+            await websocket.send_json({"type": "error", "detail": "It is not your spell to place."})
+            return
+        if raw.get("cancel"):
+            session.pending_area_choice = None
+            await _broadcast(session, {"type": "area_resolved"})
+            await _send_awaiting_input(session)
+            return
+        chosen = placing.action
+        if raw.get("auto"):
+            # "Let the game place it": mark the cast so it isn't held back again.
+            chosen = chosen.model_copy(
+                update={"params": {**(chosen.params or {}), "auto_place": True}}
+            )
+        else:
+            origin = _origin_from(raw.get("origin"))
+            if origin is None:
+                await websocket.send_json({"type": "error", "detail": "Pick a square to place it."})
+                await websocket.send_json(placing.request)
+                return
+            try:
+                preview_area_cast(session.game_state, placing.actor_id, placing.action, origin)
+            except TurnEngineError as exc:
+                # A square the cast can't use: say so and keep the placement open.
+                await websocket.send_json({"type": "error", "detail": str(exc)})
+                await websocket.send_json(placing.request)
+                return
+            chosen = chosen.model_copy(
+                update={
+                    "params": {
+                        **(chosen.params or {}),
+                        "origin": {"x": origin.x, "y": origin.y},
+                    }
+                }
+            )
+        session.pending_area_choice = None
+        await _broadcast(session, {"type": "area_resolved"})
+        await _run_player_actions(
+            session,
+            websocket,
+            [chosen, *placing.remaining],
+            hold=placing.hold,
+            allow_area_pause=True,
+        )
+        return
+
+    if msg_type in ("player_action", "player_move", "end_turn", "debug_action") and (
+        session.pending_area_choice is not None
+    ):
+        await websocket.send_json(
+            {
+                "type": "error",
+                "detail": "Finish placing your spell first - click a square, or cancel it.",
+            }
+        )
+        return
+
     if (
         msg_type in ("player_action", "player_move", "end_turn")
         and session.game_state.status == "in_progress"
@@ -1778,13 +1894,111 @@ async def _handle_client_message(
     else:
         return
 
+    await _run_player_actions(
+        session,
+        websocket,
+        actions_to_resolve,
+        hold=msg_type != "debug_action",
+        # A real player's own cast may stop to ask where an area spell should go; the scripted
+        # debug_action and click-to-move never do.
+        allow_area_pause=msg_type == "player_action",
+    )
+
+
+def _origin_from(raw: object) -> Position | None:
+    if isinstance(raw, dict) and isinstance(raw.get("x"), int) and isinstance(raw.get("y"), int):
+        return Position(x=raw["x"], y=raw["y"])
+    return None
+
+
+def _placement_payload(placement: Placement) -> dict[str, object]:
+    return {
+        "origin": {"x": placement.origin.x, "y": placement.origin.y},
+        "cells": [[c.x, c.y] for c in placement.cells],
+        "caught": placement.caught,
+        "allies_caught": placement.allies_caught,
+    }
+
+
+def _area_request_for(session: Session, action: ParsedAction) -> dict[str, object] | None:
+    """The area_request to ask a human, or None when this cast needs no placement: not an area
+    spell, a square already chosen (or "let the game place it"), a companion/monster caster, or a
+    cast that would be rejected anyway. That last case is decided by trying the cast on a COPY of
+    the game with automatic placement - so the player is only asked about casts that can succeed,
+    and the suggested placement shown first is exactly what "auto" would do."""
+    if action.verb != "cast_spell" or not action.item_or_spell:
+        return None
+    params = action.params or {}
+    if params.get("origin") or params.get("centered_on") or params.get("auto_place"):
+        return None
+    srd = session.srd or load_srd()
+    spell = srd.spells.get(normalize_spell_name(action.item_or_spell))
+    if spell is None or not spell_uses_area_placement(spell):
+        return None
+    actor = session.game_state.characters.get(action.actor)
+    if actor is None or actor.is_companion or actor.monster_index is not None:
+        return None
+    spec = area_spec(spell)
+    if spec is None:
+        return None
+    trial = session.game_state.model_copy(deep=True)
+    seen = len(trial.events)
+    try:
+        resolve_action(trial, action, random.Random(0), srd)
+    except (TurnEngineError, NotImplementedError):
+        return None
+    area_event = next((e for e in trial.events[seen:] if e.type == "spell_area"), None)
+    if area_event is None:
+        return None
+    payload = area_event.payload
+    return {
+        "type": "area_request",
+        "actor": action.actor,
+        "spell": spell["name"],
+        "shape": spec.shape,
+        "size_feet": spec.size_feet,
+        "range_feet": spell_range_feet(spell),
+        "from_caster": spec.from_caster,
+        "suggested": {
+            "origin": payload["origin"],
+            "cells": payload["cells"],
+            "caught": payload["caught"],
+            "allies_caught": payload["allies_caught"],
+        },
+    }
+
+
+async def _run_player_actions(
+    session: Session,
+    websocket: WebSocket,
+    actions_to_resolve: list[ParsedAction],
+    *,
+    hold: bool,
+    allow_area_pause: bool,
+) -> None:
+    """Resolves a player's parsed actions in order, then lets the NPCs act and prompts the next
+    player. Shared by a fresh message and by the area_response that resumes a held-back cast."""
     expected_actor_id = (
         session.game_state.turn_order[session.game_state.current_turn]
         if session.game_state.status == "in_progress"
         else None
     )
 
-    for action in actions_to_resolve:
+    for index, action in enumerate(actions_to_resolve):
+        if allow_area_pause:
+            request = await asyncio.to_thread(_area_request_for, session, action)
+            if request is not None:
+                # Ask where it should go and stop here (no autoplay, no awaiting_input): the only
+                # thing this session should receive next is the area_response.
+                session.pending_area_choice = PendingAreaChoice(
+                    actor_id=action.actor,
+                    action=action,
+                    remaining=list(actions_to_resolve[index + 1 :]),
+                    hold=hold,
+                    request=request,
+                )
+                await _broadcast(session, request)
+                return
         # Issue #43: player_action/player_move/debug_action are the only
         # message types that reach session.graph.invoke below, which always
         # runs a real narrator LLM call (and, for player_action, a real
@@ -1811,7 +2025,7 @@ async def _handle_client_message(
             "scene_image_url": None,
             # A real player's action keeps their turn open for an unused bonus action; a
             # debug_action is the scripted/dev override and ends turns the way it always did.
-            "hold_turn_for_bonus": msg_type != "debug_action",
+            "hold_turn_for_bonus": hold,
         }
         try:
             result = await asyncio.to_thread(session.graph.invoke, graph_input)
@@ -2041,7 +2255,11 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             # it would never hear about it if an earlier connection happens to
             # control the same actor - which, under Day 11's "one connection
             # controls everyone" simplification, is every other connection.
-            if session.game_state.status == "in_progress" and session.pending_bardic_choice is None:
+            if (
+                session.game_state.status == "in_progress"
+                and session.pending_bardic_choice is None
+                and session.pending_area_choice is None
+            ):
                 current_actor = session.game_state.turn_order[session.game_state.current_turn]
                 if current_actor in connection.controlled_character_ids:
                     await websocket.send_json({"type": "awaiting_input", "actor": current_actor})

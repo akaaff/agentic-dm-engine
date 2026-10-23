@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import type {
+  AreaPlacement,
+  AreaRequest,
   LiveBattleMap,
   LiveCharacter,
   LiveEffectArea,
@@ -75,6 +77,7 @@ export default function CombatGrid({
   onMoveTo,
   actorColors,
   effectAreas = [],
+  areaPlacement,
 }: {
   battleMap: LiveBattleMap
   characters: Record<string, LiveCharacter>
@@ -86,6 +89,14 @@ export default function CombatGrid({
   actorColors: Record<string, string>
   /** Lasting spell areas to draw over the terrain (Entangle, Grease). */
   effectAreas?: LiveEffectArea[]
+  /** Set while the player is choosing where an area spell lands: grid clicks place it instead
+   * of moving, and hovering previews what it would cover. */
+  areaPlacement?: {
+    request: AreaRequest
+    preview: AreaPlacement | null
+    onHover: (cell: { x: number; y: number }) => void
+    onPick: (cell: { x: number; y: number }) => void
+  }
 }) {
   const width = battleMap.width * CELL_SIZE
   const height = battleMap.height * CELL_SIZE
@@ -122,8 +133,17 @@ export default function CombatGrid({
             height={CELL_SIZE}
             fill={TERRAIN_FILL[terrain]}
             stroke="#2a2632"
-            className={canMove ? 'grid-cell clickable' : 'grid-cell'}
-            onClick={canMove ? () => onMoveTo({ x, y }) : undefined}
+            className={
+              areaPlacement ? 'grid-cell clickable placing' : canMove ? 'grid-cell clickable' : 'grid-cell'
+            }
+            onClick={
+              areaPlacement
+                ? () => areaPlacement.onPick({ x, y })
+                : canMove
+                  ? () => onMoveTo({ x, y })
+                  : undefined
+            }
+            onMouseEnter={areaPlacement ? () => areaPlacement.onHover({ x, y }) : undefined}
           />
         )),
       )}
@@ -144,6 +164,53 @@ export default function CombatGrid({
           ))}
         </g>
       ))}
+      {areaPlacement &&
+        !areaPlacement.request.from_caster &&
+        battleMap.terrain.map((row, y) =>
+          row.map((_, x) => {
+            // Squares past the spell's reach are dimmed: the game will refuse them.
+            const caster = characters[areaPlacement.request.actor]
+            if (!caster) return null
+            const squares = Math.max(
+              Math.abs(x - caster.position.x),
+              Math.abs(y - caster.position.y),
+            )
+            if (squares * 5 <= areaPlacement.request.range_feet) return null
+            return (
+              <rect
+                key={`range-${x},${y}`}
+                x={x * CELL_SIZE}
+                y={y * CELL_SIZE}
+                width={CELL_SIZE}
+                height={CELL_SIZE}
+                fill="rgba(0, 0, 0, 0.45)"
+                pointerEvents="none"
+              />
+            )
+          }),
+        )}
+      {areaPlacement?.preview && !areaPlacement.preview.error && (
+        <g className="area-preview" pointerEvents="none">
+          {areaPlacement.preview.cells.map(([x, y]) => (
+            <rect
+              key={`preview-${x},${y}`}
+              x={x * CELL_SIZE}
+              y={y * CELL_SIZE}
+              width={CELL_SIZE}
+              height={CELL_SIZE}
+              fill="rgba(179, 136, 255, 0.32)"
+              stroke="#b388ff"
+              strokeWidth={1.5}
+            />
+          ))}
+          <circle
+            cx={areaPlacement.preview.origin.x * CELL_SIZE + CELL_SIZE / 2}
+            cy={areaPlacement.preview.origin.y * CELL_SIZE + CELL_SIZE / 2}
+            r={4}
+            fill="#ffffff"
+          />
+        </g>
+      )}
       {Object.values(characters).map((character) => {
         if (character.is_dead) return null
         const cx = character.position.x * CELL_SIZE + CELL_SIZE / 2
@@ -198,6 +265,27 @@ export default function CombatGrid({
           </g>
         )
       })}
+      {areaPlacement?.preview && !areaPlacement.preview.error && (
+        <g className="area-preview-rings" pointerEvents="none">
+          {areaPlacement.preview.caught.map((id) => {
+            const character = characters[id]
+            if (!character) return null
+            const friendly = areaPlacement.preview?.allies_caught.includes(id)
+            return (
+              <circle
+                key={`caught-${id}`}
+                cx={character.position.x * CELL_SIZE + CELL_SIZE / 2}
+                cy={character.position.y * CELL_SIZE + CELL_SIZE / 2}
+                r={TOKEN_RADIUS + 4}
+                fill="none"
+                stroke={friendly ? '#ffb300' : '#ff5252'}
+                strokeWidth={3}
+                strokeDasharray={friendly ? '4 3' : undefined}
+              />
+            )
+          })}
+        </g>
+      )}
     </svg>
   )
 }
