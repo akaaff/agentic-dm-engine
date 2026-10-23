@@ -82,6 +82,46 @@ function formatRollMode(p: Record<string, unknown>, debugMode: boolean): string 
   return `, ${tag} (${reasons.join('; ')})`
 }
 
+/** Debug-mode damage breakdown, e.g. "damage: Dagger 1d4 4 + DEX mod 3 + Sneak Attack 1d6 4 = 11". */
+function formatDamageBreakdown(breakdown: unknown): string {
+  if (!Array.isArray(breakdown)) return ''
+  const entries = breakdown.filter(isBreakdownEntry)
+  if (entries.length === 0) return ''
+  const total = entries.reduce((sum, [, value]) => sum + value, 0)
+  return ` [damage: ${entries.map(([label, value]) => `${label} ${value}`).join(' + ')} = ${total}]`
+}
+
+/**
+ * The extra dice a hit carried and why: Sneak Attack (with what triggered it), Divine
+ * Smite, Divine Favor and Hunter's Mark. Always shown, since they are what explains a
+ * hit that looks too big for the weapon. In debug mode a Rogue's hit that did NOT
+ * sneak attack also says why not.
+ */
+function formatRiders(p: Record<string, unknown>, debugMode: boolean): string {
+  const parts: string[] = []
+  const sneak = p.sneak_attack
+  if (sneak && typeof sneak === 'object') {
+    const info = sneak as Record<string, unknown>
+    if (info.applied === true) {
+      const triggers = stringList(info.triggers)
+      parts.push(
+        `Sneak Attack +${info.damage}${triggers.length > 0 ? ` (${triggers.join(' and ')})` : ''}`,
+      )
+    } else if (debugMode && typeof info.reason === 'string') {
+      parts.push(`no Sneak Attack: ${info.reason}`)
+    }
+  }
+  const flat: Array<[string, string]> = [
+    ['divine_smite_damage', 'Divine Smite'],
+    ['divine_favor_damage', 'Divine Favor'],
+    ['hunters_mark_damage', "Hunter's Mark"],
+  ]
+  for (const [key, label] of flat) {
+    if (typeof p[key] === 'number') parts.push(`${label} +${p[key]}`)
+  }
+  return parts.length > 0 ? ` - ${parts.join(', ')}` : ''
+}
+
 /**
  * Formats one event into a small colored badge, or null for event types not
  * worth surfacing this way (dodge/disengage/rage/help - payload-empty or low
@@ -105,6 +145,67 @@ export function formatEvent(
   const p = event.payload
 
   switch (event.type) {
+    case 'spell_cast': {
+      const spell = typeof p.spell === 'string' ? p.spell : 'a spell'
+      const natural = typeof p.natural === 'number' ? p.natural : null
+      const damage = typeof p.damage === 'number' ? p.damage : null
+      const targetIds = Array.isArray(p.targets) ? p.targets : p.target ? [p.target] : []
+      const targetText =
+        targetIds.length > 0
+          ? ` at ${targetIds.map((t) => characterName(t, characters)).join(', ')}`
+          : ''
+      if (p.auto_hit === true) {
+        // Magic Missile: one badge per dart, no roll to make.
+        return {
+          key: event.id,
+          color,
+          label: `${actorName}'s ${spell} dart${targetText} - auto-hit`,
+          highlight: damage !== null ? { text: `${damage}`, color: DAMAGE_COLOR } : undefined,
+        }
+      }
+      if (typeof p.save_success === 'boolean') {
+        // The target's save has its own badge; this one is what the spell then did.
+        const rolled = typeof p.damage_rolled === 'number' ? p.damage_rolled : null
+        const dice = typeof p.damage_dice === 'string' ? p.damage_dice : null
+        const halved = p.save_success && rolled !== null && rolled !== damage
+        const detail = debugMode
+          ? ` [${dice ?? 'damage'}${rolled !== null ? ` rolled ${rolled}` : ''}${halved ? ', halved by the save' : ''}]`
+          : halved
+            ? ' (halved by the save)'
+            : ''
+        return {
+          key: event.id,
+          color,
+          label: `${actorName} casts ${spell}${targetText} - ${p.save_success ? 'target saved' : 'target failed the save'}${detail}`,
+          highlight: damage !== null ? { text: `${damage}`, color: DAMAGE_COLOR } : undefined,
+        }
+      }
+      if (typeof p.hit === 'boolean') {
+        const rollTotal = typeof p.roll_total === 'number' ? p.roll_total : null
+        const modeText = formatRollMode(p, debugMode)
+        const naturalText = natural !== null ? ` (natural ${natural}${modeText})` : ''
+        const breakdownText = debugMode
+          ? formatBreakdown(natural, p.attack_bonus_breakdown, rollTotal)
+          : ''
+        const damageText = debugMode && p.hit ? formatDamageBreakdown(p.damage_breakdown) : ''
+        return {
+          key: event.id,
+          color,
+          label: `${actorName} casts ${spell}${targetText} - ${p.hit ? 'hit' : 'miss'}${naturalText}${breakdownText}${damageText}`,
+          highlight:
+            natural === 20
+              ? { text: 'Critical Hit!', color: CRIT_COLOR }
+              : natural === 1
+                ? { text: 'Critical Miss!', color: FUMBLE_COLOR }
+                : undefined,
+        }
+      }
+      return {
+        key: event.id,
+        color,
+        label: `${actorName} casts ${spell}${targetText.replace(' at ', ' on ')}`,
+      }
+    }
     case 'initiative_rolled': {
       const natural = typeof p.natural === 'number' ? p.natural : null
       const modifier = typeof p.modifier === 'number' ? p.modifier : null
@@ -133,10 +234,12 @@ export function formatEvent(
       const breakdownText = debugMode
         ? formatBreakdown(natural, p.attack_bonus_breakdown, rollTotal)
         : ''
+      const riderText = hit ? formatRiders(p, debugMode) : ''
+      const damageText = debugMode && hit ? formatDamageBreakdown(p.damage_breakdown) : ''
       return {
         key: event.id,
         color,
-        label: `${actorName} attacks ${target} - ${hit ? 'hit' : 'miss'}${naturalText}${breakdownText}`,
+        label: `${actorName} attacks ${target} - ${hit ? 'hit' : 'miss'}${naturalText}${breakdownText}${riderText}${damageText}`,
         highlight,
       }
     }
@@ -144,10 +247,20 @@ export function formatEvent(
     case 'hazard_damage': {
       const amount = typeof p.amount === 'number' ? p.amount : 0
       const target = characterName(p.target, characters)
+      // What changed the hit on its way in (resistance, temporary HP, a target with less HP
+      // left than the damage). "Only N HP left" happens on every kill, so it stays debug-only.
+      const adjustments = stringList(p.adjustments).filter(
+        (a) => debugMode || !a.startsWith('only '),
+      )
+      const rolled = typeof p.rolled === 'number' ? `rolled ${p.rolled}, ` : ''
+      const adjustText = adjustments.length > 0 ? ` (${rolled}${adjustments.join('; ')})` : ''
       return {
         key: event.id,
         color,
-        label: event.type === 'hazard_damage' ? `${target} takes hazard damage` : `${actorName} hits ${target}`,
+        label:
+          (event.type === 'hazard_damage'
+            ? `${target} takes hazard damage`
+            : `${actorName} hits ${target}`) + adjustText,
         highlight: { text: `-${amount} HP`, color: DAMAGE_COLOR },
       }
     }
@@ -321,10 +434,17 @@ export function formatEvent(
       const breakdownText = debugMode
         ? formatBreakdown(natural, p.modifier_breakdown, rollTotal)
         : ''
+      // A spell save is logged under the caster, but it is the target's roll.
+      const saver =
+        kind === 'spell_save' && typeof p.target === 'string'
+          ? characterName(p.target, characters)
+          : actorName
+      const abilityText = typeof p.ability === 'string' ? `${p.ability} ` : ''
+      const dcText = typeof p.dc === 'number' ? ` vs DC ${p.dc}` : ''
       return {
         key: event.id,
         color,
-        label: `${actorName}'s ${kind.replace(/_/g, ' ')} - ${success ? 'success' : 'fail'}${breakdownText}`,
+        label: `${saver}'s ${abilityText}${kind.replace(/_/g, ' ')}${dcText} - ${success ? 'success' : 'fail'}${breakdownText}`,
       }
     }
     case 'skill_check': {

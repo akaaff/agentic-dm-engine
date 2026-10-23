@@ -26,6 +26,9 @@ class AttackResult:
     damage: int | None
     """None on a miss."""
     damage_type: str | None
+    damage_dice_total: int | None = None
+    """What the damage dice alone rolled (before the flat bonus), so the log can show
+    "dice 4 + DEX mod 3". None on a miss."""
 
 
 def resolve_attack(
@@ -101,7 +104,12 @@ def resolve_attack(
     )
     damage = max(0, damage_roll.total)
     return AttackResult(
-        attack_roll, hit=True, critical=critical, damage=damage, damage_type=damage_type
+        attack_roll,
+        hit=True,
+        critical=critical,
+        damage=damage,
+        damage_type=damage_type,
+        damage_dice_total=damage_roll.total - damage_roll.modifier,
     )
 
 
